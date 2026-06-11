@@ -1,0 +1,15 @@
+[package]
+name = "palace-lsp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "palace-lsp"
+path = "src/main.rs"
+
+[dependencies]
+palace-core.workspace = true
+tower-lsp.workspace = true
+tokio = { workspace = true }
+dashmap.workspace = true
+serde_json.workspace = true

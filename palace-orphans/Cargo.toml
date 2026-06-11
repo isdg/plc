@@ -1,0 +1,12 @@
+[package]
+name = "palace-orphans"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "palace-orphans"
+path = "src/main.rs"
+
+[dependencies]
+palace-core.workspace = true
+walkdir.workspace = true
