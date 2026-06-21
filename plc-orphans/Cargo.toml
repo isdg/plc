@@ -1,12 +1,12 @@
 [package]
-name = "palace-orphans"
+name = "plc-orphans"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "palace-orphans"
+name = "plc-orphans"
 path = "src/main.rs"
 
 [dependencies]
-palace-core.workspace = true
+plc-core.workspace = true
 walkdir.workspace = true

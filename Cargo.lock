@@ -563,32 +563,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "palace-core"
-version = "0.1.0"
-dependencies = [
- "walkdir",
-]
-
-[[package]]
-name = "palace-lsp"
-version = "0.1.0"
-dependencies = [
- "dashmap 6.2.1",
- "palace-core",
- "serde_json",
- "tokio",
- "tower-lsp",
-]
-
-[[package]]
-name = "palace-orphans"
-version = "0.1.0"
-dependencies = [
- "palace-core",
- "walkdir",
-]
-
-[[package]]
 name = "parking_lot_core"
 version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -639,7 +613,33 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
- "palace-core",
+ "plc-core",
+]
+
+[[package]]
+name = "plc-core"
+version = "0.1.0"
+dependencies = [
+ "walkdir",
+]
+
+[[package]]
+name = "plc-lsp"
+version = "0.1.0"
+dependencies = [
+ "dashmap 6.2.1",
+ "plc-core",
+ "serde_json",
+ "tokio",
+ "tower-lsp",
+]
+
+[[package]]
+name = "plc-orphans"
+version = "0.1.0"
+dependencies = [
+ "plc-core",
+ "walkdir",
 ]
 
 [[package]]

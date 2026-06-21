@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "palace-core",
-    "palace-orphans",
-    "palace-lsp",
+    "plc-core",
+    "plc-orphans",
+    "plc-lsp",
     "plc",
 ]
 
@@ -12,7 +12,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-palace-core = { path = "palace-core" }
+plc-core = { path = "plc-core" }
 walkdir = "2"
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

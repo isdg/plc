@@ -1,5 +1,5 @@
 //! `plc orphans` — list .md notes with no outbound `[[link]]` and no inbound
-//! link from another note. Wraps the shared `palace_core::orphans` engine.
+//! link from another note. Wraps the shared `plc_core::orphans` engine.
 //!
 //! Defaults the search root to `<PALACE_DIR>/notes`; an explicit `-r DIR`
 //! scans any directory and skips vault resolution entirely.
@@ -26,5 +26,5 @@ pub fn run(args: OrphansArgs) -> Result<String, String> {
         None => Palace::resolve()?.root().join("notes"),
     };
     let display = root.to_string_lossy();
-    palace_core::orphans::report(Path::new(&root), &display, args.verbose)
+    plc_core::orphans::report(Path::new(&root), &display, args.verbose)
 }

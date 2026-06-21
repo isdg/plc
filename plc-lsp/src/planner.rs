@@ -35,7 +35,7 @@ pub fn plan_link(
 ) -> Option<WorkspaceEdit> {
     // TODO: insert `[[target]]` into the source note (at cursor or in
     // a "Links" section), respecting normalize_target() conventions
-    // already used by palace-core.
+    // already used by plc-core.
     None
 }
 

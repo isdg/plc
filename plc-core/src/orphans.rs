@@ -1,4 +1,4 @@
-//! Orphan-note detection, shared by the `palace-orphans` binary and
+//! Orphan-note detection, shared by the `plc-orphans` binary and
 //! `plc orphans`. An orphan is a `.md` note with neither an outbound
 //! `[[link]]` nor any inbound link from another note.
 //!

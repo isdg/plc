@@ -1,6 +1,6 @@
 //! `Backend` is the LSP entry point. Every handler is intentionally
 //! thin: parse params, ask the index/planner for a result, translate
-//! back into LSP types. All real logic lives in `palace-core` (graph)
+//! back into LSP types. All real logic lives in `plc-core` (graph)
 //! and `planner` (intent -> WorkspaceEdit).
 
 use tower_lsp::jsonrpc::Result;
@@ -29,7 +29,7 @@ impl LanguageServer for Backend {
     ) -> Result<InitializeResult> {
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
-                name: "palace-lsp".into(),
+                name: "plc-lsp".into(),
                 version: Some(
                     env!("CARGO_PKG_VERSION").into(),
                 ),
@@ -49,10 +49,10 @@ impl LanguageServer for Backend {
                 execute_command_provider: Some(
                     ExecuteCommandOptions {
                         commands: vec![
-                            "palace.createNote".into(),
-                            "palace.deleteNote".into(),
-                            "palace.linkNotes".into(),
-                            "palace.unlinkNotes".into(),
+                            "plc.createNote".into(),
+                            "plc.deleteNote".into(),
+                            "plc.linkNotes".into(),
+                            "plc.unlinkNotes".into(),
                         ],
                         ..Default::default()
                     },
@@ -70,7 +70,7 @@ impl LanguageServer for Backend {
         self.client
             .log_message(
                 MessageType::INFO,
-                "palace-lsp ready",
+                "plc-lsp ready",
             )
             .await;
     }

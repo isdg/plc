@@ -1,14 +1,14 @@
 [package]
-name = "palace-lsp"
+name = "plc-lsp"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "palace-lsp"
+name = "plc-lsp"
 path = "src/main.rs"
 
 [dependencies]
-palace-core.workspace = true
+plc-core.workspace = true
 tower-lsp.workspace = true
 tokio = { workspace = true }
 dashmap.workspace = true

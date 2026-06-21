@@ -1,7 +1,7 @@
-//! palace-orphans — list .md files in a palace tree that have neither
+//! plc-orphans — list .md files in a palace tree that have neither
 //! outbound `[[link]]` nor any inbound link from another note.
 //!
-//! The scan + output live in `palace_core::orphans` (shared with `plc
+//! The scan + output live in `plc_core::orphans` (shared with `plc
 //! orphans`); this binary is just the legacy CLI front-end.
 
 use std::path::Path;
@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 fn print_help() {
     print!(
-        "Usage: palace-orphans [-r ROOT] [-v]\n\
+        "Usage: plc-orphans [-r ROOT] [-v]\n\
          \n\
          Find true orphan .md notes — no outbound [[link]] in\n\
          content AND no inbound link from any other note.\n\
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
         }
     }
 
-    match palace_core::orphans::report(Path::new(&root), &root, verbose) {
+    match plc_core::orphans::report(Path::new(&root), &root, verbose) {
         Ok(out) => {
             println!("{out}");
             ExitCode::SUCCESS

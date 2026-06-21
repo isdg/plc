@@ -1,6 +1,6 @@
 //! Shared primitives for palace tools: wikilink parsing and
-//! target normalization. Used by palace-orphans and (later) the
-//! palace LSP for go-to-definition and rename across [[links]].
+//! target normalization. Used by plc-orphans and (later) the
+//! plc LSP for go-to-definition and rename across [[links]].
 
 pub mod orphans;
 

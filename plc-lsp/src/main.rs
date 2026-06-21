@@ -1,9 +1,9 @@
-//! palace-lsp — LSP server for palace notes.
+//! plc-lsp — LSP server for palace notes.
 //!
 //! Speaks LSP over stdin/stdout. Read-side features (definition,
 //! references, completion, hover) and write-side features (create,
 //! delete, link, rename via WorkspaceEdit) all flow through a single
-//! `Backend` that delegates graph logic to `palace-core`.
+//! `Backend` that delegates graph logic to `plc-core`.
 
 mod index;
 mod planner;

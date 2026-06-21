@@ -1,5 +1,5 @@
 [package]
-name = "palace-core"
+name = "plc-core"
 version.workspace = true
 edition.workspace = true
 
