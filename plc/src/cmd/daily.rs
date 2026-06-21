@@ -5,8 +5,6 @@
 //! 2-digit year to `20YY`, rejects impossible dates, and marks any explicitly
 //! dated note with a `*` in its header.
 
-use std::path::PathBuf;
-
 use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
 
@@ -29,7 +27,7 @@ pub struct DailyArgs {
     year: Option<String>,
 }
 
-pub fn run(palace: &Palace, args: DailyArgs) -> Result<PathBuf, String> {
+pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
     let (date, explicit) =
         resolve(args.day, args.month, args.year, &args.positional, Local::now().date_naive())?;
 
@@ -47,6 +45,7 @@ pub fn run(palace: &Palace, args: DailyArgs) -> Result<PathBuf, String> {
     let marker = if explicit { Some("*") } else { None };
 
     note::ensure_note(palace.root(), &subdir, &filename, "daily", marker)
+        .map(|p| p.display().to_string())
         .map_err(|e| format!("daily: {e}"))
 }
 

@@ -33,6 +33,8 @@ enum Cmd {
     Weekly,
     /// Create a timestamped daily snapshot note.
     Shot,
+    /// Manage do-notes (week-based) with a "last" pointer.
+    Do(cmd::do_notes::DoArgs),
 }
 
 fn main() -> ExitCode {
@@ -50,11 +52,12 @@ fn main() -> ExitCode {
         Cmd::Daily(args) => cmd::daily::run(&palace, args),
         Cmd::Weekly => cmd::weekly::run(&palace),
         Cmd::Shot => cmd::shot::run(&palace),
+        Cmd::Do(args) => cmd::do_notes::run(&palace, args),
     };
 
     match result {
-        Ok(path) => {
-            println!("{}", path.display());
+        Ok(out) => {
+            println!("{out}");
             ExitCode::SUCCESS
         }
         Err(e) => {
