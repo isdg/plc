@@ -35,6 +35,8 @@ enum Cmd {
     Shot,
     /// Manage do-notes (week-based) with a "last" pointer.
     Do(cmd::do_notes::DoArgs),
+    /// Manage free-form murmur notes.
+    Murmur(cmd::murmur::MurmurArgs),
 }
 
 fn main() -> ExitCode {
@@ -53,6 +55,7 @@ fn main() -> ExitCode {
         Cmd::Weekly => cmd::weekly::run(&palace),
         Cmd::Shot => cmd::shot::run(&palace),
         Cmd::Do(args) => cmd::do_notes::run(&palace, args),
+        Cmd::Murmur(args) => cmd::murmur::run(&palace, args),
     };
 
     match result {
