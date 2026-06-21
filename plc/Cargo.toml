@@ -1,0 +1,13 @@
+[package]
+name = "plc"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "plc"
+path = "src/main.rs"
+
+[dependencies]
+palace-core.workspace = true
+clap.workspace = true
+chrono.workspace = true
