@@ -18,6 +18,7 @@ use config::Palace;
 #[derive(Parser)]
 #[command(
     name = "plc",
+    version,
     about = "palace notes manager — creates files, prints their paths"
 )]
 struct Cli {
