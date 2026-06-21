@@ -29,6 +29,10 @@ struct Cli {
 enum Cmd {
     /// Create/resolve today's (or a given date's) daily note.
     Daily(cmd::daily::DailyArgs),
+    /// Create/resolve this ISO week's note.
+    Weekly,
+    /// Create a timestamped daily snapshot note.
+    Shot,
 }
 
 fn main() -> ExitCode {
@@ -44,6 +48,8 @@ fn main() -> ExitCode {
 
     let result = match cli.cmd {
         Cmd::Daily(args) => cmd::daily::run(&palace, args),
+        Cmd::Weekly => cmd::weekly::run(&palace),
+        Cmd::Shot => cmd::shot::run(&palace),
     };
 
     match result {

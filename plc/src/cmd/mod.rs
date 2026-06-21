@@ -2,3 +2,5 @@
 //! its path; `main` prints it. Subcommands are added one per PR.
 
 pub mod daily;
+pub mod shot;
+pub mod weekly;
