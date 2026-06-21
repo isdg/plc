@@ -2,6 +2,8 @@
 //! target normalization. Used by palace-orphans and (later) the
 //! palace LSP for go-to-definition and rename across [[links]].
 
+pub mod orphans;
+
 use std::collections::HashSet;
 
 /// ASCII-lowercase a string. Non-ASCII bytes pass through unchanged,

@@ -37,30 +37,29 @@ enum Cmd {
     Do(cmd::do_notes::DoArgs),
     /// Manage free-form murmur notes.
     Murmur(cmd::murmur::MurmurArgs),
+    /// List orphan notes (no outbound and no inbound links).
+    Orphans(cmd::orphans::OrphansArgs),
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    let palace = match Palace::resolve() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::from(1);
-        }
-    };
-
+    // Note commands need a validated vault; `orphans` resolves its own root
+    // (and can run without a vault when given `-r`).
     let result = match cli.cmd {
-        Cmd::Daily(args) => cmd::daily::run(&palace, args),
-        Cmd::Weekly => cmd::weekly::run(&palace),
-        Cmd::Shot => cmd::shot::run(&palace),
-        Cmd::Do(args) => cmd::do_notes::run(&palace, args),
-        Cmd::Murmur(args) => cmd::murmur::run(&palace, args),
+        Cmd::Daily(args) => with_palace(|p| cmd::daily::run(p, args)),
+        Cmd::Weekly => with_palace(cmd::weekly::run),
+        Cmd::Shot => with_palace(cmd::shot::run),
+        Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
+        Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
+        Cmd::Orphans(args) => cmd::orphans::run(args),
     };
 
     match result {
         Ok(out) => {
-            println!("{out}");
+            if !out.is_empty() {
+                println!("{out}");
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -68,4 +67,14 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Resolve the vault, then run `f` against it. Centralizes the `PALACE_DIR`
+/// validation shared by every note-creating command.
+fn with_palace<F>(f: F) -> Result<String, String>
+where
+    F: FnOnce(&Palace) -> Result<String, String>,
+{
+    let palace = Palace::resolve()?;
+    f(&palace)
 }
