@@ -4,6 +4,7 @@ members = [
     "palace-core",
     "palace-orphans",
     "palace-lsp",
+    "plc",
 ]
 
 [workspace.package]
@@ -13,6 +14,8 @@ edition = "2021"
 [workspace.dependencies]
 palace-core = { path = "palace-core" }
 walkdir = "2"
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tower-lsp = "0.20"
 tokio = { version = "1", features = [
     "macros",
