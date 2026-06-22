@@ -38,6 +38,8 @@ enum Cmd {
     Do(cmd::do_notes::DoArgs),
     /// Manage free-form murmur notes.
     Murmur(cmd::murmur::MurmurArgs),
+    /// Create/resolve enumerated isg notes (isg0, isg1, …).
+    Isg(cmd::isg::IsgArgs),
     /// List orphan notes (no outbound and no inbound links).
     Orphans(cmd::orphans::OrphansArgs),
 }
@@ -53,6 +55,7 @@ fn main() -> ExitCode {
         Cmd::Shot => with_palace(cmd::shot::run),
         Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
+        Cmd::Isg(args) => with_palace(|p| cmd::isg::run(p, args)),
         Cmd::Orphans(args) => cmd::orphans::run(args),
     };
 

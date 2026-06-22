@@ -11,8 +11,6 @@
 //! this command is non-interactive and only emits text.
 
 use std::fs;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Args;
 
@@ -39,7 +37,9 @@ pub fn run(palace: &Palace, args: MurmurArgs) -> Result<String, String> {
     fs::create_dir_all(&note_dir).map_err(|e| format!("murmur: {e}"))?;
 
     if args.list {
-        return list_recent(&note_dir);
+        return note::list_md_by_recency(&note_dir)
+            .map(|v| v.join("\n"))
+            .map_err(|e| format!("murmur: {e}"));
     }
 
     let name = args
@@ -50,31 +50,6 @@ pub fn run(palace: &Palace, args: MurmurArgs) -> Result<String, String> {
     note::ensure_note(palace.root(), SUBDIR, &filename, "murmur", None)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("murmur: {e}"))
-}
-
-/// List `*.md` notes newest-first (mtime desc, name asc on ties), one per line.
-fn list_recent(note_dir: &Path) -> Result<String, String> {
-    let mut entries: Vec<(String, SystemTime)> = fs::read_dir(note_dir)
-        .map_err(|e| format!("murmur: {e}"))?
-        .flatten()
-        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            if !name.ends_with(".md") {
-                return None;
-            }
-            let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
-            Some((name, mtime))
-        })
-        .collect();
-    Ok(order_by_recency(&mut entries).join("\n"))
-}
-
-/// Sort entries newest-first, breaking mtime ties by name ascending, and
-/// return just the names.
-fn order_by_recency(entries: &mut [(String, SystemTime)]) -> Vec<String> {
-    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    entries.iter().map(|(n, _)| n.clone()).collect()
 }
 
 /// Append `.md` to a note name when absent. Errors on an empty name.
@@ -92,11 +67,6 @@ fn ensure_md(name: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-
-    fn t(secs: u64) -> SystemTime {
-        UNIX_EPOCH + Duration::from_secs(secs)
-    }
 
     #[test]
     fn ensure_md_appends() {
@@ -111,24 +81,5 @@ mod tests {
     #[test]
     fn ensure_md_rejects_empty() {
         assert!(ensure_md("").is_err());
-    }
-
-    #[test]
-    fn recency_newest_first() {
-        let mut e = vec![
-            ("old.md".to_string(), t(100)),
-            ("new.md".to_string(), t(300)),
-            ("mid.md".to_string(), t(200)),
-        ];
-        assert_eq!(order_by_recency(&mut e), ["new.md", "mid.md", "old.md"]);
-    }
-
-    #[test]
-    fn recency_ties_break_by_name() {
-        let mut e = vec![
-            ("b.md".to_string(), t(100)),
-            ("a.md".to_string(), t(100)),
-        ];
-        assert_eq!(order_by_recency(&mut e), ["a.md", "b.md"]);
     }
 }

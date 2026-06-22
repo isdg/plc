@@ -14,6 +14,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
 
@@ -50,4 +51,58 @@ fn seed_body(tag: &str, marker: Option<&str>) -> String {
         _ => stamp,
     };
     format!("{stamp}\n\n[[{tag}]]\n")
+}
+
+/// List `*.md` basenames in `dir`, newest-first (mtime desc, name asc on ties).
+/// Shared by the `murmur` and `isg` list/pick flows.
+pub fn list_md_by_recency(dir: &Path) -> std::io::Result<Vec<String>> {
+    let mut entries: Vec<(String, SystemTime)> = fs::read_dir(dir)?
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            if !name.ends_with(".md") {
+                return None;
+            }
+            let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
+            Some((name, mtime))
+        })
+        .collect();
+    Ok(order_by_recency(&mut entries))
+}
+
+/// Sort entries newest-first, breaking mtime ties by name ascending, and
+/// return just the names.
+fn order_by_recency(entries: &mut [(String, SystemTime)]) -> Vec<String> {
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    entries.iter().map(|(n, _)| n.clone()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn t(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn recency_newest_first() {
+        let mut e = vec![
+            ("old.md".to_string(), t(100)),
+            ("new.md".to_string(), t(300)),
+            ("mid.md".to_string(), t(200)),
+        ];
+        assert_eq!(order_by_recency(&mut e), ["new.md", "mid.md", "old.md"]);
+    }
+
+    #[test]
+    fn recency_ties_break_by_name() {
+        let mut e = vec![
+            ("b.md".to_string(), t(100)),
+            ("a.md".to_string(), t(100)),
+        ];
+        assert_eq!(order_by_recency(&mut e), ["a.md", "b.md"]);
+    }
 }
