@@ -47,7 +47,7 @@ pub fn run(palace: &Palace, args: MurmurArgs) -> Result<String, String> {
         .or(args.positional)
         .ok_or_else(|| "murmur: a note name is required (or pass -l to list)".to_string())?;
     let filename = ensure_md(name.trim())?;
-    note::ensure_note(palace.root(), SUBDIR, &filename, "murmur", None)
+    note::ensure_note(palace.root(), SUBDIR, &filename, "murmur", None, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("murmur: {e}"))
 }

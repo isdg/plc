@@ -44,7 +44,7 @@ pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
     );
     let marker = if explicit { Some("*") } else { None };
 
-    note::ensure_note(palace.root(), &subdir, &filename, "daily", marker)
+    note::ensure_note(palace.root(), &subdir, &filename, "daily", marker, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("daily: {e}"))
 }

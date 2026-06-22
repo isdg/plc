@@ -67,7 +67,9 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
             format!("isg{}.md", next_index(&names))
         }
     };
-    note::ensure_note(palace.root(), SUBDIR, &filename, TAG, None)
+    // isg notes lead their header with their own index, e.g. `isg20 <date>`.
+    let stem = filename.strip_suffix(".md").unwrap_or(&filename);
+    note::ensure_note(palace.root(), SUBDIR, &filename, TAG, None, stem)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("isg: {e}"))
 }

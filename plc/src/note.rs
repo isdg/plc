@@ -18,18 +18,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
 
+/// Default stamp prefix — the author's handle, used by every note type except
+/// `isg` notes (which lead with their own index, e.g. `isg20`).
+pub const SIGNATURE: &str = "isg";
+
 /// Ensure a note exists at `<root>/<subdir>/<filename>`, seeding the header
 /// (stamped with the current local time and the `[[tag]]` line) only when the
 /// file is absent or empty. Returns the note's path.
 ///
-/// `marker` is an optional suffix appended to the stamp line — used to flag
-/// back-dated daily notes with `*`.
+/// `stamp_prefix` leads the stamp line (`<prefix> <date>`): usually
+/// [`SIGNATURE`], but `isg` notes pass their basename so the header is
+/// self-identifying, e.g. `isg20 2026-06-22 14:03:11 +0200`. `marker` is an
+/// optional suffix appended to the stamp line — used to flag back-dated daily
+/// notes with `*`.
 pub fn ensure_note(
     root: &Path,
     subdir: &str,
     filename: &str,
     tag: &str,
     marker: Option<&str>,
+    stamp_prefix: &str,
 ) -> std::io::Result<PathBuf> {
     let dir = root.join(subdir);
     fs::create_dir_all(&dir)?;
@@ -38,14 +46,15 @@ pub fn ensure_note(
     // zsh seeds on `[ ! -s "$note" ]` — absent or zero-length.
     let empty = fs::metadata(&note).map(|m| m.len() == 0).unwrap_or(true);
     if empty {
-        fs::write(&note, seed_body(tag, marker))?;
+        fs::write(&note, seed_body(stamp_prefix, tag, marker))?;
     }
     Ok(note)
 }
 
-/// The seeded file contents: stamp line, blank line, `[[tag]]`.
-fn seed_body(tag: &str, marker: Option<&str>) -> String {
-    let stamp = Local::now().format("isg %Y-%m-%d %H:%M:%S %z").to_string();
+/// The seeded file contents: `<prefix> <date>[ <marker>]`, blank line, `[[tag]]`.
+fn seed_body(stamp_prefix: &str, tag: &str, marker: Option<&str>) -> String {
+    let date = Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string();
+    let stamp = format!("{stamp_prefix} {date}");
     let stamp = match marker {
         Some(m) if !m.is_empty() => format!("{stamp} {m}"),
         _ => stamp,

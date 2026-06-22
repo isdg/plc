@@ -59,7 +59,7 @@ pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
 fn new_note(root: &Path, pointer: &Path) -> Result<String, String> {
     let name = Local::now().format("do-%G-W%V.md").to_string();
     write_pointer(pointer, &name)?;
-    note::ensure_note(root, SUBDIR, &name, "do", None)
+    note::ensure_note(root, SUBDIR, &name, "do", None, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("do: {e}"))
 }
