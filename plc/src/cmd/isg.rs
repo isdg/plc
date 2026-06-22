@@ -8,10 +8,12 @@
 //! continuations of `isg52`. Letters use a bijective base-26 sequence
 //! (`a`…`z`, `aa`, `ab`, …) so continuations never run out.
 //!
-//!   `plc isg`         create the next enumerated note → prints path
-//!   `plc isg -l`      list notes newest-first → zsh pipes to fzf
-//!   `plc isg NAME`    resolve/open an existing note by basename (fzf-pick reopen)
-//!   `plc isg -c [N]`  continue note N (or the latest if N omitted) → isg<N><letter>
+//!   `plc isg`                  open the last (most recently modified) note
+//!   `plc isg -l` / `--last`    open the last note (explicit alias of default)
+//!   `plc isg -c` / `--create`  create the next enumerated note → prints path
+//!   `plc isg --continue [N]`   continue note N (or the latest) → isg<N><letter>
+//!   `plc isg --list`           list notes newest-first → zsh pipes to fzf
+//!   `plc isg NAME`             resolve/open an existing note by basename
 
 use std::fs;
 
@@ -25,15 +27,20 @@ const TAG: &str = "isg";
 
 #[derive(Args)]
 pub struct IsgArgs {
+    /// Open the last (most recently modified) note — same as no flag.
+    #[arg(short = 'l', long = "last", conflicts_with_all = ["list", "create", "cont", "name"])]
+    last: bool,
     /// List isg notes newest-first (zsh pipes this through fzf).
-    #[arg(short = 'l', long = "list", conflicts_with_all = ["cont", "name"])]
+    #[arg(long = "list", conflicts_with_all = ["create", "cont", "name"])]
     list: bool,
-    /// Continue note INDEX with the next letter suffix (isg<INDEX><letter>).
-    /// Omit INDEX to continue the latest note.
-    #[arg(short = 'c', long = "continue", value_name = "INDEX", num_args = 0..=1, conflicts_with = "name")]
+    /// Create the next enumerated note (isg0, isg1, …).
+    #[arg(short = 'c', long = "create", conflicts_with_all = ["cont", "name"])]
+    create: bool,
+    /// Continue note INDEX (or the latest if omitted) with the next letter
+    /// suffix → isg<INDEX>a, isg<INDEX>b, …
+    #[arg(long = "continue", value_name = "INDEX", num_args = 0..=1, conflicts_with = "name")]
     cont: Option<Option<u64>>,
-    /// Open an existing note by basename (".md" appended if missing). Without
-    /// it, the next enumerated note is created.
+    /// Open an existing note by basename (".md" appended if missing).
     #[arg(value_name = "NAME")]
     name: Option<String>,
 }
@@ -42,30 +49,35 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
     let note_dir = palace.root().join(SUBDIR);
     fs::create_dir_all(&note_dir).map_err(|e| format!("isg: {e}"))?;
 
+    // --list: emit the machine-readable listing (zsh pipes it through fzf).
     if args.list {
         return note::list_md_by_recency(&note_dir)
             .map(|v| v.join("\n"))
             .map_err(|e| format!("isg: {e}"));
     }
 
-    let filename = match (args.cont, args.name) {
-        // -c [INDEX]: continue note INDEX (or the latest) with the next letter.
-        (Some(which), _) => {
-            let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
-            let base = match which {
-                Some(n) => n,
-                None => max_base(&names)
-                    .ok_or_else(|| "isg: no notes to continue".to_string())?,
-            };
-            next_continuation(&names, base)
-        }
+    let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
+
+    let filename = if args.create {
+        // -c/--create: next enumerated note.
+        format!("isg{}.md", next_index(&names))
+    } else if let Some(which) = args.cont {
+        // --continue [INDEX]: continue note INDEX (or the latest) with a letter.
+        let base = match which {
+            Some(n) => n,
+            None => max_base(&names).ok_or_else(|| "isg: no notes to continue".to_string())?,
+        };
+        next_continuation(&names, base)
+    } else if let Some(n) = args.name {
         // NAME: open an existing note by basename.
-        (None, Some(n)) => with_md(n.trim())?,
-        // (default): next enumerated note.
-        (None, None) => {
-            let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
-            format!("isg{}.md", next_index(&names))
-        }
+        with_md(n.trim())?
+    } else {
+        // default (and -l/--last): open the most recently modified note.
+        let _ = args.last;
+        names
+            .first()
+            .cloned()
+            .ok_or_else(|| "isg: no isg notes yet — create one with `plc isg -c`".to_string())?
     };
     // isg notes lead their header with their own index, e.g. `isg20 <date>`.
     let stem = filename.strip_suffix(".md").unwrap_or(&filename);
