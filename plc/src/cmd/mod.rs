@@ -3,6 +3,7 @@
 
 pub mod daily;
 pub mod do_notes;
+pub mod init;
 pub mod isg;
 pub mod murmur;
 pub mod orphans;
