@@ -51,6 +51,17 @@ pub fn ensure_note(
     Ok(note)
 }
 
+/// Whether [`ensure_note`] *would* seed a new note here — i.e. the file is
+/// absent or empty — without creating anything (not even the parent directory).
+/// Returns the flag alongside the note's path. Used by `--check` flows that
+/// prompt in the shell before a note is actually created.
+pub fn would_create(root: &Path, subdir: &str, filename: &str) -> (bool, PathBuf) {
+    let note = root.join(subdir).join(filename);
+    // Mirror the seed condition in `ensure_note`: absent or zero-length.
+    let empty = fs::metadata(&note).map(|m| m.len() == 0).unwrap_or(true);
+    (empty, note)
+}
+
 /// The seeded file contents: `<prefix> <date>[ <marker>]`, blank line, `[[tag]]`.
 fn seed_body(stamp_prefix: &str, tag: &str, marker: Option<&str>) -> String {
     let date = Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string();
@@ -94,6 +105,30 @@ mod tests {
 
     fn t(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn would_create_reports_absent_empty_and_seeded() {
+        let dir = std::env::temp_dir().join(format!("plc-note-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let root = &dir;
+
+        // Absent → would create, and nothing is written by the check.
+        let (new, path) = would_create(root, "sub", "n.md");
+        assert!(new);
+        assert!(!path.exists());
+        assert!(!dir.join("sub").exists()); // no parent dir created
+
+        // Empty file → still "would create".
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(&path, "").unwrap();
+        assert!(would_create(root, "sub", "n.md").0);
+
+        // Non-empty → would keep.
+        fs::write(&path, "x").unwrap();
+        assert!(!would_create(root, "sub", "n.md").0);
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

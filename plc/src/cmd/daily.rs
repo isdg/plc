@@ -25,6 +25,10 @@ pub struct DailyArgs {
     /// Year; 2-digit (25 → 2025) or 4-digit.
     #[arg(short = 'y', long = "year")]
     year: Option<String>,
+    /// Resolve the note and report `new|old<TAB><path>` without creating it.
+    /// Lets the shell prompt before a new note is actually written.
+    #[arg(long = "check")]
+    check: bool,
 }
 
 pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
@@ -43,6 +47,12 @@ pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
         date.day()
     );
     let marker = if explicit { Some("*") } else { None };
+
+    if args.check {
+        let (new, path) = note::would_create(palace.root(), &subdir, &filename);
+        let status = if new { "new" } else { "old" };
+        return Ok(format!("{status}\t{}", path.display()));
+    }
 
     note::ensure_note(palace.root(), &subdir, &filename, "daily", marker, note::SIGNATURE)
         .map(|p| p.display().to_string())
