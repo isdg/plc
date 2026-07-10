@@ -34,6 +34,8 @@ enum Cmd {
     Weekly,
     /// Create a timestamped daily snapshot note.
     Shot,
+    /// Create/resolve TOP.md at the vault root (the palace landing page).
+    Start,
     /// Manage do-notes (week-based) with a "last" pointer.
     Do(cmd::do_notes::DoArgs),
     /// Manage free-form murmur notes.
@@ -55,6 +57,7 @@ fn main() -> ExitCode {
         Cmd::Daily(args) => with_palace(|p| cmd::daily::run(p, args)),
         Cmd::Weekly => with_palace(cmd::weekly::run),
         Cmd::Shot => with_palace(cmd::shot::run),
+        Cmd::Start => with_palace(cmd::start::run),
         Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
         Cmd::Isg(args) => with_palace(|p| cmd::isg::run(p, args)),
