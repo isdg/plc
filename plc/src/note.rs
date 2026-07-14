@@ -39,6 +39,19 @@ pub fn ensure_note(
     marker: Option<&str>,
     stamp_prefix: &str,
 ) -> std::io::Result<PathBuf> {
+    ensure_file(root, subdir, filename, &seed_body(stamp_prefix, tag, marker))
+}
+
+/// Ensure a file exists at `<root>/<subdir>/<filename>`, writing `body` (making
+/// parent dirs as needed) only when the file is absent or empty. Returns its
+/// path. The body-agnostic core of [`ensure_note`]; used by commands that seed
+/// their own contents (e.g. `shot -i`).
+pub fn ensure_file(
+    root: &Path,
+    subdir: &str,
+    filename: &str,
+    body: &str,
+) -> std::io::Result<PathBuf> {
     let dir = root.join(subdir);
     fs::create_dir_all(&dir)?;
     let note = dir.join(filename);
@@ -46,7 +59,7 @@ pub fn ensure_note(
     // zsh seeds on `[ ! -s "$note" ]` — absent or zero-length.
     let empty = fs::metadata(&note).map(|m| m.len() == 0).unwrap_or(true);
     if empty {
-        fs::write(&note, seed_body(stamp_prefix, tag, marker))?;
+        fs::write(&note, body)?;
     }
     Ok(note)
 }
@@ -62,10 +75,17 @@ pub fn would_create(root: &Path, subdir: &str, filename: &str) -> (bool, PathBuf
     (empty, note)
 }
 
+/// The stamp line leading every seeded note: `<prefix> <local datetime>`, e.g.
+/// `isg 2026-06-20 14:03:11 +0200`. The single source of the stamp format;
+/// reused by commands that assemble their own body (e.g. `shot -i`).
+pub fn stamp_line(prefix: &str) -> String {
+    let date = Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string();
+    format!("{prefix} {date}")
+}
+
 /// The seeded file contents: `<prefix> <date>[ <marker>]`, blank line, `[[tag]]`.
 fn seed_body(stamp_prefix: &str, tag: &str, marker: Option<&str>) -> String {
-    let date = Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string();
-    let stamp = format!("{stamp_prefix} {date}");
+    let stamp = stamp_line(stamp_prefix);
     let stamp = match marker {
         Some(m) if !m.is_empty() => format!("{stamp} {m}"),
         _ => stamp,
