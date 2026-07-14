@@ -2,11 +2,11 @@
 //!
 //! Writes `<%Y-%m-%dT%H.%M>.md`, tagged `shots`, into a directory chosen by
 //! `-p/--path` (created if absent):
-//!   * omitted        → the current directory
-//!   * `@notes/inbox` → the vault root (needs `$PALACE_DIR`)
+//!   * omitted        → the vault daily dir, `notes/management/daily/%Y/%m`
+//!   * `@notes/inbox` → the vault root
 //!   * any other path → used as-is if absolute, else relative to the cwd
 //!
-//! Only `@` paths touch the vault; a plain `shot` needs no `$PALACE_DIR`.
+//! The default and `@` paths resolve `$PALACE_DIR`; a filesystem `-p` does not.
 //!
 //! `-i/--inline TEXT` seeds the body inline (under the stamp, in place of the
 //! `[[shots]]` tag). `--no-header` drops the stamp; the two are independent, so
@@ -24,8 +24,9 @@ use crate::note;
 
 #[derive(Args)]
 pub struct ShotArgs {
-    /// Target directory, created if absent. Default: the current directory.
-    /// A leading `@` resolves against the vault root (e.g. `@notes/inbox`).
+    /// Target directory, created if absent. Default: the vault daily dir.
+    /// A leading `@` resolves against the vault root (e.g. `@notes/inbox`);
+    /// any other path is relative to the current directory (or absolute).
     #[arg(short = 'p', long = "path", value_name = "PATH")]
     path: Option<String>,
     /// Inline note body: written under the stamp, in place of the `[[shots]]`
@@ -34,13 +35,14 @@ pub struct ShotArgs {
     inline: Option<String>,
     /// Omit the stamp header. On its own creates an empty note; with `-i`,
     /// writes just the inline text.
-    #[arg(long = "no-header")]
+    #[arg(short = 'H', long = "no-header")]
     no_header: bool,
 }
 
 pub fn run(args: ShotArgs) -> Result<String, String> {
     let now = Local::now();
-    let dir = target_dir(args.path.as_deref())?;
+    let daily = now.format("notes/management/daily/%Y/%m").to_string();
+    let dir = target_dir(args.path.as_deref(), &daily)?;
     let filename = now.format("%Y-%m-%dT%H.%M.md").to_string();
 
     // The plain `shot` (stamp + `[[shots]]` tag) is the seeded default; any
@@ -69,20 +71,21 @@ fn build_body(stamp: &str, inline: Option<&str>, header: bool) -> String {
     }
 }
 
-/// Resolve the directory the note lands in from `-p`. `@`-prefixed values
-/// anchor at the vault root (resolving `$PALACE_DIR` only then); everything
-/// else is filesystem-relative to the current directory.
-fn target_dir(path: Option<&str>) -> Result<PathBuf, String> {
-    let path = match path {
-        None => return env::current_dir().map_err(|e| format!("shot: {e}")),
-        Some(p) => p,
-    };
-    if let Some(rest) = path.strip_prefix('@') {
-        let palace = Palace::resolve()?;
-        return Ok(palace.root().join(rest.trim_matches('/')));
+/// Resolve the directory the note lands in. No `-p` → the vault `daily` dir;
+/// an `@`-prefixed value → the vault root; anything else → the filesystem,
+/// relative to the cwd (or used as-is when absolute). Vault targets resolve
+/// `$PALACE_DIR` (and only then).
+fn target_dir(path: Option<&str>, daily: &str) -> Result<PathBuf, String> {
+    match path {
+        None => Ok(Palace::resolve()?.root().join(daily)),
+        Some(p) => match p.strip_prefix('@') {
+            Some(rest) => Ok(Palace::resolve()?.root().join(rest.trim_matches('/'))),
+            None => {
+                let cwd = env::current_dir().map_err(|e| format!("shot: {e}"))?;
+                Ok(join_fs(&cwd, p))
+            }
+        },
     }
-    let cwd = env::current_dir().map_err(|e| format!("shot: {e}"))?;
-    Ok(join_fs(&cwd, path))
 }
 
 /// A filesystem `-p` value: used as-is when absolute, else joined onto `cwd`.

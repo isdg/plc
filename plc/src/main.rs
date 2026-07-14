@@ -32,7 +32,7 @@ enum Cmd {
     Daily(cmd::daily::DailyArgs),
     /// Create/resolve this ISO week's note.
     Weekly,
-    /// Create a timestamped snapshot note in the cwd (or a chosen path).
+    /// Create a timestamped snapshot note in the daily dir (or a chosen path).
     Shot(cmd::shot::ShotArgs),
     /// Create/resolve TOP.md at the vault root (the palace landing page).
     Top,
