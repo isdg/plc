@@ -27,6 +27,11 @@ struct Cli {
     /// whichever subcommand runs.
     #[arg(short = 'x', long = "postfix", global = true, value_name = "TEXT")]
     postfix: Option<String>,
+    /// Seed an extra `[[TAG]]` wikilink line into every newly-created note body
+    /// (e.g. `--tag review`). Only affects notes seeded with a header — not
+    /// `shot -i`/`--no-header` bodies.
+    #[arg(short = 't', long = "tag", global = true, value_name = "TAG")]
+    tag: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -56,10 +61,17 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    // A postfix ends up in a filename, so reject anything with a path separator
-    // (or that is blank) before it reaches the note layer.
-    match validate_postfix(cli.postfix) {
-        Ok(postfix) => note::set_postfix(postfix),
+    // A postfix ends up in a filename, and a tag in a `[[…]]` wikilink, so
+    // validate both before they reach the note layer.
+    let stamped = validate_postfix(cli.postfix).and_then(|postfix| {
+        let tag = validate_tag(cli.tag)?;
+        Ok((postfix, tag))
+    });
+    match stamped {
+        Ok((postfix, tag)) => {
+            note::set_postfix(postfix);
+            note::set_tag_postfix(tag);
+        }
         Err(e) => {
             eprintln!("{e}");
             return ExitCode::from(1);
@@ -107,6 +119,23 @@ fn validate_postfix(postfix: Option<String>) -> Result<Option<String>, String> {
     }
     if trimmed.contains('/') || trimmed.contains(std::path::MAIN_SEPARATOR) {
         return Err(format!("plc: --postfix must not contain a path separator: {trimmed}"));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+/// Validate the global `--tag`: trim it, and reject a blank value or one whose
+/// characters would break the `[[…]]` wikilink it is seeded into (brackets or
+/// a newline). Returns the cleaned tag (or `None` when the flag was absent).
+fn validate_tag(tag: Option<String>) -> Result<Option<String>, String> {
+    let Some(raw) = tag else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("plc: --tag must not be blank".to_string());
+    }
+    if trimmed.contains(['[', ']', '\n']) {
+        return Err(format!("plc: --tag must not contain brackets or newlines: {trimmed}"));
     }
     Ok(Some(trimmed.to_string()))
 }

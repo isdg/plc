@@ -29,10 +29,21 @@ pub const SIGNATURE: &str = "isg";
 /// without threading a parameter through each subcommand.
 static POSTFIX: OnceLock<Option<String>> = OnceLock::new();
 
+/// The tag postfix added as an extra `[[…]]` line to every seeded note body
+/// this run (the global `--tag` flag). Like [`POSTFIX`], stashed once from
+/// `main` and read at the shared seeding point ([`seed_body`]).
+static TAG_POSTFIX: OnceLock<Option<String>> = OnceLock::new();
+
 /// Record the run's filename postfix. Idempotent per process; call once, before
 /// any note is created. `None` (or never calling this) leaves filenames as-is.
 pub fn set_postfix(postfix: Option<String>) {
     let _ = POSTFIX.set(postfix);
+}
+
+/// Record the run's tag postfix — an extra `[[…]]` link seeded into new note
+/// bodies. Idempotent per process; call once before any note is created.
+pub fn set_tag_postfix(tag: Option<String>) {
+    let _ = TAG_POSTFIX.set(tag);
 }
 
 /// Apply the run's postfix (if any) to `filename`, inserting it before the
@@ -114,14 +125,25 @@ pub fn stamp_line(prefix: &str) -> String {
     format!("{prefix} {date}")
 }
 
-/// The seeded file contents: `<prefix> <date>[ <marker>]`, blank line, `[[tag]]`.
+/// The seeded file contents: `<prefix> <date>[ <marker>]`, blank line, `[[tag]]`,
+/// plus a trailing `[[<tag postfix>]]` line when the run set one.
 fn seed_body(stamp_prefix: &str, tag: &str, marker: Option<&str>) -> String {
     let stamp = stamp_line(stamp_prefix);
     let stamp = match marker {
         Some(m) if !m.is_empty() => format!("{stamp} {m}"),
         _ => stamp,
     };
-    format!("{stamp}\n\n[[{tag}]]\n")
+    body_with_tags(&stamp, tag, TAG_POSTFIX.get().and_then(|t| t.as_deref()))
+}
+
+/// Assemble a seeded body: the stamp line, a blank line, the `[[tag]]`, and an
+/// optional extra `[[extra]]` line beneath it.
+fn body_with_tags(stamp: &str, tag: &str, extra: Option<&str>) -> String {
+    let mut body = format!("{stamp}\n\n[[{tag}]]\n");
+    if let Some(extra) = extra {
+        body.push_str(&format!("[[{extra}]]\n"));
+    }
+    body
 }
 
 /// List `*.md` basenames in `dir`, newest-first (mtime desc, name asc on ties).
@@ -167,6 +189,15 @@ mod tests {
     #[test]
     fn postfixed_without_extension_appends() {
         assert_eq!(postfixed("NOTES", "review"), "NOTES+review");
+    }
+
+    #[test]
+    fn body_with_tags_appends_extra_link() {
+        assert_eq!(body_with_tags("isg 2026", "shots", None), "isg 2026\n\n[[shots]]\n");
+        assert_eq!(
+            body_with_tags("isg 2026", "shots", Some("review")),
+            "isg 2026\n\n[[shots]]\n[[review]]\n"
+        );
     }
 
     #[test]
