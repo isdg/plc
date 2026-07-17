@@ -22,6 +22,11 @@ use config::Palace;
     about = "palace notes manager — creates files, prints their paths"
 )]
 struct Cli {
+    /// Append a postfix to every created note's filename, before the extension
+    /// (e.g. `--postfix review` → `2026-07-14T20.28+review.md`). Applies to
+    /// whichever subcommand runs.
+    #[arg(short = 'x', long = "postfix", global = true, value_name = "TEXT")]
+    postfix: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -51,6 +56,16 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    // A postfix ends up in a filename, so reject anything with a path separator
+    // (or that is blank) before it reaches the note layer.
+    match validate_postfix(cli.postfix) {
+        Ok(postfix) => note::set_postfix(postfix),
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(1);
+        }
+    }
+
     // Note commands need a validated vault; `orphans` resolves its own root
     // (and can run without a vault when given `-r`).
     let result = match cli.cmd {
@@ -77,6 +92,23 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Validate the global `--postfix`: trim it, and reject a blank value or one
+/// containing a path separator (it must stay a single filename component).
+/// Returns the cleaned postfix (or `None` when the flag was absent).
+fn validate_postfix(postfix: Option<String>) -> Result<Option<String>, String> {
+    let Some(raw) = postfix else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("plc: --postfix must not be blank".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains(std::path::MAIN_SEPARATOR) {
+        return Err(format!("plc: --postfix must not contain a path separator: {trimmed}"));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 /// Resolve the vault, then run `f` against it. Centralizes the `PALACE_DIR`

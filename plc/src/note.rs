@@ -14,6 +14,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
@@ -21,6 +22,36 @@ use chrono::Local;
 /// Default stamp prefix — the author's handle, used by every note type except
 /// `isg` notes (which lead with their own index, e.g. `isg20`).
 pub const SIGNATURE: &str = "isg";
+
+/// The filename postfix applied to every note created this run, set once from
+/// `main` (the global `--postfix` flag). Kept here so it reaches the single
+/// choke point every command shares — [`ensure_file`] and [`would_create`] —
+/// without threading a parameter through each subcommand.
+static POSTFIX: OnceLock<Option<String>> = OnceLock::new();
+
+/// Record the run's filename postfix. Idempotent per process; call once, before
+/// any note is created. `None` (or never calling this) leaves filenames as-is.
+pub fn set_postfix(postfix: Option<String>) {
+    let _ = POSTFIX.set(postfix);
+}
+
+/// Apply the run's postfix (if any) to `filename`, inserting it before the
+/// extension: `2026-07-14T20.28.md` + `review` → `2026-07-14T20.28+review.md`.
+fn apply_postfix(filename: &str) -> String {
+    match POSTFIX.get().and_then(|p| p.as_deref()) {
+        Some(postfix) => postfixed(filename, postfix),
+        None => filename.to_string(),
+    }
+}
+
+/// Insert `postfix` (joined with `+`) before the final `.ext` of `filename`,
+/// or at the end when there is no extension.
+fn postfixed(filename: &str, postfix: &str) -> String {
+    match filename.rsplit_once('.') {
+        Some((stem, ext)) => format!("{stem}+{postfix}.{ext}"),
+        None => format!("{filename}+{postfix}"),
+    }
+}
 
 /// Ensure a note exists at `<root>/<subdir>/<filename>`, seeding the header
 /// (stamped with the current local time and the `[[tag]]` line) only when the
@@ -54,7 +85,7 @@ pub fn ensure_file(
 ) -> std::io::Result<PathBuf> {
     let dir = root.join(subdir);
     fs::create_dir_all(&dir)?;
-    let note = dir.join(filename);
+    let note = dir.join(apply_postfix(filename));
 
     // zsh seeds on `[ ! -s "$note" ]` — absent or zero-length.
     let empty = fs::metadata(&note).map(|m| m.len() == 0).unwrap_or(true);
@@ -69,7 +100,7 @@ pub fn ensure_file(
 /// Returns the flag alongside the note's path. Used by `--check` flows that
 /// prompt in the shell before a note is actually created.
 pub fn would_create(root: &Path, subdir: &str, filename: &str) -> (bool, PathBuf) {
-    let note = root.join(subdir).join(filename);
+    let note = root.join(subdir).join(apply_postfix(filename));
     // Mirror the seed condition in `ensure_note`: absent or zero-length.
     let empty = fs::metadata(&note).map(|m| m.len() == 0).unwrap_or(true);
     (empty, note)
@@ -125,6 +156,17 @@ mod tests {
 
     fn t(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn postfixed_inserts_before_extension() {
+        assert_eq!(postfixed("2026-07-14T20.28.md", "review"), "2026-07-14T20.28+review.md");
+        assert_eq!(postfixed("TOP.md", "review"), "TOP+review.md");
+    }
+
+    #[test]
+    fn postfixed_without_extension_appends() {
+        assert_eq!(postfixed("NOTES", "review"), "NOTES+review");
     }
 
     #[test]
