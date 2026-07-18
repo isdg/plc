@@ -241,6 +241,60 @@ pub fn year_stats(sizes: &[u64], year: i32, cutoff_doy: Option<u32>) -> YearStat
     }
 }
 
+/// Render an ASCII line chart of `values` (one column each) as `height + 1`
+/// lines: `height` plotted rows with right-aligned byte-axis labels, then the
+/// bottom axis. Uses box-drawing connectors (`● ─ │ ╭ ╮ ╰ ╯`). Ports the
+/// script's `draw_line_chart`; `max` is the top of the y-axis (clamped to ≥1).
+pub fn line_chart(max: u64, width: usize, height: usize, values: &[u64]) -> Vec<String> {
+    if width == 0 || height < 2 {
+        return Vec::new();
+    }
+    let max = max.max(1);
+    let span = height as u64 - 1;
+
+    // Row (0 = top) each column's point lands on.
+    let rows: Vec<usize> = (0..width)
+        .map(|i| {
+            let v = values.get(i).copied().unwrap_or(0).min(max);
+            (((max - v) * span) / max) as usize
+        })
+        .collect();
+
+    let mut grid = vec![vec![' '; width]; height];
+    grid[rows[0]][0] = '●';
+    for i in 1..width {
+        let (r, prev) = (rows[i], rows[i - 1]);
+        if prev == r {
+            grid[r][i] = '─';
+        } else if prev < r {
+            grid[prev][i] = '╮';
+            for cell in grid.iter_mut().take(r).skip(prev + 1) {
+                cell[i] = '│';
+            }
+            grid[r][i] = '╰';
+        } else {
+            grid[prev][i] = '╯';
+            for cell in grid.iter_mut().take(prev).skip(r + 1) {
+                cell[i] = '│';
+            }
+            grid[r][i] = '╭';
+        }
+    }
+
+    let mut lines = Vec::with_capacity(height + 1);
+    for (r, gridrow) in grid.iter().enumerate() {
+        let val = max * (span - r as u64) / span;
+        let sep = if r == 0 { '┼' } else { '┤' };
+        let mut line = format!("{:>9} {sep}", fmt_bytes(val));
+        line.extend(gridrow.iter());
+        lines.push(line);
+    }
+    let mut bottom = format!("{:>9} └", "0");
+    bottom.extend(std::iter::repeat_n('─', width));
+    lines.push(bottom);
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +401,27 @@ mod tests {
         assert_eq!(st.best_month_total, 12400);
         // Feb 29 (idx 59) then March (idx 60..90) are contiguous → run of 32.
         assert_eq!(st.longest_run, 32);
+    }
+
+    #[test]
+    fn line_chart_shape_and_connectors() {
+        // A V: high, low, high over 3 columns, y-axis height 3.
+        let lines = line_chart(100, 3, 3, &[0, 100, 0]);
+        assert_eq!(lines.len(), 4); // 3 plotted rows + bottom axis
+        // Top row dips in the middle: space, then a peak joining down on both sides.
+        assert!(lines[0].ends_with(" ╭╮"), "{}", lines[0]);
+        // Bottom plotted row: start marker ● then the two valley connectors.
+        assert!(lines[2].ends_with("●╯╰"), "{}", lines[2]);
+        // Axis labels: top = max, bottom plotted row = 0.
+        assert!(lines[0].contains("100 B"), "{}", lines[0]);
+        assert!(lines[2].trim_start().starts_with("0 B"), "{}", lines[2]);
+        assert!(lines[3].ends_with("───"), "{}", lines[3]);
+    }
+
+    #[test]
+    fn line_chart_degenerate_inputs() {
+        assert!(line_chart(100, 0, 8, &[]).is_empty());
+        assert!(line_chart(0, 3, 1, &[1, 2, 3]).is_empty());
     }
 
     #[test]
