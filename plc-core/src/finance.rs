@@ -39,6 +39,13 @@ pub fn default_currency() -> String {
         .unwrap_or_else(|| "EUR".to_string())
 }
 
+/// Parse a positive major-unit amount (e.g. `"4.50"`) into minor units (`450`).
+/// The magnitude only — direction is decided by the caller (expense/income/
+/// transfer). `None` if malformed. Used by `plc fin add` on its `AMOUNT` arg.
+pub fn amount_to_minor(s: &str) -> Option<i64> {
+    parse_amount(s.trim()).map(|(_neg, minor)| minor)
+}
+
 /// What a transaction does to its account(s).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -248,6 +255,15 @@ mod tests {
         };
         assert_eq!(format_line(&t), "$ -10.00 EUR  @[[cash]]");
         assert_eq!(parse_line(&format_line(&t), EUR).as_ref(), Some(&t));
+    }
+
+    #[test]
+    fn amount_to_minor_parses_magnitude() {
+        assert_eq!(amount_to_minor("4.50"), Some(450));
+        assert_eq!(amount_to_minor(" 12 "), Some(1200));
+        assert_eq!(amount_to_minor("2400.00"), Some(240000));
+        assert_eq!(amount_to_minor("4.500"), None);
+        assert_eq!(amount_to_minor("x"), None);
     }
 
     #[test]

@@ -48,6 +48,8 @@ enum Cmd {
     Top,
     /// Manage do-notes (week-based) with a "last" pointer.
     Do(cmd::do_notes::DoArgs),
+    /// Track finances: append transactions to today's `+ledger` note.
+    Fin(cmd::fin::FinArgs),
     /// Manage free-form murmur notes.
     Murmur(cmd::murmur::MurmurArgs),
     /// Create/resolve enumerated isg notes (isg0, isg1, …).
@@ -86,6 +88,7 @@ fn main() -> ExitCode {
         Cmd::Shot(args) => cmd::shot::run(args),
         Cmd::Top => with_palace(cmd::top::run),
         Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
+        Cmd::Fin(args) => with_palace(|p| cmd::fin::run(p, args)),
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
         Cmd::Isg(args) => with_palace(|p| cmd::isg::run(p, args)),
         Cmd::Orphans(args) => cmd::orphans::run(args),

@@ -13,6 +13,8 @@
 //! and the zsh wrapper opens it with `$EDITOR`.
 
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -146,6 +148,44 @@ fn body_with_tags(stamp: &str, tag: &str, extra: Option<&str>) -> String {
     body
 }
 
+/// Append `line` (as its own line) to a tagged note, seeding the standard header
+/// when the file is absent or empty. Returns the note's path.
+///
+/// The first appended line is separated from the seeded header block by a blank
+/// line; subsequent lines follow consecutively. Unlike [`ensure_note`], this
+/// writes body *content* — used by `plc fin add` to record a transaction in one
+/// shot rather than opening an editor.
+pub fn append_line(
+    root: &Path,
+    subdir: &str,
+    filename: &str,
+    tag: &str,
+    line: &str,
+) -> std::io::Result<PathBuf> {
+    let path = ensure_note(root, subdir, filename, tag, None, SIGNATURE)?;
+    let content = fs::read_to_string(&path)?;
+
+    let mut suffix = String::new();
+    // Close an unterminated final line so the appended text starts fresh.
+    if !content.is_empty() && !content.ends_with('\n') {
+        suffix.push('\n');
+    }
+    // Insert one blank line before the *first* transaction (when the file so far
+    // ends in the header/tag block, not another transaction), so money is set
+    // off from the header. Later transactions stay consecutive.
+    let last = content.trim_end_matches('\n').lines().last().unwrap_or("");
+    let ends_blank = suffix.is_empty() && content.ends_with("\n\n");
+    if !content.is_empty() && !ends_blank && !last.trim_start().starts_with('$') {
+        suffix.push('\n');
+    }
+    suffix.push_str(line);
+    suffix.push('\n');
+
+    let mut file = OpenOptions::new().append(true).open(&path)?;
+    file.write_all(suffix.as_bytes())?;
+    Ok(path)
+}
+
 /// List `*.md` basenames in `dir`, newest-first (mtime desc, name asc on ties).
 /// Shared by the `murmur` and `isg` list/pick flows.
 pub fn list_md_by_recency(dir: &Path) -> std::io::Result<Vec<String>> {
@@ -220,6 +260,30 @@ mod tests {
         // Non-empty → would keep.
         fs::write(&path, "x").unwrap();
         assert!(!would_create(root, "sub", "n.md").0);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn append_line_seeds_header_then_appends() {
+        let dir = std::env::temp_dir().join(format!("plc-append-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+
+        // First append seeds the header + tag, sets the transaction off with a
+        // blank line, and writes the line.
+        let path = append_line(&dir, "sub", "l.md", "ledger", "$ -4.50 EUR  @[[cash]]").unwrap();
+        let after_first = fs::read_to_string(&path).unwrap();
+        assert!(after_first.contains("[[ledger]]\n"), "header seeded: {after_first:?}");
+        assert!(after_first.ends_with("[[ledger]]\n\n$ -4.50 EUR  @[[cash]]\n"), "{after_first:?}");
+
+        // Second append lands on a new consecutive line — header written once.
+        append_line(&dir, "sub", "l.md", "ledger", "$ +7.00 EUR  @[[cash]]").unwrap();
+        let after_second = fs::read_to_string(&path).unwrap();
+        assert_eq!(after_second.matches("[[ledger]]").count(), 1);
+        assert!(
+            after_second.ends_with("$ -4.50 EUR  @[[cash]]\n$ +7.00 EUR  @[[cash]]\n"),
+            "{after_second:?}"
+        );
 
         fs::remove_dir_all(&dir).ok();
     }
