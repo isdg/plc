@@ -36,6 +36,8 @@ pub struct FinArgs {
 enum FinCmd {
     /// Append a transaction to today's ledger.
     Add(AddArgs),
+    /// Summarize transactions across all ledgers (net, by category, by account).
+    Report,
 }
 
 #[derive(Args)]
@@ -68,7 +70,14 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
     match args.cmd {
         None => seed_today(palace),
         Some(FinCmd::Add(add_args)) => add(palace, add_args),
+        Some(FinCmd::Report) => report(palace),
     }
+}
+
+/// `plc fin report`: aggregate every `+ledger` file under the daily tree.
+fn report(palace: &Palace) -> Result<String, String> {
+    let root = palace.root().join("notes/management/daily");
+    finance::report(&root, &finance::default_currency())
 }
 
 /// Today's ledger location: `(subdir, filename)` under the daily tree.

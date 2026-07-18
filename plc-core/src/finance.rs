@@ -25,7 +25,12 @@
 //! Both directions live here so a round-trip (`parse_line(format_line(t)) == t`)
 //! pins the grammar.
 
+use std::collections::BTreeMap;
 use std::env;
+use std::fs;
+use std::path::Path;
+
+use walkdir::WalkDir;
 
 use crate::normalize_target;
 
@@ -191,11 +196,152 @@ fn take_sigil_link(s: &str, sigil: char) -> Option<(String, &str)> {
     Some((normalize_target(inner), after))
 }
 
+/// Aggregated totals for one currency. `categories`/`accounts` map a name to a
+/// signed minor-unit total (income `+`, expense `-`; transfers move balance
+/// between accounts but touch no category and no income/expense).
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct CurrencyTotals {
+    pub income: i64,
+    pub expense: i64,
+    pub count: usize,
+    pub categories: BTreeMap<String, i64>,
+    pub accounts: BTreeMap<String, i64>,
+}
+
+impl CurrencyTotals {
+    /// Income minus expense (transfers net to zero here).
+    pub fn net(&self) -> i64 {
+        self.income - self.expense
+    }
+}
+
+/// Fold transactions into per-currency totals. Pure — no I/O — so the aggregation
+/// rules are unit-testable directly. Keyed by currency code (sorted).
+pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
+    let mut per: BTreeMap<String, CurrencyTotals> = BTreeMap::new();
+    for t in txns {
+        let cur = per.entry(t.currency.clone()).or_default();
+        cur.count += 1;
+        match t.kind {
+            Kind::Expense => {
+                cur.expense += t.amount;
+                *cur.accounts.entry(t.account.clone()).or_default() -= t.amount;
+                if let Some(cat) = &t.other {
+                    *cur.categories.entry(cat.clone()).or_default() -= t.amount;
+                }
+            }
+            Kind::Income => {
+                cur.income += t.amount;
+                *cur.accounts.entry(t.account.clone()).or_default() += t.amount;
+                if let Some(cat) = &t.other {
+                    *cur.categories.entry(cat.clone()).or_default() += t.amount;
+                }
+            }
+            Kind::Transfer => {
+                *cur.accounts.entry(t.account.clone()).or_default() -= t.amount;
+                if let Some(dest) = &t.other {
+                    *cur.accounts.entry(dest.clone()).or_default() += t.amount;
+                }
+            }
+        }
+    }
+    per
+}
+
+/// Walk `root` for `*+ledger.md` files, parse every transaction line, and return
+/// a formatted per-currency report (net, totals by category, balances by
+/// account). Mirrors the walk/aggregate shape of [`crate::orphans::report`].
+/// `default_currency` fills in for lines that omit an explicit code.
+pub fn report(root: &Path, default_currency: &str) -> Result<String, String> {
+    if !root.is_dir() {
+        return Err(format!("fin: cannot read {}", root.display()));
+    }
+    let mut txns: Vec<Transaction> = Vec::new();
+    let mut ledger_files = 0usize;
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("+ledger.md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        ledger_files += 1;
+        for line in content.lines() {
+            if let Some(t) = parse_line(line, default_currency) {
+                txns.push(t);
+            }
+        }
+    }
+    Ok(render(&summarize(&txns), ledger_files))
+}
+
+/// Format a summary as a human-readable block, in the visual style of
+/// `orphans::report` (leading blank line, indented, no trailing newline).
+fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize) -> String {
+    let total: usize = summary.values().map(|c| c.count).sum();
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(String::new());
+    lines.push(format!(
+        "  Finance — {total} transaction(s) across {ledger_files} ledger file(s)"
+    ));
+    if summary.is_empty() {
+        lines.push(String::new());
+        lines.push("  (no transactions found)".to_string());
+        return lines.join("\n");
+    }
+    for (cur, t) in summary {
+        lines.push(String::new());
+        lines.push(format!("  {cur}"));
+        lines.push(format!("    income   : {}", format_amount(t.income)));
+        lines.push(format!("    expenses : {}", format_amount(t.expense)));
+        lines.push(format!("    net      : {}", format_signed(t.net())));
+        push_section(&mut lines, "by category", &t.categories);
+        push_section(&mut lines, "by account", &t.accounts);
+    }
+    lines.join("\n")
+}
+
+/// Append a titled, signed-total section (skipped when empty).
+fn push_section(lines: &mut Vec<String>, title: &str, rows: &BTreeMap<String, i64>) {
+    if rows.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(format!("    {title}"));
+    for (name, total) in rows {
+        lines.push(format!("      {name:<18}{}", format_signed(*total)));
+    }
+}
+
+/// Signed major-unit rendering: `+2400.00`, `-4.50`, `+0.00`.
+fn format_signed(minor: i64) -> String {
+    let sign = if minor < 0 { '-' } else { '+' };
+    format!("{sign}{}", format_amount(minor))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const EUR: &str = "EUR";
+
+    fn txn(amount: i64, currency: &str, kind: Kind, account: &str, other: Option<&str>) -> Transaction {
+        Transaction {
+            amount,
+            currency: currency.into(),
+            kind,
+            account: account.into(),
+            other: other.map(Into::into),
+            memo: String::new(),
+        }
+    }
 
     fn expense() -> Transaction {
         Transaction {
@@ -323,5 +469,72 @@ mod tests {
         assert!(parse_line("$ abc @[[cash]]", EUR).is_none());
         assert!(parse_line("$ 4.500 @[[cash]]", EUR).is_none()); // >2 decimals
         assert!(parse_line("$ . @[[cash]]", EUR).is_none());
+    }
+
+    #[test]
+    fn summarize_net_categories_and_balances() {
+        let txns = vec![
+            txn(450, "EUR", Kind::Expense, "cash", Some("coffee")),
+            txn(240000, "EUR", Kind::Income, "checking", Some("salary")),
+            txn(20000, "EUR", Kind::Transfer, "checking", Some("cash")),
+        ];
+        let s = summarize(&txns);
+        let eur = &s["EUR"];
+        assert_eq!(eur.income, 240000);
+        assert_eq!(eur.expense, 450);
+        assert_eq!(eur.net(), 239550);
+        // Transfer moves value both ways: cash gains 20000 (minus the 450 expense);
+        // checking loses 20000 (on top of the 240000 income).
+        assert_eq!(eur.accounts["cash"], 19550);
+        assert_eq!(eur.accounts["checking"], 220000);
+        // Categories exclude transfers.
+        assert_eq!(eur.categories["coffee"], -450);
+        assert_eq!(eur.categories["salary"], 240000);
+        assert!(!eur.categories.contains_key("cash"));
+    }
+
+    #[test]
+    fn summarize_groups_per_currency() {
+        let txns = vec![
+            txn(1200, "USD", Kind::Expense, "card", None),
+            txn(500, "EUR", Kind::Expense, "cash", None),
+        ];
+        let s = summarize(&txns);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s["USD"].expense, 1200);
+        assert_eq!(s["EUR"].expense, 500);
+    }
+
+    #[test]
+    fn report_walks_only_ledger_files() {
+        let dir = std::env::temp_dir().join(format!("plc-finrep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let sub = dir.join("2026/07");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(
+            sub.join("2026-07-19+ledger.md"),
+            "isg\n\n[[ledger]]\n\n$ -4.50 EUR  @[[cash]] #[[coffee]]  x\n$ +100 EUR @[[cash]] #[[gift]]\n",
+        )
+        .unwrap();
+        // A normal daily note (no +ledger) must be ignored, even if it holds a `$` line.
+        fs::write(sub.join("2026-07-19.md"), "$ -999 EUR @[[cash]]\n").unwrap();
+
+        let out = report(&dir, EUR).unwrap();
+        assert!(out.contains("EUR"), "{out}");
+        assert!(out.contains("net"), "{out}");
+        assert!(out.contains("coffee"), "{out}");
+        assert!(!out.contains("999"), "non-ledger file leaked: {out}");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn report_empty_when_no_ledgers() {
+        let dir = std::env::temp_dir().join(format!("plc-finempty-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let out = report(&dir, EUR).unwrap();
+        assert!(out.contains("no transactions found"), "{out}");
+        fs::remove_dir_all(&dir).ok();
     }
 }
