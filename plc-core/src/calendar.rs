@@ -1,0 +1,220 @@
+//! Daily-note activity stats — the data behind `plc stat` (ports `_calendar.sh`).
+//!
+//! Every daily note is scored by its on-disk **byte size** (never its content);
+//! sizes drive a heatmap glyph and a set of streak/total statistics. The math
+//! here is pure given a slice of sizes, so month/year aggregation is unit-tested
+//! without touching the filesystem. Date/weekday layout lives in the `plc stat`
+//! command (which already depends on chrono); this crate stays chrono-free.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Path to the daily note for `y-m-d` under a vault `root`:
+/// `notes/management/daily/<YYYY>/<MM>/<YYYY>-<MM>-<DD>.md` — the same string
+/// the `daily` and `fin` commands build.
+pub fn day_path(root: &Path, y: i32, m: u32, d: u32) -> PathBuf {
+    root.join(format!(
+        "notes/management/daily/{y:04}/{m:02}/{y:04}-{m:02}-{d:02}.md"
+    ))
+}
+
+/// On-disk byte size of `path`, or 0 when it is missing/unreadable (a missing
+/// daily note counts as an empty day). Ports `stat -f%z … || echo 0`.
+pub fn size_of(path: &Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// Heatmap glyph for a byte size, by the same buckets as the script's `sym()`:
+/// `·` empty · `░` <1KB · `▒` 1–4KB · `▓` 4–10KB · `█` >10KB.
+pub fn symbol(bytes: u64) -> char {
+    match bytes {
+        0 => '·',
+        b if b < 1024 => '░',
+        b if b < 4096 => '▒',
+        b if b < 10240 => '▓',
+        _ => '█',
+    }
+}
+
+/// Human byte size: `B`, `KB` (1 dp), or `MB` (2 dp). Ports the script's `fmt()`.
+pub fn fmt_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1_048_576 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.2} MB", bytes as f64 / 1_048_576.0)
+    }
+}
+
+/// Days in month `m` (1–12) of year `y`, honoring the Gregorian leap rule.
+/// Replaces the script's `cal … | awk` last-day probe.
+pub fn last_day_of_month(y: i32, m: u32) -> u32 {
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap(y) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn is_leap(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// Aggregate statistics over one month's daily sizes; `sizes[i]` is day `i + 1`.
+pub struct MonthStats {
+    pub days_written: u32,
+    pub last_day: u32,
+    pub total: u64,
+    pub longest_run: u32,
+    pub current_run: u32,
+    /// 1-based day of the largest note, or 0 when the month is empty.
+    pub best_day: u32,
+    pub best_size: u64,
+    pub pct: u32,
+}
+
+/// Compute month stats from per-day sizes. `cutoff` is the day to count the
+/// current run back from — pass the current day-of-month when rendering *this*
+/// month (so a still-empty today doesn't mask an ongoing streak), else `None`
+/// to count back from the last day. Ties on the best day resolve to the first.
+pub fn month_stats(sizes: &[u64], cutoff: Option<u32>) -> MonthStats {
+    let last_day = sizes.len() as u32;
+    let mut days_written = 0;
+    let mut total = 0;
+    let mut longest_run = 0;
+    let mut run = 0;
+    let mut best_day = 0;
+    let mut best_size = 0;
+    for (i, &s) in sizes.iter().enumerate() {
+        if s > 0 {
+            days_written += 1;
+            total += s;
+            run += 1;
+            if run > longest_run {
+                longest_run = run;
+            }
+            if s > best_size {
+                best_size = s;
+                best_day = i as u32 + 1;
+            }
+        } else {
+            run = 0;
+        }
+    }
+
+    let end = cutoff.unwrap_or(last_day);
+    let mut current_run = 0;
+    let mut d = end;
+    while d >= 1 && sizes.get((d - 1) as usize).copied().unwrap_or(0) > 0 {
+        current_run += 1;
+        d -= 1;
+    }
+
+    let pct = if last_day > 0 {
+        days_written * 100 / last_day
+    } else {
+        0
+    };
+
+    MonthStats {
+        days_written,
+        last_day,
+        total,
+        longest_run,
+        current_run,
+        best_day,
+        best_size,
+        pct,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbol_buckets() {
+        assert_eq!(symbol(0), '·');
+        assert_eq!(symbol(1), '░');
+        assert_eq!(symbol(1023), '░');
+        assert_eq!(symbol(1024), '▒');
+        assert_eq!(symbol(4095), '▒');
+        assert_eq!(symbol(4096), '▓');
+        assert_eq!(symbol(10239), '▓');
+        assert_eq!(symbol(10240), '█');
+    }
+
+    #[test]
+    fn fmt_bytes_units() {
+        assert_eq!(fmt_bytes(0), "0 B");
+        assert_eq!(fmt_bytes(512), "512 B");
+        assert_eq!(fmt_bytes(1024), "1.0 KB");
+        assert_eq!(fmt_bytes(1536), "1.5 KB");
+        assert_eq!(fmt_bytes(1_048_576), "1.00 MB");
+        assert_eq!(fmt_bytes(1_572_864), "1.50 MB");
+    }
+
+    #[test]
+    fn last_day_leap_and_common() {
+        assert_eq!(last_day_of_month(2024, 2), 29);
+        assert_eq!(last_day_of_month(2026, 2), 28);
+        assert_eq!(last_day_of_month(2000, 2), 29);
+        assert_eq!(last_day_of_month(1900, 2), 28);
+        assert_eq!(last_day_of_month(2026, 4), 30);
+        assert_eq!(last_day_of_month(2026, 12), 31);
+    }
+
+    #[test]
+    fn empty_month() {
+        let st = month_stats(&[0, 0, 0], None);
+        assert_eq!(st.days_written, 0);
+        assert_eq!(st.total, 0);
+        assert_eq!(st.longest_run, 0);
+        assert_eq!(st.current_run, 0);
+        assert_eq!(st.best_day, 0);
+        assert_eq!(st.pct, 0);
+    }
+
+    #[test]
+    fn full_month_all_written() {
+        let sizes = [100u64; 30];
+        let st = month_stats(&sizes, None);
+        assert_eq!(st.days_written, 30);
+        assert_eq!(st.total, 3000);
+        assert_eq!(st.longest_run, 30);
+        assert_eq!(st.current_run, 30);
+        assert_eq!(st.pct, 100);
+    }
+
+    #[test]
+    fn gap_breaks_runs() {
+        // days: 1,2 written, 3 empty, 4,5,6 written (last day)
+        let st = month_stats(&[10, 20, 0, 30, 40, 50], None);
+        assert_eq!(st.days_written, 5);
+        assert_eq!(st.longest_run, 3);
+        // current run counts back from the last day: 4,5,6 → 3
+        assert_eq!(st.current_run, 3);
+        assert_eq!(st.best_size, 50);
+        assert_eq!(st.best_day, 6);
+    }
+
+    #[test]
+    fn cutoff_counts_current_run_from_today() {
+        // Current month: today is day 3 (empty), days 1,2 written. Counting from
+        // day 3 back hits the empty today first → current run 0, but the streak
+        // before it is preserved in longest_run.
+        let st = month_stats(&[10, 20, 0, 0, 0], Some(3));
+        assert_eq!(st.current_run, 0);
+        assert_eq!(st.longest_run, 2);
+    }
+
+    #[test]
+    fn best_day_tie_takes_first() {
+        let st = month_stats(&[50, 50, 10], None);
+        assert_eq!(st.best_day, 1);
+        assert_eq!(st.best_size, 50);
+    }
+}

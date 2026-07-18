@@ -2,6 +2,7 @@
 //! target normalization. Used by plc-orphans and (later) the
 //! plc LSP for go-to-definition and rename across [[links]].
 
+pub mod calendar;
 pub mod finance;
 pub mod orphans;
 

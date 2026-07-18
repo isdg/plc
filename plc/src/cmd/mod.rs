@@ -9,5 +9,6 @@ pub mod isg;
 pub mod murmur;
 pub mod orphans;
 pub mod shot;
+pub mod stat;
 pub mod top;
 pub mod weekly;
