@@ -131,6 +131,116 @@ pub fn month_stats(sizes: &[u64], cutoff: Option<u32>) -> MonthStats {
     }
 }
 
+/// Per-day byte sizes for a whole year, indexed by day-of-year − 1 (Jan 1 = 0),
+/// walking Jan→Dec. Length is the number of days in `y`. Ports `collect_year`.
+pub fn collect_year(root: &Path, y: i32) -> Vec<u64> {
+    let mut sizes = Vec::with_capacity(366);
+    for m in 1..=12 {
+        for d in 1..=last_day_of_month(y, m) {
+            sizes.push(size_of(&day_path(root, y, m, d)));
+        }
+    }
+    sizes
+}
+
+/// Aggregate statistics over one year's day-of-year sizes (`collect_year`).
+pub struct YearStats {
+    pub days_written: u32,
+    pub total_days: u32,
+    pub total: u64,
+    pub longest_run: u32,
+    pub current_run: u32,
+    /// Month (1-based) with the largest byte total, or 0 when the year is empty.
+    pub best_month: u32,
+    pub best_month_days: u32,
+    pub best_month_total: u64,
+    /// Month + day-of-month of the single largest note (0/0 when empty).
+    pub best_day_month: u32,
+    pub best_day_dom: u32,
+    pub best_size: u64,
+    pub pct: u32,
+}
+
+/// Compute year stats from day-of-year sizes. `year` supplies month lengths (so
+/// day-of-year maps back to month/day); `cutoff_doy` is the day-of-year to count
+/// the current run back from — pass today's ordinal for the current year, else
+/// `None`. Ports `render_year_stats`; ties on best month/day resolve to first.
+pub fn year_stats(sizes: &[u64], year: i32, cutoff_doy: Option<u32>) -> YearStats {
+    let mut days_written = 0;
+    let mut total = 0;
+    let mut longest_run = 0;
+    let mut run = 0;
+    let mut best_size = 0;
+    let mut best_day_month = 0;
+    let mut best_day_dom = 0;
+    let mut best_month = 0;
+    let mut best_month_total = 0;
+    let mut best_month_days = 0;
+
+    let mut doy = 0usize;
+    for m in 1..=12 {
+        let last = last_day_of_month(year, m);
+        let mut month_total = 0;
+        let mut month_days = 0;
+        for d in 1..=last {
+            let sz = sizes.get(doy).copied().unwrap_or(0);
+            doy += 1;
+            if sz > 0 {
+                days_written += 1;
+                total += sz;
+                run += 1;
+                if run > longest_run {
+                    longest_run = run;
+                }
+                if sz > best_size {
+                    best_size = sz;
+                    best_day_month = m;
+                    best_day_dom = d;
+                }
+                month_days += 1;
+                month_total += sz;
+            } else {
+                run = 0;
+            }
+        }
+        if month_total > best_month_total {
+            best_month_total = month_total;
+            best_month_days = month_days;
+            best_month = m;
+        }
+    }
+
+    let total_days = doy as u32;
+    let end = cutoff_doy.unwrap_or(total_days);
+    let mut current_run = 0;
+    let mut dd = end;
+    while dd >= 1 && sizes.get((dd - 1) as usize).copied().unwrap_or(0) > 0 {
+        current_run += 1;
+        dd -= 1;
+    }
+
+    let pct = if total_days > 0 {
+        days_written * 100 / total_days
+    } else {
+        0
+    };
+
+    YearStats {
+        days_written,
+        total_days,
+        total,
+        longest_run,
+        current_run,
+        best_month,
+        best_month_days,
+        best_month_total,
+        best_day_month,
+        best_day_dom,
+        best_size,
+        pct,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +326,37 @@ mod tests {
         let st = month_stats(&[50, 50, 10], None);
         assert_eq!(st.best_day, 1);
         assert_eq!(st.best_size, 50);
+    }
+
+    #[test]
+    fn year_stats_leap_length_and_best_picks() {
+        // 2024 is a leap year → 366 days. Build a year where Feb 29 is the single
+        // largest note and March carries the largest monthly total.
+        let mut sizes = vec![0u64; 366];
+        sizes[59] = 9000; // day-of-year 60 = Feb 29, 2024 (idx 59) — biggest single day
+        for i in 60..91 {
+            sizes[i] = 400; // all of March (31 days) → 12400, the biggest month
+        }
+        let st = year_stats(&sizes, 2024, None);
+        assert_eq!(st.total_days, 366);
+        assert_eq!(st.best_day_month, 2);
+        assert_eq!(st.best_day_dom, 29);
+        assert_eq!(st.best_size, 9000);
+        assert_eq!(st.best_month, 3);
+        assert_eq!(st.best_month_days, 31);
+        assert_eq!(st.best_month_total, 12400);
+        // Feb 29 (idx 59) then March (idx 60..90) are contiguous → run of 32.
+        assert_eq!(st.longest_run, 32);
+    }
+
+    #[test]
+    fn year_stats_current_run_from_cutoff() {
+        let mut sizes = vec![0u64; 365];
+        sizes[0] = 10; // Jan 1
+        sizes[1] = 20; // Jan 2
+        // cutoff at day-of-year 3 (empty) → current run 0, prior streak preserved.
+        let st = year_stats(&sizes, 2026, Some(3));
+        assert_eq!(st.current_run, 0);
+        assert_eq!(st.longest_run, 2);
     }
 }

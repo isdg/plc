@@ -14,7 +14,7 @@ use std::path::Path;
 
 use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
-use plc_core::calendar::{self, MonthStats};
+use plc_core::calendar::{self, MonthStats, YearStats};
 
 use crate::config::Palace;
 
@@ -53,7 +53,12 @@ pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
             }
             Ok(render_month(palace.root(), year, month, today))
         }
-        "year" => Err("plc stat: -t/--type year not yet implemented".to_string()),
+        "year" => {
+            if args.plot {
+                return Err("plc stat: -p/--plot not yet implemented".to_string());
+            }
+            render_year(palace.root(), year, &args.layout, today)
+        }
         other => Err(format!("plc stat: unknown type: {other} (expected month|year)")),
     }
 }
@@ -197,6 +202,160 @@ fn push_month_stats(out: &mut String, st: &MonthStats, y: i32, m: u32) {
         );
     }
     // The script's trailing `printf "\n"` is supplied by `main`'s `println!`.
+}
+
+/// Render a whole year: the chosen heatmap layout followed by the year Stats
+/// block. Ports the `year` arm of the script's dispatch.
+fn render_year(root: &Path, y: i32, layout: &str, today: NaiveDate) -> Result<String, String> {
+    let sizes = calendar::collect_year(root, y);
+    let mut out = match layout {
+        "git" => render_year_git(&sizes, y, today),
+        "tab" => render_year_tab(&sizes, y, today),
+        other => return Err(format!("plc stat: unknown layout: {other} (expected git|tab)")),
+    };
+    let cutoff = (y == today.year()).then_some(today.ordinal());
+    let st = calendar::year_stats(&sizes, y, cutoff);
+    push_year_stats(&mut out, &st, y);
+    Ok(out)
+}
+
+/// Tab layout: one row per month — bold for the current month — with a heatmap
+/// strip and a right-hand `days/total` summary. Ports `render_year_tab`.
+fn render_year_tab(sizes: &[u64], y: i32, today: NaiveDate) -> String {
+    let mut out = String::new();
+    out.push('\n');
+    let _ = writeln!(out, "{}{y} activity", " ".repeat(30));
+    out.push('\n');
+
+    let mut off = 0usize;
+    for m in 1..=12 {
+        let last = calendar::last_day_of_month(y, m);
+        let label = NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b");
+        let (b, r) = if y == today.year() && m == today.month() {
+            ("\x1b[1m", "\x1b[0m")
+        } else {
+            ("", "")
+        };
+        let mut strip = String::new();
+        let mut mtotal = 0u64;
+        let mut mdays = 0u32;
+        for d in 1..=last {
+            let sz = sizes[off + (d - 1) as usize];
+            strip.push(calendar::symbol(sz));
+            strip.push(' ');
+            if sz > 0 {
+                mtotal += sz;
+                mdays += 1;
+            }
+        }
+        let pad = " ".repeat(62usize.saturating_sub(last as usize * 2));
+        let _ = writeln!(
+            out,
+            "{b}  {label}  {strip}{pad}   {mdays:2}/{last}   {}{r}",
+            calendar::fmt_bytes(mtotal)
+        );
+        off += last as usize;
+    }
+    out.push_str("\n  Legend:  ·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB\n");
+    out
+}
+
+/// Git layout: a GitHub-style 7×weeks contribution grid with month labels above.
+/// Ports `render_year_git`.
+fn render_year_git(sizes: &[u64], y: i32, _today: NaiveDate) -> String {
+    let total_days = sizes.len() as u32;
+    let jan1_dow = NaiveDate::from_ymd_opt(y, 1, 1).unwrap().weekday().number_from_monday();
+    let pad = jan1_dow - 1;
+    let weeks = (pad + total_days).div_ceil(7);
+
+    // Linear day grid read column-major: position p → week p/7, weekday p%7.
+    let mut grid = vec![0u32; (weeks * 7) as usize];
+    let mut month_col = [0u32; 13];
+    let mut doy = 0u32;
+    for m in 1..=12 {
+        month_col[m as usize] = (pad + doy) / 7;
+        for _ in 1..=calendar::last_day_of_month(y, m) {
+            doy += 1;
+            grid[(pad + doy - 1) as usize] = doy;
+        }
+    }
+
+    let mut out = String::new();
+    out.push('\n');
+    let _ = writeln!(out, "{}{y} activity", " ".repeat(39));
+
+    // Month labels: each starts at its first week's column (2 chars per week).
+    out.push_str("      ");
+    let mut printed = 0u32;
+    for m in 1..=12 {
+        let target = month_col[m as usize] * 2;
+        while printed < target {
+            out.push(' ');
+            printed += 1;
+        }
+        let _ = write!(out, "{}", NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b"));
+        printed += 3;
+    }
+    out.push('\n');
+
+    let dow = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+    for (row, label) in dow.iter().enumerate() {
+        let _ = write!(out, "  {label}  ");
+        for c in 0..weeks {
+            let d_idx = grid[(c * 7 + row as u32) as usize];
+            if d_idx == 0 {
+                out.push_str("  ");
+            } else {
+                out.push(calendar::symbol(sizes[(d_idx - 1) as usize]));
+                out.push(' ');
+            }
+        }
+        out.push('\n');
+    }
+    out.push_str("\n  Legend:  ·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB\n");
+    out
+}
+
+/// Append the `── Year stats ──` block (shared shape with the script).
+fn push_year_stats(out: &mut String, st: &YearStats, y: i32) {
+    out.push_str("\n  ── Year stats ───────────────────────────\n");
+    let _ = writeln!(
+        out,
+        "  Days written : {} / {}   ({}%)",
+        st.days_written, st.total_days, st.pct
+    );
+    let _ = writeln!(out, "  Total        : {}", calendar::fmt_bytes(st.total));
+    if st.days_written > 0 {
+        let avg = st.total / st.days_written as u64;
+        let _ = writeln!(out, "  Avg / day    : {}", calendar::fmt_bytes(avg));
+    }
+    let _ = writeln!(out, "  Longest run  : {} days", st.longest_run);
+    let _ = writeln!(out, "  Current run  : {} days", st.current_run);
+    if st.best_month > 0 {
+        let name = NaiveDate::from_ymd_opt(y, st.best_month, 1)
+            .unwrap()
+            .format("%B")
+            .to_string();
+        let _ = writeln!(
+            out,
+            "  Best month   : {name:<9} ({} days, {})",
+            st.best_month_days,
+            calendar::fmt_bytes(st.best_month_total)
+        );
+    }
+    if st.best_day_month > 0 {
+        let mon = NaiveDate::from_ymd_opt(y, st.best_day_month, st.best_day_dom)
+            .unwrap()
+            .format("%b");
+        let _ = writeln!(
+            out,
+            "  Best day     : {} {}   ({})",
+            mon,
+            st.best_day_dom,
+            calendar::fmt_bytes(st.best_size)
+        );
+    }
+    // Trailing `printf "\n"` supplied by `main`'s `println!`.
 }
 
 #[cfg(test)]
