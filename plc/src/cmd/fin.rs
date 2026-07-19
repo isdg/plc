@@ -354,28 +354,30 @@ fn date_range(args: &ReportArgs) -> Result<(Option<NaiveDate>, Option<NaiveDate>
     Ok((parse(&args.since)?, parse(&args.until)?))
 }
 
-/// Today's ledger location: `(subdir, filename)` under the daily tree.
-fn ledger_location() -> (String, String) {
-    let now = Local::now();
+/// Ledger location `(subdir, filename)` for a given day under the daily tree.
+fn ledger_location(date: NaiveDate) -> (String, String) {
     (
-        now.format("notes/management/daily/%Y/%m").to_string(),
-        now.format("%Y-%m-%d+ledger.md").to_string(),
+        format!("notes/management/daily/{:04}/{:02}", date.year(), date.month()),
+        format!("{:04}-{:02}-{:02}+ledger.md", date.year(), date.month(), date.day()),
     )
 }
 
 /// Bare `plc fin`: seed today's ledger (if new) and print its path.
 fn seed_today(palace: &Palace) -> Result<String, String> {
-    let (subdir, filename) = ledger_location();
+    let (subdir, filename) = ledger_location(Local::now().date_naive());
     note::ensure_note(palace.root(), &subdir, &filename, "ledger", None, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("fin: {e}"))
 }
 
-/// `plc fin add`: build the transaction and append it to today's ledger.
+/// `plc fin add`: build the transaction and append it to its day's ledger — the
+/// transaction's own date (from `--date`, else today), so a back-dated entry
+/// lands in the correct `YYYY-MM-DD+ledger.md`, not today's.
 fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
     let txn = build_txn(args, Local::now().fixed_offset())?;
+    let day = txn.date.map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
     let entry = finance::format_entry(&txn);
-    let (subdir, filename) = ledger_location();
+    let (subdir, filename) = ledger_location(day);
     note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("fin: {e}"))
