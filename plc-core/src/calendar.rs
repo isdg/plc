@@ -36,6 +36,23 @@ pub fn symbol(bytes: u64) -> char {
     }
 }
 
+/// Heatmap glyph for a day's money amount (minor units), by fixed buckets:
+/// `·` empty · `░` <5 · `▒` <20 · `▓` <50 · `█` ≥50 (major currency units).
+pub fn money_symbol(minor: u64) -> char {
+    match minor {
+        0 => '·',
+        v if v < 500 => '░',
+        v if v < 2000 => '▒',
+        v if v < 5000 => '▓',
+        _ => '█',
+    }
+}
+
+/// A money amount (minor units) as `<whole>.<cc> <CUR>`, e.g. `12.50 EUR`.
+pub fn fmt_money(minor: u64, currency: &str) -> String {
+    format!("{}.{:02} {currency}", minor / 100, minor % 100)
+}
+
 /// Human byte size: `B`, `KB` (1 dp), or `MB` (2 dp). Ports the script's `fmt()`.
 pub fn fmt_bytes(bytes: u64) -> String {
     if bytes < 1024 {
@@ -321,6 +338,18 @@ mod tests {
         assert_eq!(symbol(4096), '▓');
         assert_eq!(symbol(10239), '▓');
         assert_eq!(symbol(10240), '█');
+    }
+
+    #[test]
+    fn money_symbol_buckets() {
+        assert_eq!(money_symbol(0), '·');
+        assert_eq!(money_symbol(499), '░'); // <5.00
+        assert_eq!(money_symbol(500), '▒'); // 5.00
+        assert_eq!(money_symbol(1999), '▒');
+        assert_eq!(money_symbol(2000), '▓'); // 20.00
+        assert_eq!(money_symbol(4999), '▓');
+        assert_eq!(money_symbol(5000), '█'); // 50.00
+        assert_eq!(fmt_money(1250, "EUR"), "12.50 EUR");
     }
 
     #[test]

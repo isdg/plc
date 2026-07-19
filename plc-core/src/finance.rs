@@ -30,8 +30,10 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use chrono::{DateTime, FixedOffset, NaiveDate};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate};
 use walkdir::WalkDir;
+
+use crate::calendar::last_day_of_month;
 
 /// Timestamp format for a transaction's instant — identical to the note stamp
 /// line (`isg 2026-07-19 11:28:22 +0200`), so money and prose share one clock.
@@ -811,6 +813,60 @@ fn file_day(name: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(name.get(..10)?, "%Y-%m-%d").ok()
 }
 
+/// Which per-day quantity `daily_spend` sums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measure {
+    /// Total spent (expense magnitude). The default for `fin stat`.
+    Expense,
+    /// Total received (income).
+    Income,
+    /// Magnitude of the day's net flow (income − expense).
+    Net,
+}
+
+/// Per-day totals of `measure` (minor units) for `fin stat`, in `currency`, for
+/// month `(year, Some(m))` (length = days in month) or a whole year `(year,
+/// None)` (length = days in year, day-of-year order — matches `collect_year`).
+/// Honors `filter`; a transaction lands on its effective date. Transfers and
+/// other currencies are ignored.
+pub fn daily_spend(
+    root: &Path,
+    currency: &str,
+    filter: &Filter,
+    year: i32,
+    month: Option<u32>,
+    measure: Measure,
+) -> Result<Vec<u64>, String> {
+    let (items, _) = collect(root, currency, filter)?;
+    let len = match month {
+        Some(m) => last_day_of_month(year, m) as usize,
+        None => (1..=12).map(|m| last_day_of_month(year, m) as usize).sum(),
+    };
+    let mut vals = vec![0i64; len];
+    for (eff, t) in &items {
+        if t.currency != currency {
+            continue;
+        }
+        let Some(d) = eff else { continue };
+        if d.year() != year {
+            continue;
+        }
+        let idx = match month {
+            Some(m) if d.month() == m => (d.day() - 1) as usize,
+            Some(_) => continue,
+            None => (d.ordinal() - 1) as usize,
+        };
+        vals[idx] += match (measure, t.kind) {
+            (Measure::Expense, Kind::Expense) => t.amount,
+            (Measure::Income, Kind::Income) => t.amount,
+            (Measure::Net, Kind::Expense) => -t.amount,
+            (Measure::Net, Kind::Income) => t.amount,
+            _ => 0, // transfers, or a kind the measure ignores
+        };
+    }
+    Ok(vals.into_iter().map(i64::unsigned_abs).collect())
+}
+
 /// Format a summary as a human-readable block, in the visual style of
 /// `orphans::report` (leading blank line, indented, no trailing newline).
 fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize, depth: Option<usize>) -> String {
@@ -1277,6 +1333,30 @@ mod tests {
         let err = check(&bad, EUR, false).unwrap_err();
         assert!(err.contains("failed") && err.contains("@cash"), "{err}");
         fs::remove_dir_all(&bad).ok();
+    }
+
+    #[test]
+    fn daily_spend_buckets_by_day_and_filters() {
+        let dir = ledger_dir(
+            "finspend",
+            "2026-07-19+ledger.md",
+            "$ 2026-07-02 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]]\n\
+             $ 2026-07-02 00:00:00 +0200 -12.00 EUR @[[card]] #[[food]]\n\
+             $ 2026-07-05 00:00:00 +0200 -60.00 EUR @[[card]] #[[food]]\n",
+        );
+        // All expenses in July: day 2 = 4.50 + 12 = 16.50 (1650), day 5 = 60 (6000).
+        let all = daily_spend(&dir, EUR, &Filter::default(), 2026, Some(7), Measure::Expense).unwrap();
+        assert_eq!(all.len(), 31);
+        assert_eq!(all[1], 1650); // 2nd
+        assert_eq!(all[4], 6000); // 5th
+        assert_eq!(all.iter().sum::<u64>(), 7650);
+
+        // Filter to coffee → only the day-2 coffee expense.
+        let f = Filter { patterns: vec!["coffee".into()], ..Filter::default() };
+        let coffee = daily_spend(&dir, EUR, &f, 2026, Some(7), Measure::Expense).unwrap();
+        assert_eq!(coffee[1], 450);
+        assert_eq!(coffee.iter().sum::<u64>(), 450);
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

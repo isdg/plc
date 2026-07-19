@@ -19,12 +19,19 @@
 //! them. See `plc_core::finance` for the full grammar. Bare `plc fin` just seeds
 //! and prints today's ledger path so you can open it by hand.
 
+use std::fmt::Write as _;
+
 use chrono::{DateTime, Datelike, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
 use clap::{Args, Subcommand};
-use plc_core::finance::{self, Filter, Kind, State, Transaction};
+use plc_core::calendar::{self, MonthStats, YearStats};
+use plc_core::finance::{self, Filter, Kind, Measure, State, Transaction};
 
+use crate::cmd::calview;
 use crate::config::Palace;
 use crate::note;
+
+/// Heatmap-glyph meanings for the money scale (fixed buckets, currency units).
+const MONEY_LEGEND: &str = "·  empty   ░ <5   ▒ <20   ▓ <50   █ ≥50";
 
 #[derive(Args)]
 pub struct FinArgs {
@@ -42,6 +49,39 @@ enum FinCmd {
     Reg(ReportArgs),
     /// Verify balance assertions (and, with --strict, undeclared names).
     Check(CheckArgs),
+    /// Calendar heatmap / plot of daily spend, à la `plc stat`.
+    Stat(FinStatArgs),
+}
+
+#[derive(Args)]
+pub struct FinStatArgs {
+    /// Limit to transactions whose account/category/tag/memo contains a PATTERN.
+    #[arg(value_name = "PATTERN")]
+    patterns: Vec<String>,
+    /// Scope: `month` or `year`.
+    #[arg(long = "type", value_name = "SCOPE", default_value = "month")]
+    scope: String,
+    /// Month 1-12 (defaults to the current month).
+    #[arg(short = 'm', long = "month")]
+    month: Option<String>,
+    /// Year; 2-digit (25 → 2025) or 4-digit (defaults to the current year).
+    #[arg(short = 'y', long = "year")]
+    year: Option<String>,
+    /// Year layout, `year` scope only: `git` (GitHub-style) or `tab`.
+    #[arg(long = "layout", value_name = "LAYOUT", default_value = "git")]
+    layout: String,
+    /// Replace the heatmap with an ASCII line chart.
+    #[arg(short = 'p', long = "plot")]
+    plot: bool,
+    /// What to measure per day: `expense` (default), `income`, or `net`.
+    #[arg(long = "of", value_name = "MEASURE", default_value = "expense")]
+    of: String,
+    /// Only cleared (`*`) transactions.
+    #[arg(long = "cleared", conflicts_with = "pending")]
+    cleared: bool,
+    /// Only pending (`!`) transactions.
+    #[arg(long = "pending")]
+    pending: bool,
 }
 
 #[derive(Args)]
@@ -133,6 +173,130 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
             let root = palace.root().join("notes/management/daily");
             finance::check(&root, &finance::default_currency(), check_args.strict)
         }
+        Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
+    }
+}
+
+/// `plc fin stat`: `plc stat`'s calendar/plot/stats visuals over daily spend.
+fn stat(palace: &Palace, args: FinStatArgs) -> Result<String, String> {
+    let today = Local::now().date_naive();
+    let (y, m) = resolve_ym(&args, today)?;
+    let measure = match args.of.as_str() {
+        "expense" => Measure::Expense,
+        "income" => Measure::Income,
+        "net" => Measure::Net,
+        o => return Err(format!("fin stat: unknown --of: {o} (expected expense|income|net)")),
+    };
+    let unit = match measure {
+        Measure::Expense => "spend",
+        Measure::Income => "income",
+        Measure::Net => "net",
+    };
+    let state = if args.cleared {
+        Some(State::Cleared)
+    } else if args.pending {
+        Some(State::Pending)
+    } else {
+        None
+    };
+    let filter = Filter {
+        state,
+        patterns: args.patterns.iter().map(|p| p.to_lowercase()).collect(),
+        ..Filter::default()
+    };
+    let cur = finance::default_currency();
+    let root = palace.root().join("notes/management/daily");
+    let money = |minor| calendar::fmt_money(minor, &cur);
+
+    match args.scope.as_str() {
+        "month" => {
+            let vals = finance::daily_spend(&root, &cur, &filter, y, Some(m), measure)?;
+            let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
+            let st = calendar::month_stats(&vals, cutoff);
+            let mut out = if args.plot {
+                calview::plot_month(y, m, &vals, unit, &money)
+            } else {
+                calview::month_grid(y, m, &vals, calendar::money_symbol, MONEY_LEGEND)
+            };
+            push_month_spend(&mut out, &st, y, m, unit, &cur);
+            Ok(out)
+        }
+        "year" => {
+            let vals = finance::daily_spend(&root, &cur, &filter, y, None, measure)?;
+            let cutoff = (y == today.year()).then_some(today.ordinal());
+            let st = calendar::year_stats(&vals, y, cutoff);
+            let mut out = if args.plot {
+                calview::plot_year(y, &vals, unit, &money)
+            } else {
+                match args.layout.as_str() {
+                    "git" => calview::year_git(y, &vals, calendar::money_symbol, MONEY_LEGEND),
+                    "tab" => calview::year_tab(y, &vals, today, calendar::money_symbol, MONEY_LEGEND, &money),
+                    o => return Err(format!("fin stat: unknown layout: {o} (expected git|tab)")),
+                }
+            };
+            push_year_spend(&mut out, &st, y, unit, &cur);
+            Ok(out)
+        }
+        o => Err(format!("fin stat: unknown type: {o} (expected month|year)")),
+    }
+}
+
+/// Resolve `(year, month)` for `fin stat` from `-m/-y` (else today). Positional
+/// args are a pattern filter, not a date, so they play no part here.
+fn resolve_ym(args: &FinStatArgs, today: NaiveDate) -> Result<(i32, u32), String> {
+    let m = match &args.month {
+        Some(s) => s.trim().parse::<u32>().map_err(|_| format!("fin stat: invalid month: {s}"))?,
+        None => today.month(),
+    };
+    let y = match &args.year {
+        Some(s) => {
+            let t = s.trim();
+            let n: i32 = t.parse().map_err(|_| format!("fin stat: invalid year: {s}"))?;
+            if t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit()) { 2000 + n } else { n }
+        }
+        None => today.year(),
+    };
+    if !(1..=12).contains(&m) {
+        return Err(format!("fin stat: invalid month: {m}"));
+    }
+    Ok((y, m))
+}
+
+/// The month spend Stats block (money-formatted; reworded from `plc stat`).
+fn push_month_spend(out: &mut String, st: &MonthStats, y: i32, m: u32, unit: &str, cur: &str) {
+    out.push_str("\n     ── Stats ─────────────────────────\n");
+    let _ = writeln!(out, "     Days w/ {unit:<6}: {} / {}   ({}%)", st.days_written, st.last_day, st.pct);
+    let _ = writeln!(out, "     Total        : {}", calendar::fmt_money(st.total, cur));
+    if st.days_written > 0 {
+        let avg = st.total / st.days_written as u64;
+        let _ = writeln!(out, "     Avg / day    : {}", calendar::fmt_money(avg, cur));
+    }
+    let _ = writeln!(out, "     Longest run  : {} days", st.longest_run);
+    let _ = writeln!(out, "     Current run  : {} days", st.current_run);
+    if st.best_day > 0 {
+        let mon = NaiveDate::from_ymd_opt(y, m, st.best_day).expect("best_day in-month").format("%b");
+        let _ = writeln!(out, "     Biggest day  : {} {}   ({})", mon, st.best_day, calendar::fmt_money(st.best_size, cur));
+    }
+}
+
+/// The year spend Stats block (money-formatted; reworded from `plc stat`).
+fn push_year_spend(out: &mut String, st: &YearStats, y: i32, unit: &str, cur: &str) {
+    out.push_str("\n  ── Year stats ───────────────────────────\n");
+    let _ = writeln!(out, "  Days w/ {unit:<6}: {} / {}   ({}%)", st.days_written, st.total_days, st.pct);
+    let _ = writeln!(out, "  Total        : {}", calendar::fmt_money(st.total, cur));
+    if st.days_written > 0 {
+        let avg = st.total / st.days_written as u64;
+        let _ = writeln!(out, "  Avg / day    : {}", calendar::fmt_money(avg, cur));
+    }
+    let _ = writeln!(out, "  Longest run  : {} days", st.longest_run);
+    let _ = writeln!(out, "  Current run  : {} days", st.current_run);
+    if st.best_month > 0 {
+        let name = NaiveDate::from_ymd_opt(y, st.best_month, 1).unwrap().format("%B").to_string();
+        let _ = writeln!(out, "  Biggest month: {name:<9} ({})", calendar::fmt_money(st.best_month_total, cur));
+    }
+    if st.best_day_month > 0 {
+        let mon = NaiveDate::from_ymd_opt(y, st.best_day_month, st.best_day_dom).unwrap().format("%b");
+        let _ = writeln!(out, "  Biggest day  : {} {}   ({})", mon, st.best_day_dom, calendar::fmt_money(st.best_size, cur));
     }
 }
 
