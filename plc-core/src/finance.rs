@@ -169,11 +169,30 @@ pub fn format_entry(t: &Transaction) -> String {
     if one.chars().count() <= MAX_LINE {
         return one;
     }
-    // Head line without tags/memo (kept as compact as the data allows).
-    let head = Transaction { projects: Vec::new(), memo: String::new(), ..t.clone() };
+    // Overflow: shrink the head to `$ [ts] [state] ±amount cur @[[account]]`
+    // (plus the transfer destination, which the head needs to stay a transfer)
+    // and push the category, assertion, tags, and memo onto continuation lines,
+    // so every line stays within MAX_LINE.
+    let transfer = matches!(t.kind, Kind::Transfer);
+    let head = Transaction {
+        other: if transfer { t.other.clone() } else { None },
+        assert: None,
+        projects: Vec::new(),
+        split: Vec::new(),
+        memo: String::new(),
+        ..t.clone()
+    };
     let mut lines = vec![format_line(&head)];
-    let tokens = t.projects.iter().map(|p| format!("~[[{p}]]"));
-    wrap_into(&mut lines, tokens);
+    if !transfer {
+        if let Some(cat) = &t.other {
+            lines.push(format!("    #[[{cat}]]"));
+        }
+    }
+    if let Some(a) = t.assert {
+        let sign = if a < 0 { "-" } else { "" };
+        lines.push(format!("    = {sign}{} {}", format_amount(a), t.currency));
+    }
+    wrap_into(&mut lines, t.projects.iter().map(|p| format!("~[[{p}]]")));
     wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
     lines.join("\n")
 }
@@ -341,14 +360,25 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
             && parse_line(lines[i], default_currency).is_none()
         {
             let line = lines[i].trim();
-            if let Some((cat_raw, after)) = take_split_leg(line) {
-                if let Some((amt_tok, _)) = next_token(after) {
-                    if let Some((_, mag)) = parse_amount(amt_tok) {
-                        txn.split.push((normalize_name(cat_raw), mag));
+            // Balance-assertion continuation: `= <±amount> [cur]`.
+            if let Some(rest) = line.strip_prefix('=') {
+                if let Some((tok, _)) = next_token(rest) {
+                    if let Some((neg, mag)) = parse_amount(tok) {
+                        txn.assert = Some(if neg { -mag } else { mag });
                         i += 1;
                         continue;
                     }
                 }
+            }
+            // Category continuation: `#[[cat]] amount` (a split leg) or a bare
+            // `#[[cat]]` (the single category of an overflow-wrapped expense).
+            if let Some((cat_raw, after)) = take_split_leg(line) {
+                match next_token(after).and_then(|(tok, _)| parse_amount(tok)) {
+                    Some((_, mag)) => txn.split.push((normalize_name(cat_raw), mag)),
+                    None => txn.other = Some(normalize_name(cat_raw)),
+                }
+                i += 1;
+                continue;
             }
             let mut rest = line;
             while let Some(after) = take_project(rest.trim_start(), &mut txn.projects) {
@@ -1301,6 +1331,32 @@ mod tests {
         assert_eq!(eur.categories["household"], 2500);
         assert_eq!(eur.accounts["card"], -9000);
         assert_eq!(eur.residual(), 0);
+    }
+
+    #[test]
+    fn heavy_entry_wraps_head_under_66_and_round_trips() {
+        // A kitchen-sink expense: full timestamp, cleared, nested account +
+        // category, assertion, two tags, long memo — the head alone would blow
+        // past 66, so the category and assertion move to continuation lines.
+        let t = Transaction {
+            amount: 4250,
+            currency: "EUR".into(),
+            kind: Kind::Expense,
+            account: "rev/eur".into(),
+            other: Some("food/dining".into()),
+            assert: Some(358353),
+            date: DateTime::parse_from_str("2026-07-19 13:13:17 +0200", TIMESTAMP_FMT).ok(),
+            state: State::Cleared,
+            projects: vec!["work/q3-review".into(), "reimbursable".into()],
+            split: Vec::new(),
+            memo: "dinner with the whole team after the quarterly review".into(),
+        };
+        let block = format_entry(&t);
+        assert!(block.contains('\n'), "should wrap: {block}");
+        for line in block.lines() {
+            assert!(line.chars().count() <= 66, "line over 66: {:?}", line);
+        }
+        assert_eq!(parse_entries(&block, EUR), vec![t]);
     }
 
     #[test]
