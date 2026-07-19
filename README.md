@@ -105,7 +105,8 @@ transaction lines:
 Physical accounts show what you hold (`bnp +5200.00`, `cash +195.50`). Income
 sources show negative — that is normal double-entry: `salary -2400` means
 €2400 was drawn _from_ your employer into your accounts. `book : 0.00 ✓`
-confirms every leg cancels.
+confirms every leg cancels. Accounts that net to zero (a settled or closed
+account) are hidden from `by account`; categories always list in full.
 
 ## 2.2 The register report
 
@@ -123,6 +124,34 @@ confirms every leg cancels.
 
 Add a search term to narrow it — `plc fin reg coffee` shows only transactions
 touching `coffee`, with a running total of just those.
+
+## 2.3 The balance snapshot
+
+`plc fin balance` (alias `bal`) is a compact "where do I stand" view — net
+worth, income/expense/net, non-zero account balances, and the most recent
+transactions:
+
+    $ plc fin bal
+
+      Balance — 4 transaction(s)
+
+      EUR
+        net worth : +5395.50
+        in +5400.00  out -4.50  net +5395.50
+
+        accounts
+          bnp               +5200.00
+          cash              +195.50
+
+        last 4
+        2026-07-19        -4.50 EUR  @cash #coffee  Blue Bottle
+        2026-07-19       200.00 EUR  @bnp > @cash  ATM
+        2026-07-19     +2400.00 EUR  @bnp #salary  July pay
+        2026-07-19     +3000.00 EUR  @bnp #opening  opening balance
+
+`-n N` sets how many recent transactions to show (default 5); it takes the same
+`PATTERN` / `--cleared` / date filters as `report` and `reg`, so
+`plc fin bal rent -n 3` shows your rent standing plus the last three rent moves.
 
 ---
 

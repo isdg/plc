@@ -47,6 +47,9 @@ enum FinCmd {
     Report(ReportArgs),
     /// List matching transactions chronologically with a running total.
     Reg(ReportArgs),
+    /// Short balance snapshot: net worth, account balances, recent transactions.
+    #[command(alias = "bal")]
+    Balance(BalanceArgs),
     /// Verify balance assertions (and, with --strict, undeclared names).
     Check(CheckArgs),
     /// Calendar heatmap / plot of daily spend, à la `plc stat`.
@@ -119,6 +122,16 @@ pub struct ReportArgs {
 }
 
 #[derive(Args)]
+pub struct BalanceArgs {
+    /// Same filtering as `report`/`reg` (PATTERN, --cleared/--pending, dates).
+    #[command(flatten)]
+    filter: ReportArgs,
+    /// How many recent transactions to list (default 5).
+    #[arg(short = 'n', long = "recent", value_name = "N", default_value = "5")]
+    recent: usize,
+}
+
+#[derive(Args)]
 pub struct AddArgs {
     /// Amount in the major unit, positive (e.g. 4.50). The direction comes from
     /// `--income`/`--to`, not a sign here.
@@ -169,6 +182,7 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         Some(FinCmd::Add(add_args)) => add(palace, add_args),
         Some(FinCmd::Report(report_args)) => report(palace, report_args),
         Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
+        Some(FinCmd::Balance(balance_args)) => balance(palace, balance_args),
         Some(FinCmd::Check(check_args)) => {
             let root = palace.root().join("notes/management/daily");
             finance::check(&root, &finance::default_currency(), check_args.strict)
@@ -312,6 +326,14 @@ fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
     let root = palace.root().join("notes/management/daily");
     finance::register(&root, &finance::default_currency(), &filter)
+}
+
+/// `plc fin balance` (alias `bal`): short net-worth + account snapshot with the
+/// most recent transactions.
+fn balance(palace: &Palace, args: BalanceArgs) -> Result<String, String> {
+    let filter = build_filter(&args.filter)?;
+    let root = palace.root().join("notes/management/daily");
+    finance::balance(&root, &finance::default_currency(), &filter, args.recent)
 }
 
 /// Build a [`Filter`] from the shared report/register flags.

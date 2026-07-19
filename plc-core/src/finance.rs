@@ -694,6 +694,58 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
     Ok(lines.join("\n"))
 }
 
+/// A compact balance snapshot: per-currency net worth, income/expense/net, and
+/// non-zero account balances, followed by the most recent `recent` transactions
+/// (newest first). Honors the same filter as report/register — a quick "where do
+/// I stand + what did I just do" view.
+pub fn balance(
+    root: &Path,
+    default_currency: &str,
+    filter: &Filter,
+    recent: usize,
+) -> Result<String, String> {
+    let (mut items, _) = collect(root, default_currency, filter)?;
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut lines = vec![String::new(), format!("  Balance — {} transaction(s)", items.len())];
+    if items.is_empty() {
+        lines.push(String::new());
+        lines.push("  (no transactions found)".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    let txns: Vec<Transaction> = items.iter().map(|(_, t)| t.clone()).collect();
+    for (cur, t) in &summarize(&txns) {
+        let net_worth: i64 = t.accounts.values().sum();
+        lines.push(String::new());
+        lines.push(format!("  {cur}"));
+        lines.push(format!("    net worth : {}", format_signed(net_worth)));
+        lines.push(format!(
+            "    in {}  out {}  net {}",
+            format_signed(t.income),
+            format_signed(-t.expense),
+            format_signed(t.net()),
+        ));
+        push_section(&mut lines, "accounts", &t.accounts, None, true);
+    }
+
+    // The last `recent` transactions, newest first — a short "what just happened".
+    lines.push(String::new());
+    let shown = recent.min(items.len());
+    lines.push(format!("    last {shown}"));
+    for (eff, t) in items.iter().rev().take(recent) {
+        let date = eff.map_or_else(|| "----------".to_string(), |d| d.format("%Y-%m-%d").to_string());
+        let memo = if t.memo.is_empty() { String::new() } else { format!("  {}", t.memo) };
+        lines.push(format!(
+            "    {date}  {:>11} {:<3}  {}{memo}",
+            signed_amount(t),
+            t.currency,
+            describe(t),
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
 /// A transaction paired with its effective date (its own timestamp, or the
 /// ledger file's day when it carries none).
 type Dated = (Option<NaiveDate>, Transaction);
@@ -927,22 +979,37 @@ fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize, depth
             format!("{}  ✗ UNBALANCED", format_signed(residual))
         };
         lines.push(format!("    book     : {book}"));
-        push_section(&mut lines, "by account", &t.accounts, depth);
-        push_section(&mut lines, "by category", &t.categories, depth);
-        push_section(&mut lines, "by project", &t.projects, depth);
+        // Accounts hide zero balances (a settled/closed account is just noise);
+        // categories/projects show every non-empty row.
+        push_section(&mut lines, "by account", &t.accounts, depth, true);
+        push_section(&mut lines, "by category", &t.categories, depth, false);
+        push_section(&mut lines, "by project", &t.projects, depth, false);
     }
     lines.join("\n")
 }
 
 /// Append a titled section, rolling `/`-nested names up into a tree (each parent
 /// summing its descendants) capped at `depth` levels. Skipped when empty.
-fn push_section(lines: &mut Vec<String>, title: &str, rows: &BTreeMap<String, i64>, depth: Option<usize>) {
+fn push_section(
+    lines: &mut Vec<String>,
+    title: &str,
+    rows: &BTreeMap<String, i64>,
+    depth: Option<usize>,
+    hide_zero: bool,
+) {
     if rows.is_empty() {
+        return;
+    }
+    let entries: Vec<(usize, String, i64)> = rollup(rows, depth)
+        .into_iter()
+        .filter(|(_, _, total)| !(hide_zero && *total == 0))
+        .collect();
+    if entries.is_empty() {
         return;
     }
     lines.push(String::new());
     lines.push(format!("    {title}"));
-    for (level, label, total) in rollup(rows, depth) {
+    for (level, label, total) in entries {
         let name = format!("{}{label}", "  ".repeat(level));
         lines.push(format!("      {name:<18}{}", format_signed(total)));
     }
@@ -1597,6 +1664,51 @@ mod tests {
         assert!(out.contains("coffee"), "{out}");
         assert!(!out.contains("999"), "non-ledger file leaked: {out}");
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn report_hides_zero_accounts_but_keeps_zero_categories() {
+        // wallet/bank net to 0 (a round-trip transfer); refund nets to 0 too.
+        let txns = vec![
+            txn(450, EUR, Kind::Expense, "cash", Some("coffee")),
+            txn(100, EUR, Kind::Income, "cash", Some("refund")),
+            txn(100, EUR, Kind::Expense, "cash", Some("refund")),
+            txn(100, EUR, Kind::Transfer, "wallet", Some("bank")),
+            txn(100, EUR, Kind::Transfer, "bank", Some("wallet")),
+        ];
+        let out = render(&summarize(&txns), 1, None);
+        assert!(out.contains("cash"), "{out}");
+        assert!(!out.contains("wallet"), "zero account leaked: {out}");
+        assert!(!out.contains("bank"), "zero account leaked: {out}");
+        // Zero-valued categories are still listed (only accounts are pruned).
+        assert!(out.contains("refund"), "zero category dropped: {out}");
+    }
+
+    #[test]
+    fn balance_shows_net_worth_accounts_and_recent() {
+        let dir = std::env::temp_dir().join(format!("plc-finbal-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let sub = dir.join("2026/07");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(
+            sub.join("2026-07-19+ledger.md"),
+            "isg\n\n[[ledger]]\n\n$ -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle\n\
+             $ +100 EUR @[[cash]] #[[gift]]\n\
+             $ 50 EUR @[[cash]] > @[[wallet]]\n\
+             $ 50 EUR @[[wallet]] > @[[cash]]\n",
+        )
+        .unwrap();
+        let out = balance(&dir, EUR, &Filter::default(), 5).unwrap();
+        assert!(out.contains("net worth : +95.50"), "{out}");
+        assert!(out.contains("accounts"), "{out}");
+        assert!(out.contains("cash"), "{out}");
+        // The zero-balance `wallet` is pruned from the accounts section (it may
+        // still appear in the recent-transactions list below it).
+        let accounts_section = out.split("    last").next().unwrap();
+        assert!(!accounts_section.contains("wallet"), "zero account leaked: {out}");
+        assert!(out.contains("last"), "{out}");
+        assert!(out.contains("Blue Bottle"), "recent memo missing: {out}");
         fs::remove_dir_all(&dir).ok();
     }
 
