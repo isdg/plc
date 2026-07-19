@@ -63,6 +63,9 @@ pub struct ReportArgs {
     /// Restrict to one month (YYYY-MM); sets since/until to its bounds.
     #[arg(long = "month", value_name = "YYYY-MM", conflicts_with_all = ["since", "until"])]
     month: Option<String>,
+    /// Report only: cap the account/category/tag trees at N levels.
+    #[arg(long = "depth", value_name = "N")]
+    depth: Option<usize>,
 }
 
 #[derive(Args)]
@@ -141,6 +144,7 @@ fn build_filter(args: &ReportArgs) -> Result<Filter, String> {
         patterns: args.patterns.iter().map(|p| p.to_lowercase()).collect(),
         since,
         until,
+        depth: args.depth,
     })
 }
 
@@ -215,7 +219,7 @@ fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, S
     let projects = args
         .project
         .iter()
-        .map(|p| clean_link("project", p).map(|p| finance::normalize_tag(&p)))
+        .map(|p| clean_link("project", p).map(|p| finance::normalize_name(&p)))
         .collect::<Result<Vec<_>, _>>()?;
 
     // Stamp the full instant by default (like a note); `--date` overrides.

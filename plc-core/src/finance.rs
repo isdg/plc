@@ -37,19 +37,23 @@ use walkdir::WalkDir;
 /// line (`isg 2026-07-19 11:28:22 +0200`), so money and prose share one clock.
 pub const TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S %z";
 
-use crate::{ascii_lower, normalize_target};
+use crate::ascii_lower;
 
 /// Max width of any emitted ledger line. The vault is reflowed to this many
 /// columns, so a longer entry is written as a multi-line block instead (see
 /// [`format_entry`]) to keep every line intact under reflow.
 const MAX_LINE: usize = 66;
 
-/// Normalize a `~` tag / project: ASCII-lowercase and trim, but **preserve `/`**
-/// so a nested tag like `japan-trip/work` stays whole. This differs from
-/// [`normalize_target`], which strips a `/`-path down to its basename for the
-/// notes/orphans link graph.
-pub fn normalize_tag(s: &str) -> String {
-    ascii_lower(s.trim())
+/// Normalize a finance name — an account (`@`), category (`#`), or tag (`~`):
+/// drop any `|alias`/`#heading`/`^block` suffix, then ASCII-lowercase and trim,
+/// but **preserve `/`** so a nested name like `bank/checking` or
+/// `japan-trip/work` stays whole (for tree rollup). Differs from
+/// `crate::normalize_target`, which additionally strips a `/`-path to its
+/// basename for the notes/orphans link graph.
+pub fn normalize_name(s: &str) -> String {
+    let s = s.trim();
+    let end = s.find(['|', '#', '^']).unwrap_or(s.len());
+    ascii_lower(s[..end].trim())
 }
 
 /// The default currency when a line omits an explicit code and the caller has
@@ -217,15 +221,15 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
 
     // The account is mandatory; a line without one is not a transaction.
     let (acct_raw, rest) = take_sigil_link(rest, '@')?;
-    let account = normalize_target(acct_raw);
+    let account = normalize_name(acct_raw);
 
     let rest = rest.trim_start();
     let (kind, other, mut rest) = if let Some(after_gt) = rest.strip_prefix('>') {
         let (dest_raw, after) = take_sigil_link(after_gt, '@')?;
-        (Kind::Transfer, Some(normalize_target(dest_raw)), after)
+        (Kind::Transfer, Some(normalize_name(dest_raw)), after)
     } else if let Some((cat_raw, after)) = take_sigil_link(rest, '#') {
         let kind = if neg { Kind::Expense } else { Kind::Income };
-        (kind, Some(normalize_target(cat_raw)), after)
+        (kind, Some(normalize_name(cat_raw)), after)
     } else {
         let kind = if neg { Kind::Expense } else { Kind::Income };
         (kind, None, rest)
@@ -250,7 +254,7 @@ fn take_project<'a>(s: &'a str, projects: &mut Vec<String>) -> Option<&'a str> {
         return None;
     }
     let (tag_raw, after) = take_sigil_link(s, '~')?;
-    projects.push(normalize_tag(tag_raw));
+    projects.push(normalize_name(tag_raw));
     Some(after)
 }
 
@@ -382,7 +386,7 @@ fn describe(t: &Transaction) -> String {
 /// Consume a `<sigil>[[inner]]` token at the start of `s` (after trimming
 /// leading whitespace). Returns the **raw** inner text and the remaining string,
 /// or `None` if the sigil/brackets are not there. Callers normalize (`@`/`#`
-/// via `normalize_target`; `~` via `normalize_tag`).
+/// all via `normalize_name`).
 fn take_sigil_link(s: &str, sigil: char) -> Option<(&str, &str)> {
     let s = s.trim_start();
     let inner_and_rest = s.strip_prefix(sigil)?.strip_prefix("[[")?;
@@ -491,6 +495,9 @@ pub struct Filter {
     pub since: Option<NaiveDate>,
     /// Effective date on/before this day (inclusive).
     pub until: Option<NaiveDate>,
+    /// Report display only (ignored by the register): cap the account/category/
+    /// tag trees at this many levels, folding deeper nodes into their ancestor.
+    pub depth: Option<usize>,
 }
 
 impl Filter {
@@ -530,7 +537,7 @@ impl Filter {
 pub fn report(root: &Path, default_currency: &str, filter: &Filter) -> Result<String, String> {
     let (items, ledger_files) = collect(root, default_currency, filter)?;
     let txns: Vec<Transaction> = items.into_iter().map(|(_, t)| t).collect();
-    Ok(render(&summarize(&txns), ledger_files))
+    Ok(render(&summarize(&txns), ledger_files, filter.depth))
 }
 
 /// A chronological register of the matching transactions with a per-currency
@@ -615,7 +622,7 @@ fn file_day(name: &str) -> Option<NaiveDate> {
 
 /// Format a summary as a human-readable block, in the visual style of
 /// `orphans::report` (leading blank line, indented, no trailing newline).
-fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize) -> String {
+fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize, depth: Option<usize>) -> String {
     let total: usize = summary.values().map(|c| c.count).sum();
     let mut lines: Vec<String> = Vec::new();
     lines.push(String::new());
@@ -640,23 +647,50 @@ fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize) -> St
             format!("{}  ✗ UNBALANCED", format_signed(residual))
         };
         lines.push(format!("    book     : {book}"));
-        push_section(&mut lines, "by account", &t.accounts);
-        push_section(&mut lines, "by category", &t.categories);
-        push_section(&mut lines, "by project", &t.projects);
+        push_section(&mut lines, "by account", &t.accounts, depth);
+        push_section(&mut lines, "by category", &t.categories, depth);
+        push_section(&mut lines, "by project", &t.projects, depth);
     }
     lines.join("\n")
 }
 
-/// Append a titled, signed-total section (skipped when empty).
-fn push_section(lines: &mut Vec<String>, title: &str, rows: &BTreeMap<String, i64>) {
+/// Append a titled section, rolling `/`-nested names up into a tree (each parent
+/// summing its descendants) capped at `depth` levels. Skipped when empty.
+fn push_section(lines: &mut Vec<String>, title: &str, rows: &BTreeMap<String, i64>, depth: Option<usize>) {
     if rows.is_empty() {
         return;
     }
     lines.push(String::new());
     lines.push(format!("    {title}"));
-    for (name, total) in rows {
-        lines.push(format!("      {name:<18}{}", format_signed(*total)));
+    for (level, label, total) in rollup(rows, depth) {
+        let name = format!("{}{label}", "  ".repeat(level));
+        lines.push(format!("      {name:<18}{}", format_signed(total)));
     }
+}
+
+/// Roll a flat `name → total` map up its `/` hierarchy: every ancestor prefix
+/// accumulates its descendants' totals. Returns `(level, leaf_label, total)` in
+/// tree order (BTreeMap sorts parents before children), dropping nodes deeper
+/// than `depth` levels (their totals already live in the retained ancestor).
+fn rollup(rows: &BTreeMap<String, i64>, depth: Option<usize>) -> Vec<(usize, String, i64)> {
+    let mut totals: BTreeMap<String, i64> = BTreeMap::new();
+    for (name, v) in rows {
+        let segs: Vec<&str> = name.split('/').collect();
+        for i in 1..=segs.len() {
+            *totals.entry(segs[..i].join("/")).or_default() += *v;
+        }
+    }
+    totals
+        .into_iter()
+        .filter_map(|(path, v)| {
+            let level = path.matches('/').count();
+            if depth.is_some_and(|d| level + 1 > d) {
+                return None;
+            }
+            let label = path.rsplit('/').next().unwrap_or(&path).to_string();
+            Some((level, label, v))
+        })
+        .collect()
 }
 
 /// Signed major-unit rendering: `+2400.00`, `-4.50`, `+0.00`.
@@ -892,6 +926,29 @@ mod tests {
         fs::create_dir_all(&sub).unwrap();
         fs::write(sub.join(name), body).unwrap();
         dir
+    }
+
+    #[test]
+    fn hierarchical_categories_roll_up_with_depth() {
+        let dir = ledger_dir(
+            "finhier",
+            "2026-07-19+ledger.md",
+            "$ -60 EUR @[[bank/checking]] #[[food/groceries]]\n\
+             $ -25 EUR @[[bank/checking]] #[[food/dining]]\n\
+             $ -900 EUR @[[bank/checking]] #[[rent]]\n",
+        );
+        // Full depth: parent `food` sums its children, which also appear.
+        let full = report(&dir, EUR, &Filter::default()).unwrap();
+        assert!(full.contains("food") && full.contains("groceries") && full.contains("dining"));
+        // The `food` parent totals +85.00 (60 + 25).
+        assert!(full.contains("+85.00"), "{full}");
+
+        // depth 1: only top-level nodes; children folded into the parent total.
+        let shallow = Filter { depth: Some(1), ..Filter::default() };
+        let out = report(&dir, EUR, &shallow).unwrap();
+        assert!(out.contains("food") && out.contains("+85.00"), "{out}");
+        assert!(!out.contains("groceries") && !out.contains("dining"), "{out}");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
