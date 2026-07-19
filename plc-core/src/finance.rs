@@ -197,8 +197,13 @@ fn take_sigil_link(s: &str, sigil: char) -> Option<(String, &str)> {
 }
 
 /// Aggregated totals for one currency. `categories`/`accounts` map a name to a
-/// signed minor-unit total (income `+`, expense `-`; transfers move balance
-/// between accounts but touch no category and no income/expense).
+/// signed minor-unit total.
+///
+/// This is a double-entry ledger: every transaction moves an amount from a
+/// *source* bucket to a *destination* bucket (`-amount` / `+amount`), and
+/// categories are just accounts. So `accounts` carry their natural balance
+/// (assets positive, income sources negative) and, together with `categories`,
+/// the whole book sums to zero — see [`Self::residual`].
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct CurrencyTotals {
     pub income: i64,
@@ -213,6 +218,22 @@ impl CurrencyTotals {
     pub fn net(&self) -> i64 {
         self.income - self.expense
     }
+
+    /// The book's residual: the signed sum over every account *and* category.
+    /// Double-entry guarantees this is `0`; a non-zero value means a line was
+    /// malformed or dropped — the integrity check surfaced in the report.
+    pub fn residual(&self) -> i64 {
+        self.accounts.values().sum::<i64>() + self.categories.values().sum::<i64>()
+    }
+}
+
+/// Suspense bucket for expense/income with no explicit category, so every
+/// transaction still has a destination and the book balances.
+const UNCATEGORIZED: &str = "uncategorized";
+
+/// The category leg of an expense/income, falling back to the suspense bucket.
+fn category_of(t: &Transaction) -> String {
+    t.other.clone().unwrap_or_else(|| UNCATEGORIZED.to_string())
 }
 
 /// Fold transactions into per-currency totals. Pure — no I/O — so the aggregation
@@ -225,17 +246,19 @@ pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
         match t.kind {
             Kind::Expense => {
                 cur.expense += t.amount;
+                // Money leaves the account (source) and lands in the expense
+                // category (destination): -amount / +amount → nets to zero.
+                // A missing category still needs a destination, so it falls into
+                // a suspense bucket rather than unbalancing the book.
                 *cur.accounts.entry(t.account.clone()).or_default() -= t.amount;
-                if let Some(cat) = &t.other {
-                    *cur.categories.entry(cat.clone()).or_default() -= t.amount;
-                }
+                *cur.categories.entry(category_of(t)).or_default() += t.amount;
             }
             Kind::Income => {
                 cur.income += t.amount;
+                // Money leaves the income category (source) and lands in the
+                // account (destination).
                 *cur.accounts.entry(t.account.clone()).or_default() += t.amount;
-                if let Some(cat) = &t.other {
-                    *cur.categories.entry(cat.clone()).or_default() += t.amount;
-                }
+                *cur.categories.entry(category_of(t)).or_default() -= t.amount;
             }
             Kind::Transfer => {
                 *cur.accounts.entry(t.account.clone()).or_default() -= t.amount;
@@ -302,8 +325,15 @@ fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize) -> St
         lines.push(format!("    income   : {}", format_amount(t.income)));
         lines.push(format!("    expenses : {}", format_amount(t.expense)));
         lines.push(format!("    net      : {}", format_signed(t.net())));
-        push_section(&mut lines, "by category", &t.categories);
+        let residual = t.residual();
+        let book = if residual == 0 {
+            "0.00  ✓".to_string()
+        } else {
+            format!("{}  ✗ UNBALANCED", format_signed(residual))
+        };
+        lines.push(format!("    book     : {book}"));
         push_section(&mut lines, "by account", &t.accounts);
+        push_section(&mut lines, "by category", &t.categories);
     }
     lines.join("\n")
 }
@@ -487,10 +517,27 @@ mod tests {
         // checking loses 20000 (on top of the 240000 income).
         assert_eq!(eur.accounts["cash"], 19550);
         assert_eq!(eur.accounts["checking"], 220000);
-        // Categories exclude transfers.
-        assert_eq!(eur.categories["coffee"], -450);
-        assert_eq!(eur.categories["salary"], 240000);
+        // Double-entry signs: an expense flows *into* its category (positive);
+        // an income flows *out of* its category (negative). Transfers touch none.
+        assert_eq!(eur.categories["coffee"], 450);
+        assert_eq!(eur.categories["salary"], -240000);
         assert!(!eur.categories.contains_key("cash"));
+        // The whole book — accounts plus categories — sums to zero.
+        assert_eq!(eur.residual(), 0);
+    }
+
+    #[test]
+    fn book_always_balances() {
+        // A mix of every kind, including an opening-balance income and a
+        // wallet-funding transfer, still nets to zero across the book.
+        let txns = vec![
+            txn(320000, "EUR", Kind::Income, "bnp", Some("opening")),
+            txn(240000, "EUR", Kind::Income, "bnp", Some("salary")),
+            txn(20000, "EUR", Kind::Transfer, "bnp", Some("cash")),
+            txn(450, "EUR", Kind::Expense, "cash", Some("coffee")),
+            txn(1200, "EUR", Kind::Expense, "card", None), // uncategorized
+        ];
+        assert_eq!(summarize(&txns)["EUR"].residual(), 0);
     }
 
     #[test]
