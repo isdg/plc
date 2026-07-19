@@ -64,6 +64,9 @@ pub struct AddArgs {
     /// Currency ISO code (default: $PLC_CURRENCY, else EUR).
     #[arg(long = "cur", value_name = "CUR")]
     currency: Option<String>,
+    /// Project/event tag, nested with `/` (e.g. `japan-trip/work`). Repeatable.
+    #[arg(short = 'p', long = "project", value_name = "PROJECT")]
+    project: Vec<String>,
 }
 
 pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
@@ -117,11 +120,18 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
         }
     };
 
-    let txn = Transaction { amount, currency, kind, account, other, memo: args.memo.join(" ") };
-    let line = finance::format_line(&txn);
+    let projects = args
+        .project
+        .iter()
+        .map(|p| clean_link("project", p).map(|p| finance::normalize_tag(&p)))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let txn =
+        Transaction { amount, currency, kind, account, other, projects, memo: args.memo.join(" ") };
+    let entry = finance::format_entry(&txn);
 
     let (subdir, filename) = ledger_location();
-    note::append_line(palace.root(), &subdir, &filename, "ledger", &line)
+    note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("fin: {e}"))
 }
@@ -152,6 +162,7 @@ mod tests {
             to: None,
             income: false,
             currency: Some("EUR".into()),
+            project: vec![],
         }
     }
 
@@ -172,12 +183,18 @@ mod tests {
                 (kind, cat.map(|c| clean_link("category", &c)).transpose()?)
             }
         };
-        Ok(finance::format_line(&Transaction {
+        let projects = args
+            .project
+            .iter()
+            .map(|p| clean_link("project", p).map(|p| finance::normalize_tag(&p)))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(finance::format_entry(&Transaction {
             amount,
             currency,
             kind,
             account,
             other,
+            projects,
             memo: args.memo.join(" "),
         }))
     }
@@ -212,5 +229,28 @@ mod tests {
         let mut a = add_args();
         a.account = "ca[sh".into();
         assert!(line_of(a).is_err());
+    }
+
+    #[test]
+    fn builds_line_with_project() {
+        // `-p` flows through, lowercased with the `/` hierarchy preserved.
+        let mut a = add_args();
+        a.memo = vec![];
+        a.project = vec!["Japan-Trip/Work".into()];
+        assert_eq!(
+            line_of(a).unwrap(),
+            "$ -4.50 EUR  @[[cash]] #[[coffee]] ~[[japan-trip/work]]"
+        );
+    }
+
+    #[test]
+    fn long_entry_wraps_when_added() {
+        // Many tags push past 66 cols → block form, every line within budget.
+        let mut a = add_args();
+        a.memo = vec!["latte".into()];
+        a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
+        let entry = line_of(a).unwrap();
+        assert!(entry.contains('\n'), "should wrap: {entry}");
+        assert!(entry.lines().all(|l| l.chars().count() <= 66), "over 66: {entry}");
     }
 }

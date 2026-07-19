@@ -148,19 +148,20 @@ fn body_with_tags(stamp: &str, tag: &str, extra: Option<&str>) -> String {
     body
 }
 
-/// Append `line` (as its own line) to a tagged note, seeding the standard header
-/// when the file is absent or empty. Returns the note's path.
+/// Append `entry` (one line, or a multi-line block) to a tagged note, seeding the
+/// standard header when the file is absent or empty. Returns the note's path.
 ///
-/// The first appended line is separated from the seeded header block by a blank
-/// line; subsequent lines follow consecutively. Unlike [`ensure_note`], this
-/// writes body *content* — used by `plc fin add` to record a transaction in one
-/// shot rather than opening an editor.
+/// The *first* entry is separated from the seeded header block by a blank line;
+/// every later entry follows consecutively (no blank between them), even after a
+/// multi-line block whose last line is an indented continuation. Unlike
+/// [`ensure_note`], this writes body *content* — used by `plc fin add` to record
+/// a transaction in one shot rather than opening an editor.
 pub fn append_line(
     root: &Path,
     subdir: &str,
     filename: &str,
     tag: &str,
-    line: &str,
+    entry: &str,
 ) -> std::io::Result<PathBuf> {
     let path = ensure_note(root, subdir, filename, tag, None, SIGNATURE)?;
     let content = fs::read_to_string(&path)?;
@@ -170,15 +171,16 @@ pub fn append_line(
     if !content.is_empty() && !content.ends_with('\n') {
         suffix.push('\n');
     }
-    // Insert one blank line before the *first* transaction (when the file so far
-    // ends in the header/tag block, not another transaction), so money is set
-    // off from the header. Later transactions stay consecutive.
-    let last = content.trim_end_matches('\n').lines().last().unwrap_or("");
+    // Separate the *first* entry from the header with one blank line; once any
+    // transaction (`$` head line) exists, keep entries adjacent. Checking for an
+    // existing `$` head — rather than the previous line — keeps blocks (whose
+    // last line is a memo/tag continuation) from triggering a spurious blank.
+    let has_entry = content.lines().any(|l| l.starts_with('$'));
     let ends_blank = suffix.is_empty() && content.ends_with("\n\n");
-    if !content.is_empty() && !ends_blank && !last.trim_start().starts_with('$') {
+    if !content.is_empty() && !has_entry && !ends_blank {
         suffix.push('\n');
     }
-    suffix.push_str(line);
+    suffix.push_str(entry);
     suffix.push('\n');
 
     let mut file = OpenOptions::new().append(true).open(&path)?;

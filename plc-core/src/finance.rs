@@ -32,7 +32,20 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use crate::normalize_target;
+use crate::{ascii_lower, normalize_target};
+
+/// Max width of any emitted ledger line. The vault is reflowed to this many
+/// columns, so a longer entry is written as a multi-line block instead (see
+/// [`format_entry`]) to keep every line intact under reflow.
+const MAX_LINE: usize = 66;
+
+/// Normalize a `~` tag / project: ASCII-lowercase and trim, but **preserve `/`**
+/// so a nested tag like `japan-trip/work` stays whole. This differs from
+/// [`normalize_target`], which strips a `/`-path down to its basename for the
+/// notes/orphans link graph.
+pub fn normalize_tag(s: &str) -> String {
+    ascii_lower(s.trim())
+}
 
 /// The default currency when a line omits an explicit code and the caller has
 /// no other preference (`PLC_CURRENCY`, falling back to `EUR`).
@@ -72,6 +85,9 @@ pub struct Transaction {
     pub kind: Kind,
     pub account: String,
     pub other: Option<String>,
+    /// Cross-cutting project/event tags (`~[[japan-trip/work]]`); a grouping
+    /// attribute, not a money leg — excluded from the balance.
+    pub projects: Vec<String>,
     pub memo: String,
 }
 
@@ -89,10 +105,54 @@ pub fn format_line(t: &Transaction) -> String {
         (_, Some(cat)) => line.push_str(&format!(" #[[{cat}]]")),
         (_, None) => {}
     }
+    for p in &t.projects {
+        line.push_str(&format!(" ~[[{p}]]"));
+    }
     if !t.memo.is_empty() {
         line.push_str(&format!("  {}", t.memo));
     }
     line
+}
+
+/// Render a transaction for the ledger file: the compact [`format_line`] when it
+/// fits in [`MAX_LINE`], otherwise a multi-line **block** — a `$` head line
+/// (amount / account / category only) followed by indented continuation lines
+/// (each ≤ `MAX_LINE`) carrying the overflow tags and then the wrapped memo.
+/// Round-trips through [`parse_entries`].
+pub fn format_entry(t: &Transaction) -> String {
+    let one = format_line(t);
+    if one.chars().count() <= MAX_LINE {
+        return one;
+    }
+    // Head line without tags/memo (kept as compact as the data allows).
+    let head = Transaction { projects: Vec::new(), memo: String::new(), ..t.clone() };
+    let mut lines = vec![format_line(&head)];
+    let tokens = t.projects.iter().map(|p| format!("~[[{p}]]"));
+    wrap_into(&mut lines, tokens);
+    wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
+    lines.join("\n")
+}
+
+/// Pack `tokens` into indented continuation lines, each kept within
+/// [`MAX_LINE`] where possible (a single oversize token still gets its own line).
+fn wrap_into(lines: &mut Vec<String>, tokens: impl Iterator<Item = String>) {
+    const INDENT: &str = "    ";
+    let mut cur = String::new();
+    for tok in tokens {
+        let candidate = if cur.is_empty() {
+            format!("{INDENT}{tok}")
+        } else {
+            format!("{cur} {tok}")
+        };
+        if candidate.chars().count() > MAX_LINE && !cur.is_empty() {
+            lines.push(std::mem::replace(&mut cur, format!("{INDENT}{tok}")));
+        } else {
+            cur = candidate;
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
 }
 
 /// Parse one line into a [`Transaction`], or `None` if it is not a well-formed
@@ -115,21 +175,82 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
     };
 
     // The account is mandatory; a line without one is not a transaction.
-    let (account, rest) = take_sigil_link(rest, '@')?;
+    let (acct_raw, rest) = take_sigil_link(rest, '@')?;
+    let account = normalize_target(acct_raw);
 
     let rest = rest.trim_start();
-    let (kind, other, memo) = if let Some(after_gt) = rest.strip_prefix('>') {
-        let (dest, memo) = take_sigil_link(after_gt, '@')?;
-        (Kind::Transfer, Some(dest), memo.trim().to_string())
-    } else if let Some((cat, memo)) = take_sigil_link(rest, '#') {
+    let (kind, other, mut rest) = if let Some(after_gt) = rest.strip_prefix('>') {
+        let (dest_raw, after) = take_sigil_link(after_gt, '@')?;
+        (Kind::Transfer, Some(normalize_target(dest_raw)), after)
+    } else if let Some((cat_raw, after)) = take_sigil_link(rest, '#') {
         let kind = if neg { Kind::Expense } else { Kind::Income };
-        (kind, Some(cat), memo.trim().to_string())
+        (kind, Some(normalize_target(cat_raw)), after)
     } else {
         let kind = if neg { Kind::Expense } else { Kind::Income };
-        (kind, None, rest.trim().to_string())
+        (kind, None, rest)
     };
 
-    Some(Transaction { amount, currency, kind, account, other, memo })
+    // Zero or more `~[[tag]]` project tags sit between the account section and
+    // the memo. (On a block head line there are none — they arrive on the
+    // continuation lines handled by `parse_entries`.)
+    let mut projects = Vec::new();
+    while let Some(after) = take_project(rest.trim_start(), &mut projects) {
+        rest = after;
+    }
+
+    let memo = rest.trim().to_string();
+    Some(Transaction { amount, currency, kind, account, other, projects, memo })
+}
+
+/// If `s` begins with a `~[[tag]]`, push its normalized tag onto `projects` and
+/// return the remainder; else `None`.
+fn take_project<'a>(s: &'a str, projects: &mut Vec<String>) -> Option<&'a str> {
+    if !s.starts_with("~[[") {
+        return None;
+    }
+    let (tag_raw, after) = take_sigil_link(s, '~')?;
+    projects.push(normalize_tag(tag_raw));
+    Some(after)
+}
+
+/// Parse every transaction in ledger `content`, joining each block-form entry
+/// (a `$` head line plus following indented continuation lines) into one
+/// transaction. Non-transaction lines (header, blanks, prose) are skipped.
+pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(mut txn) = parse_line(lines[i], default_currency) else {
+            i += 1;
+            continue;
+        };
+        i += 1;
+        let mut memo_parts: Vec<String> = Vec::new();
+        if !txn.memo.is_empty() {
+            memo_parts.push(std::mem::take(&mut txn.memo));
+        }
+        // Absorb indented continuation lines: leading `~[[tag]]`s, then memo.
+        while i < lines.len() && is_continuation(lines[i]) {
+            let mut rest = lines[i].trim();
+            while let Some(after) = take_project(rest.trim_start(), &mut txn.projects) {
+                rest = after;
+            }
+            let m = rest.trim();
+            if !m.is_empty() {
+                memo_parts.push(m.to_string());
+            }
+            i += 1;
+        }
+        txn.memo = memo_parts.join(" ");
+        out.push(txn);
+    }
+    out
+}
+
+/// A block continuation line: indented (leading space/tab) and non-blank.
+fn is_continuation(line: &str) -> bool {
+    line.starts_with([' ', '\t']) && !line.trim().is_empty()
 }
 
 /// Split off the first whitespace-delimited token, returning it and the rest
@@ -185,15 +306,14 @@ fn format_amount(minor: i64) -> String {
 }
 
 /// Consume a `<sigil>[[inner]]` token at the start of `s` (after trimming
-/// leading whitespace). Returns the normalized target and the remaining string,
-/// or `None` if the sigil/brackets are not there.
-fn take_sigil_link(s: &str, sigil: char) -> Option<(String, &str)> {
+/// leading whitespace). Returns the **raw** inner text and the remaining string,
+/// or `None` if the sigil/brackets are not there. Callers normalize (`@`/`#`
+/// via `normalize_target`; `~` via `normalize_tag`).
+fn take_sigil_link(s: &str, sigil: char) -> Option<(&str, &str)> {
     let s = s.trim_start();
     let inner_and_rest = s.strip_prefix(sigil)?.strip_prefix("[[")?;
     let end = inner_and_rest.find("]]")?;
-    let inner = &inner_and_rest[..end];
-    let after = &inner_and_rest[end + 2..];
-    Some((normalize_target(inner), after))
+    Some((&inner_and_rest[..end], &inner_and_rest[end + 2..]))
 }
 
 /// Aggregated totals for one currency. `categories`/`accounts` map a name to a
@@ -211,6 +331,10 @@ pub struct CurrencyTotals {
     pub count: usize,
     pub categories: BTreeMap<String, i64>,
     pub accounts: BTreeMap<String, i64>,
+    /// Spend grouped by `~` project tag (expense `+`, income `-`). A reporting
+    /// side-map only — **not** part of [`Self::residual`], so tagging never
+    /// unbalances the book.
+    pub projects: BTreeMap<String, i64>,
 }
 
 impl CurrencyTotals {
@@ -267,6 +391,16 @@ pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
                 }
             }
         }
+        // Attribute the spend to each tag (expense = cost `+`, income = `-`;
+        // transfers move nothing in/out, so 0). Side-map only, off the book.
+        let proj_delta = match t.kind {
+            Kind::Expense => t.amount,
+            Kind::Income => -t.amount,
+            Kind::Transfer => 0,
+        };
+        for p in &t.projects {
+            *cur.projects.entry(p.clone()).or_default() += proj_delta;
+        }
     }
     per
 }
@@ -296,11 +430,7 @@ pub fn report(root: &Path, default_currency: &str) -> Result<String, String> {
             continue;
         };
         ledger_files += 1;
-        for line in content.lines() {
-            if let Some(t) = parse_line(line, default_currency) {
-                txns.push(t);
-            }
-        }
+        txns.extend(parse_entries(&content, default_currency));
     }
     Ok(render(&summarize(&txns), ledger_files))
 }
@@ -334,6 +464,7 @@ fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize) -> St
         lines.push(format!("    book     : {book}"));
         push_section(&mut lines, "by account", &t.accounts);
         push_section(&mut lines, "by category", &t.categories);
+        push_section(&mut lines, "by project", &t.projects);
     }
     lines.join("\n")
 }
@@ -369,6 +500,7 @@ mod tests {
             kind,
             account: account.into(),
             other: other.map(Into::into),
+            projects: Vec::new(),
             memo: String::new(),
         }
     }
@@ -380,6 +512,7 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: Some("coffee".into()),
+            projects: Vec::new(),
             memo: "Blue Bottle".into(),
         }
     }
@@ -399,6 +532,7 @@ mod tests {
             kind: Kind::Income,
             account: "checking".into(),
             other: Some("salary".into()),
+            projects: Vec::new(),
             memo: "July pay".into(),
         };
         assert_eq!(format_line(&t), "$ +2400.00 EUR  @[[checking]] #[[salary]]  July pay");
@@ -413,6 +547,7 @@ mod tests {
             kind: Kind::Transfer,
             account: "checking".into(),
             other: Some("cash".into()),
+            projects: Vec::new(),
             memo: "ATM".into(),
         };
         assert_eq!(format_line(&t), "$ 200.00 EUR  @[[checking]] > @[[cash]]  ATM");
@@ -427,6 +562,7 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: None,
+            projects: Vec::new(),
             memo: String::new(),
         };
         assert_eq!(format_line(&t), "$ -10.00 EUR  @[[cash]]");
@@ -499,6 +635,61 @@ mod tests {
         assert!(parse_line("$ abc @[[cash]]", EUR).is_none());
         assert!(parse_line("$ 4.500 @[[cash]]", EUR).is_none()); // >2 decimals
         assert!(parse_line("$ . @[[cash]]", EUR).is_none());
+    }
+
+    #[test]
+    fn round_trip_with_projects() {
+        let t = Transaction {
+            amount: 8000,
+            currency: "EUR".into(),
+            kind: Kind::Expense,
+            account: "card".into(),
+            other: Some("food".into()),
+            projects: vec!["trip".into()],
+            memo: "ramen".into(),
+        };
+        assert_eq!(format_line(&t), "$ -80.00 EUR  @[[card]] #[[food]] ~[[trip]]  ramen");
+        // Short enough → one line; round-trips.
+        assert_eq!(format_entry(&t), format_line(&t));
+        assert_eq!(parse_entries(&format_entry(&t), EUR), vec![t]);
+    }
+
+    #[test]
+    fn tags_preserve_slash_hierarchy() {
+        let t = parse_line("$ -80 @[[card]] #[[food]] ~[[Japan-Trip/Work]]  x", EUR).unwrap();
+        assert_eq!(t.projects, vec!["japan-trip/work"]); // lowercased, `/` kept
+        assert_eq!(t.memo, "x");
+    }
+
+    #[test]
+    fn long_entry_wraps_to_block_and_round_trips() {
+        let t = Transaction {
+            amount: 45,
+            currency: "EUR".into(),
+            kind: Kind::Expense,
+            account: "cash".into(),
+            other: Some("coffee".into()),
+            projects: vec!["japan-trip/leisure".into(), "work".into()],
+            memo: "latte at the airport before the long flight home".into(),
+        };
+        let block = format_entry(&t);
+        assert!(block.contains('\n'), "should wrap: {block}");
+        for line in block.lines() {
+            assert!(line.chars().count() <= 66, "line over 66: {line:?}");
+        }
+        assert_eq!(parse_entries(&block, EUR), vec![t]);
+    }
+
+    #[test]
+    fn projects_accumulate_and_stay_off_the_book() {
+        let mut a = txn(6000, "EUR", Kind::Expense, "card", Some("food"));
+        a.projects = vec!["japan-trip".into()];
+        let mut b = txn(30000, "EUR", Kind::Expense, "card", Some("hotel"));
+        b.projects = vec!["japan-trip".into()];
+        let s = summarize(&[a, b]);
+        let eur = &s["EUR"];
+        assert_eq!(eur.projects["japan-trip"], 36000); // 60 + 300, spend positive
+        assert_eq!(eur.residual(), 0); // projects excluded → book still balances
     }
 
     #[test]
