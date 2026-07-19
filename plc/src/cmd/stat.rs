@@ -16,7 +16,11 @@ use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
 use plc_core::calendar::{self, MonthStats, YearStats};
 
+use crate::cmd::calview;
 use crate::config::Palace;
+
+/// Heatmap-glyph meanings for the byte scale, shared by every `plc stat` layout.
+const BYTE_LEGEND: &str = "·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB";
 
 #[derive(Args)]
 pub struct StatArgs {
@@ -108,57 +112,19 @@ fn parse_year(s: &str) -> Result<i32, String> {
     Ok(if two_digit { 2000 + n } else { n })
 }
 
-/// Render one month: title, Mo–Su grid with a heatmap row under each week of
-/// day numbers, legend, then the Stats block — one string, byte-for-byte the
-/// same shape as the script's `render_month`.
-fn render_month(root: &Path, y: i32, m: u32, today: NaiveDate) -> String {
-    let last_day = calendar::last_day_of_month(y, m);
-    let sizes: Vec<u64> = (1..=last_day)
+/// Per-day byte sizes for a month (`sizes[d-1]` = day `d`).
+fn month_sizes(root: &Path, y: i32, m: u32) -> Vec<u64> {
+    (1..=calendar::last_day_of_month(y, m))
         .map(|d| calendar::size_of(&calendar::day_path(root, y, m, d)))
-        .collect();
+        .collect()
+}
 
-    let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month is valid");
-    let first_dow = first.weekday().number_from_monday(); // Mon=1 … Sun=7
-
-    // Current run counts back from today only when this is the current month.
+/// Render one month: the shared grid heatmap, then the byte Stats block.
+fn render_month(root: &Path, y: i32, m: u32, today: NaiveDate) -> String {
+    let sizes = month_sizes(root, y, m);
     let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
     let st = calendar::month_stats(&sizes, cutoff);
-
-    // 42-cell (6-week) Monday-first grid; cell holds the day number or 0.
-    let mut cells = [0u32; 42];
-    for d in 1..=last_day {
-        cells[(first_dow - 1 + d - 1) as usize] = d;
-    }
-    let num_cells = first_dow - 1 + last_day;
-    let num_weeks = num_cells.div_ceil(7);
-
-    let mut out = String::new();
-    let _ = writeln!(out, "\n              {}", first.format("%B %Y"));
-    out.push_str("      Mo Tu We Th Fr Sa Su\n");
-    for w in 0..num_weeks {
-        out.push_str("     ");
-        for dow in 0..7 {
-            let d = cells[(w * 7 + dow) as usize];
-            if d == 0 {
-                out.push_str("   ");
-            } else {
-                let _ = write!(out, "{d:3}");
-            }
-        }
-        out.push_str("\n     ");
-        for dow in 0..7 {
-            let d = cells[(w * 7 + dow) as usize];
-            if d == 0 {
-                out.push_str("   ");
-            } else {
-                out.push_str("  ");
-                out.push(calendar::symbol(sizes[(d - 1) as usize]));
-            }
-        }
-        out.push('\n');
-    }
-    out.push_str("\n     Legend:  ·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB\n");
-
+    let mut out = calview::month_grid(y, m, &sizes, calendar::symbol, BYTE_LEGEND);
     push_month_stats(&mut out, &st, y, m);
     out
 }
@@ -199,12 +165,13 @@ fn push_month_stats(out: &mut String, st: &MonthStats, y: i32, m: u32) {
 /// block. Ports the `year` arm of the script's dispatch.
 fn render_year(root: &Path, y: i32, layout: &str, plot: bool, today: NaiveDate) -> Result<String, String> {
     let sizes = calendar::collect_year(root, y);
+    let bytes = |b| calendar::fmt_bytes(b);
     let mut out = if plot {
-        render_plot_year(&sizes, y)
+        calview::plot_year(y, &sizes, "bytes", &bytes)
     } else {
         match layout {
-            "git" => render_year_git(&sizes, y, today),
-            "tab" => render_year_tab(&sizes, y, today),
+            "git" => calview::year_git(y, &sizes, calendar::symbol, BYTE_LEGEND),
+            "tab" => calview::year_tab(y, &sizes, today, calendar::symbol, BYTE_LEGEND, &bytes),
             other => return Err(format!("plc stat: unknown layout: {other} (expected git|tab)")),
         }
     };
@@ -212,103 +179,6 @@ fn render_year(root: &Path, y: i32, layout: &str, plot: bool, today: NaiveDate) 
     let st = calendar::year_stats(&sizes, y, cutoff);
     push_year_stats(&mut out, &st, y);
     Ok(out)
-}
-
-/// Tab layout: one row per month — bold for the current month — with a heatmap
-/// strip and a right-hand `days/total` summary. Ports `render_year_tab`.
-fn render_year_tab(sizes: &[u64], y: i32, today: NaiveDate) -> String {
-    let mut out = String::new();
-    out.push('\n');
-    let _ = writeln!(out, "{}{y} activity", " ".repeat(30));
-    out.push('\n');
-
-    let mut off = 0usize;
-    for m in 1..=12 {
-        let last = calendar::last_day_of_month(y, m);
-        let label = NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b");
-        let (b, r) = if y == today.year() && m == today.month() {
-            ("\x1b[1m", "\x1b[0m")
-        } else {
-            ("", "")
-        };
-        let mut strip = String::new();
-        let mut mtotal = 0u64;
-        let mut mdays = 0u32;
-        for d in 1..=last {
-            let sz = sizes[off + (d - 1) as usize];
-            strip.push(calendar::symbol(sz));
-            strip.push(' ');
-            if sz > 0 {
-                mtotal += sz;
-                mdays += 1;
-            }
-        }
-        let pad = " ".repeat(62usize.saturating_sub(last as usize * 2));
-        let _ = writeln!(
-            out,
-            "{b}  {label}  {strip}{pad}   {mdays:2}/{last}   {}{r}",
-            calendar::fmt_bytes(mtotal)
-        );
-        off += last as usize;
-    }
-    out.push_str("\n  Legend:  ·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB\n");
-    out
-}
-
-/// Git layout: a GitHub-style 7×weeks contribution grid with month labels above.
-/// Ports `render_year_git`.
-fn render_year_git(sizes: &[u64], y: i32, _today: NaiveDate) -> String {
-    let total_days = sizes.len() as u32;
-    let jan1_dow = NaiveDate::from_ymd_opt(y, 1, 1).unwrap().weekday().number_from_monday();
-    let pad = jan1_dow - 1;
-    let weeks = (pad + total_days).div_ceil(7);
-
-    // Linear day grid read column-major: position p → week p/7, weekday p%7.
-    let mut grid = vec![0u32; (weeks * 7) as usize];
-    let mut month_col = [0u32; 13];
-    let mut doy = 0u32;
-    for m in 1..=12 {
-        month_col[m as usize] = (pad + doy) / 7;
-        for _ in 1..=calendar::last_day_of_month(y, m) {
-            doy += 1;
-            grid[(pad + doy - 1) as usize] = doy;
-        }
-    }
-
-    let mut out = String::new();
-    out.push('\n');
-    let _ = writeln!(out, "{}{y} activity", " ".repeat(39));
-
-    // Month labels: each starts at its first week's column (2 chars per week).
-    out.push_str("      ");
-    let mut printed = 0u32;
-    for m in 1..=12 {
-        let target = month_col[m as usize] * 2;
-        while printed < target {
-            out.push(' ');
-            printed += 1;
-        }
-        let _ = write!(out, "{}", NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b"));
-        printed += 3;
-    }
-    out.push('\n');
-
-    let dow = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-    for (row, label) in dow.iter().enumerate() {
-        let _ = write!(out, "  {label}  ");
-        for c in 0..weeks {
-            let d_idx = grid[(c * 7 + row as u32) as usize];
-            if d_idx == 0 {
-                out.push_str("  ");
-            } else {
-                out.push(calendar::symbol(sizes[(d_idx - 1) as usize]));
-                out.push(' ');
-            }
-        }
-        out.push('\n');
-    }
-    out.push_str("\n  Legend:  ·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB\n");
-    out
 }
 
 /// Append the `── Year stats ──` block (shared shape with the script).
@@ -353,98 +223,14 @@ fn push_year_stats(out: &mut String, st: &YearStats, y: i32) {
     // Trailing `printf "\n"` supplied by `main`'s `println!`.
 }
 
-/// Plot layout for a month: an ASCII line chart of daily bytes with a day-number
-/// x-axis, followed by the month Stats block. Ports `render_plot_month`.
+/// Plot layout for a month: the shared line chart of daily bytes, then the
+/// month Stats block.
 fn render_plot_month(root: &Path, y: i32, m: u32, today: NaiveDate) -> String {
-    let last_day = calendar::last_day_of_month(y, m);
-    let sizes: Vec<u64> = (1..=last_day)
-        .map(|d| calendar::size_of(&calendar::day_path(root, y, m, d)))
-        .collect();
-    let max = sizes.iter().copied().max().unwrap_or(0);
-    let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month is valid");
-
-    let mut out = String::new();
-    out.push('\n');
-    let _ = writeln!(out, "          {} — daily bytes", first.format("%B %Y"));
-    out.push('\n');
-    if max == 0 {
-        out.push_str("          (no data)\n");
-    } else {
-        for line in calendar::line_chart(max, last_day as usize, 8, &sizes) {
-            out.push_str(&line);
-            out.push('\n');
-        }
-        push_day_axis(&mut out, last_day);
-    }
-
+    let sizes = month_sizes(root, y, m);
+    let mut out = calview::plot_month(y, m, &sizes, "bytes", &|b| calendar::fmt_bytes(b));
     let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
     let st = calendar::month_stats(&sizes, cutoff);
     push_month_stats(&mut out, &st, y, m);
-    out
-}
-
-/// The day-number x-axis under a month plot: markers at day 1 then every 5th,
-/// each column one char wide (a two-digit label consumes the next column too).
-fn push_day_axis(out: &mut String, last_day: u32) {
-    out.push_str(&" ".repeat(11));
-    let mut d = 1;
-    while d <= last_day {
-        if d == 1 || d % 5 == 0 {
-            let _ = write!(out, "{d}");
-            if d >= 10 {
-                d += 1; // the second digit occupies the next column
-            }
-        } else {
-            out.push(' ');
-        }
-        d += 1;
-    }
-    out.push('\n');
-}
-
-/// Plot layout for a year: an ASCII line chart of weekly (7-day-bin) bytes with
-/// month labels along the x-axis. Ports `render_plot_year`. The year Stats block
-/// is appended by the caller.
-fn render_plot_year(sizes: &[u64], y: i32) -> String {
-    let nweeks = sizes.len().div_ceil(7);
-    let mut week_sums = vec![0u64; nweeks];
-    for (doy0, &sz) in sizes.iter().enumerate() {
-        week_sums[doy0 / 7] += sz;
-    }
-    let max = week_sums.iter().copied().max().unwrap_or(0);
-
-    let mut out = String::new();
-    out.push('\n');
-    let _ = writeln!(out, "          {y} — weekly bytes (7-day bins)");
-    out.push('\n');
-    if max == 0 {
-        out.push_str("          (no data)\n\n");
-        return out;
-    }
-    for line in calendar::line_chart(max, nweeks, 8, &week_sums) {
-        out.push_str(&line);
-        out.push('\n');
-    }
-
-    // Month labels at the week each month's first day falls in (day-based bins,
-    // no Jan-1 weekday offset — mirrors `render_plot_year`).
-    out.push_str(&" ".repeat(11));
-    let mut month_week = [0usize; 13];
-    let mut cum = 0u32;
-    for m in 1..=12 {
-        month_week[m as usize] = (cum / 7) as usize;
-        cum += calendar::last_day_of_month(y, m);
-    }
-    let mut printed = 0usize;
-    for m in 1..=12 {
-        while printed < month_week[m as usize] {
-            out.push(' ');
-            printed += 1;
-        }
-        let _ = write!(out, "{}", NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b"));
-        printed += 3;
-    }
-    out.push('\n');
     out
 }
 

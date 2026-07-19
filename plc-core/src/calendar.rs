@@ -246,6 +246,18 @@ pub fn year_stats(sizes: &[u64], year: i32, cutoff_doy: Option<u32>) -> YearStat
 /// bottom axis. Uses box-drawing connectors (`● ─ │ ╭ ╮ ╰ ╯`). Ports the
 /// script's `draw_line_chart`; `max` is the top of the y-axis (clamped to ≥1).
 pub fn line_chart(max: u64, width: usize, height: usize, values: &[u64]) -> Vec<String> {
+    line_chart_with(max, width, height, values, &|b| fmt_bytes(b))
+}
+
+/// Like [`line_chart`], but the y-axis labels are rendered by `fmt` instead of
+/// [`fmt_bytes`] — so the same chart can label a byte axis or a money axis.
+pub fn line_chart_with(
+    max: u64,
+    width: usize,
+    height: usize,
+    values: &[u64],
+    fmt: &dyn Fn(u64) -> String,
+) -> Vec<String> {
     if width == 0 || height < 2 {
         return Vec::new();
     }
@@ -285,7 +297,7 @@ pub fn line_chart(max: u64, width: usize, height: usize, values: &[u64]) -> Vec<
     for (r, gridrow) in grid.iter().enumerate() {
         let val = max * (span - r as u64) / span;
         let sep = if r == 0 { '┼' } else { '┤' };
-        let mut line = format!("{:>9} {sep}", fmt_bytes(val));
+        let mut line = format!("{:>9} {sep}", fmt(val));
         line.extend(gridrow.iter());
         lines.push(line);
     }
