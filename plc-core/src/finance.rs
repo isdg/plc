@@ -113,12 +113,7 @@ pub struct Transaction {
 
 /// Render a transaction as its canonical line (always two decimal places).
 pub fn format_line(t: &Transaction) -> String {
-    let amount = format_amount(t.amount);
-    let signed = match t.kind {
-        Kind::Expense => format!("-{amount}"),
-        Kind::Income => format!("+{amount}"),
-        Kind::Transfer => amount,
-    };
+    let signed = signed_amount(t);
     let mut line = String::from("$ ");
     if let Some(ts) = t.date {
         line.push_str(&ts.format(TIMESTAMP_FMT).to_string());
@@ -363,6 +358,27 @@ fn format_amount(minor: i64) -> String {
     format!("{}.{:02}", minor / 100, minor % 100)
 }
 
+/// The amount as it appears on the line: expenses `-`, income `+`, transfers a
+/// bare magnitude.
+fn signed_amount(t: &Transaction) -> String {
+    let a = format_amount(t.amount);
+    match t.kind {
+        Kind::Expense => format!("-{a}"),
+        Kind::Income => format!("+{a}"),
+        Kind::Transfer => a,
+    }
+}
+
+/// A compact one-line description of the flow, e.g. `@cash #coffee` or
+/// `@checking > @cash`. Used by the register.
+fn describe(t: &Transaction) -> String {
+    match (t.kind, &t.other) {
+        (Kind::Transfer, Some(dest)) => format!("@{} > @{}", t.account, dest),
+        (_, Some(other)) => format!("@{} #{}", t.account, other),
+        (_, None) => format!("@{}", t.account),
+    }
+}
+
 /// Consume a `<sigil>[[inner]]` token at the start of `s` (after trimming
 /// leading whitespace). Returns the **raw** inner text and the remaining string,
 /// or `None` if the sigil/brackets are not there. Callers normalize (`@`/`#`
@@ -511,15 +527,60 @@ impl Filter {
 /// walk/aggregate shape of [`crate::orphans::report`]. `default_currency` fills
 /// in for lines that omit an explicit code. A transaction's effective date is
 /// its own timestamp, or — when it has none — the ledger file's day.
-pub fn report(
-    root: &Path,
-    default_currency: &str,
-    filter: &Filter,
-) -> Result<String, String> {
+pub fn report(root: &Path, default_currency: &str, filter: &Filter) -> Result<String, String> {
+    let (items, ledger_files) = collect(root, default_currency, filter)?;
+    let txns: Vec<Transaction> = items.into_iter().map(|(_, t)| t).collect();
+    Ok(render(&summarize(&txns), ledger_files))
+}
+
+/// A chronological register of the matching transactions with a per-currency
+/// running total of net-worth change (income `+`, expense `-`, transfers net 0),
+/// in the style of ledger's `reg`.
+pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<String, String> {
+    let (mut items, _) = collect(root, default_currency, filter)?;
+    // Sort by effective date; ties keep file/line order (sort is stable).
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut lines = vec![String::new(), format!("  Register — {} transaction(s)", items.len())];
+    if items.is_empty() {
+        lines.push(String::new());
+        lines.push("  (no transactions found)".to_string());
+        return Ok(lines.join("\n"));
+    }
+    lines.push(String::new());
+    let mut running: BTreeMap<String, i64> = BTreeMap::new();
+    for (eff, t) in &items {
+        let delta = match t.kind {
+            Kind::Expense => -t.amount,
+            Kind::Income => t.amount,
+            Kind::Transfer => 0,
+        };
+        let run = running.entry(t.currency.clone()).or_default();
+        *run += delta;
+        let date = eff.map_or_else(|| "----------".to_string(), |d| d.format("%Y-%m-%d").to_string());
+        let memo = if t.memo.is_empty() { String::new() } else { format!("  {}", t.memo) };
+        lines.push(format!(
+            "  {date}  {:>11} {:<3} {:>12}  {}{memo}",
+            signed_amount(t),
+            t.currency,
+            format_signed(*run),
+            describe(t),
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
+/// A transaction paired with its effective date (its own timestamp, or the
+/// ledger file's day when it carries none).
+type Dated = (Option<NaiveDate>, Transaction);
+
+/// Walk `root` for `*+ledger.md` files and return every transaction that passes
+/// `filter`, paired with its effective date, plus the count of ledger files seen.
+fn collect(root: &Path, default_currency: &str, filter: &Filter) -> Result<(Vec<Dated>, usize), String> {
     if !root.is_dir() {
         return Err(format!("fin: cannot read {}", root.display()));
     }
-    let mut txns: Vec<Transaction> = Vec::new();
+    let mut items: Vec<Dated> = Vec::new();
     let mut ledger_files = 0usize;
     for entry in WalkDir::new(root).into_iter().flatten() {
         if !entry.file_type().is_file() {
@@ -536,15 +597,15 @@ pub fn report(
             continue;
         };
         ledger_files += 1;
-        let file_day = file_day(name);
+        let fday = file_day(name);
         for t in parse_entries(&content, default_currency) {
-            let eff = t.date.map(|d| d.date_naive()).or(file_day);
+            let eff = t.date.map(|d| d.date_naive()).or(fday);
             if filter.matches(&t, eff) {
-                txns.push(t);
+                items.push((eff, t));
             }
         }
     }
-    Ok(render(&summarize(&txns), ledger_files))
+    Ok((items, ledger_files))
 }
 
 /// The day encoded in a `YYYY-MM-DD+ledger.md` filename, if present.
@@ -857,6 +918,27 @@ mod tests {
         let f = Filter { since: NaiveDate::from_ymd_opt(2026, 7, 10), ..Filter::default() };
         let out = report(&dir, EUR, &f).unwrap();
         assert!(out.contains("coffee") && !out.contains("rent"), "{out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn register_lists_in_date_order_with_running_total() {
+        // Entries out of date order in the file; register sorts and accumulates.
+        let dir = ledger_dir(
+            "finreg",
+            "2026-07-19+ledger.md",
+            "$ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]]\n\
+             $ 2026-07-01 00:00:00 +0200 +2000 EUR @[[bnp]] #[[salary]]\n\
+             $ 2026-07-10 00:00:00 +0200 200 EUR @[[bnp]] > @[[cash]]\n",
+        );
+        let out = register(&dir, EUR, &Filter::default()).unwrap();
+        let dates: Vec<&str> = out
+            .lines()
+            .filter_map(|l| l.trim().split(' ').next().filter(|d| d.starts_with("2026")))
+            .collect();
+        assert_eq!(dates, ["2026-07-01", "2026-07-10", "2026-07-18"], "sorted: {out}");
+        // Running net worth: +2000 (salary), +2000 (transfer nets 0), 1995.50 (coffee).
+        assert!(out.contains("+2000.00") && out.contains("+1995.50"), "{out}");
         fs::remove_dir_all(&dir).ok();
     }
 

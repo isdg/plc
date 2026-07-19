@@ -38,6 +38,8 @@ enum FinCmd {
     Add(AddArgs),
     /// Summarize transactions across all ledgers (net, by category, by account).
     Report(ReportArgs),
+    /// List matching transactions chronologically with a running total.
+    Reg(ReportArgs),
 }
 
 #[derive(Args)]
@@ -106,11 +108,26 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         None => seed_today(palace),
         Some(FinCmd::Add(add_args)) => add(palace, add_args),
         Some(FinCmd::Report(report_args)) => report(palace, report_args),
+        Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
     }
 }
 
 /// `plc fin report`: aggregate the matching `+ledger` transactions.
 fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
+    let filter = build_filter(&args)?;
+    let root = palace.root().join("notes/management/daily");
+    finance::report(&root, &finance::default_currency(), &filter)
+}
+
+/// `plc fin reg`: chronological register of the matching transactions.
+fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
+    let filter = build_filter(&args)?;
+    let root = palace.root().join("notes/management/daily");
+    finance::register(&root, &finance::default_currency(), &filter)
+}
+
+/// Build a [`Filter`] from the shared report/register flags.
+fn build_filter(args: &ReportArgs) -> Result<Filter, String> {
     let state = if args.cleared {
         Some(State::Cleared)
     } else if args.pending {
@@ -118,15 +135,13 @@ fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     } else {
         None
     };
-    let (since, until) = date_range(&args)?;
-    let filter = Filter {
+    let (since, until) = date_range(args)?;
+    Ok(Filter {
         state,
         patterns: args.patterns.iter().map(|p| p.to_lowercase()).collect(),
         since,
         until,
-    };
-    let root = palace.root().join("notes/management/daily");
-    finance::report(&root, &finance::default_currency(), &filter)
+    })
 }
 
 /// Resolve the `--since`/`--until`/`--month` flags into an inclusive date range.
