@@ -104,6 +104,9 @@ pub struct Transaction {
     pub kind: Kind,
     pub account: String,
     pub other: Option<String>,
+    /// Balance assertion: the asserted balance of `account` (this currency's
+    /// minor units, signed) immediately after this transaction; `None` if unasserted.
+    pub assert: Option<i64>,
     /// The transaction's instant (`2026-07-19 11:28:22 +0200`); `None` means
     /// "inherit the ledger file's day". `plc fin add` stamps this with now().
     pub date: Option<DateTime<FixedOffset>>,
@@ -133,6 +136,10 @@ pub fn format_line(t: &Transaction) -> String {
         (Kind::Transfer, Some(dest)) => line.push_str(&format!(" > @[[{dest}]]")),
         (_, Some(cat)) => line.push_str(&format!(" #[[{cat}]]")),
         (_, None) => {}
+    }
+    if let Some(a) = t.assert {
+        let sign = if a < 0 { "-" } else { "" };
+        line.push_str(&format!(" = {sign}{} {}", format_amount(a), t.currency));
     }
     for p in &t.projects {
         line.push_str(&format!(" ~[[{p}]]"));
@@ -235,6 +242,20 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
         (kind, None, rest)
     };
 
+    // Optional balance assertion `= <±amount> [CUR]` on the account.
+    let mut assert = None;
+    if let Some(after_eq) = rest.trim_start().strip_prefix('=') {
+        if let Some((amt_tok, after)) = next_token(after_eq) {
+            if let Some((neg, mag)) = parse_amount(amt_tok) {
+                assert = Some(if neg { -mag } else { mag });
+                rest = match next_token(after) {
+                    Some((tok, r)) if is_currency_code(tok) => r,
+                    _ => after,
+                };
+            }
+        }
+    }
+
     // Zero or more `~[[tag]]` project tags sit between the account section and
     // the memo. (On a block head line there are none — they arrive on the
     // continuation lines handled by `parse_entries`.)
@@ -244,7 +265,7 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
     }
 
     let memo = rest.trim().to_string();
-    Some(Transaction { amount, currency, kind, account, other, date, state, projects, memo })
+    Some(Transaction { amount, currency, kind, account, other, assert, date, state, projects, memo })
 }
 
 /// If `s` begins with a `~[[tag]]`, push its normalized tag onto `projects` and
@@ -581,6 +602,52 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
 /// ledger file's day when it carries none).
 type Dated = (Option<NaiveDate>, Transaction);
 
+/// Verify every balance assertion (`… @[[acct]] = X`) across all ledgers: replay
+/// transactions in date order, tracking each `@` account's running balance per
+/// currency, and check that the asserted balance matches after the asserting
+/// transaction. `Ok` with a count when all pass; `Err` listing the mismatches.
+pub fn check(root: &Path, default_currency: &str) -> Result<String, String> {
+    let (mut items, _) = collect(root, default_currency, &Filter::default())?;
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut bal: BTreeMap<(String, String), i64> = BTreeMap::new();
+    let mut checked = 0usize;
+    let mut fails: Vec<String> = Vec::new();
+    for (eff, t) in &items {
+        let key = |acct: &str| (t.currency.clone(), acct.to_string());
+        match t.kind {
+            Kind::Expense => *bal.entry(key(&t.account)).or_default() -= t.amount,
+            Kind::Income => *bal.entry(key(&t.account)).or_default() += t.amount,
+            Kind::Transfer => {
+                *bal.entry(key(&t.account)).or_default() -= t.amount;
+                if let Some(dest) = &t.other {
+                    *bal.entry(key(dest)).or_default() += t.amount;
+                }
+            }
+        }
+        if let Some(expected) = t.assert {
+            checked += 1;
+            let actual = *bal.get(&key(&t.account)).unwrap_or(&0);
+            if actual != expected {
+                let date = eff.map_or_else(|| "----------".to_string(), |d| d.format("%Y-%m-%d").to_string());
+                fails.push(format!(
+                    "  {date}  @{}: expected {} {}, got {}",
+                    t.account,
+                    format_signed(expected),
+                    t.currency,
+                    format_signed(actual),
+                ));
+            }
+        }
+    }
+    if !fails.is_empty() {
+        let mut msg = vec![format!("fin: {} balance assertion(s) failed:", fails.len())];
+        msg.extend(fails);
+        return Err(msg.join("\n"));
+    }
+    Ok(format!("  {checked} balance assertion(s) OK  ✓"))
+}
+
 /// Walk `root` for `*+ledger.md` files and return every transaction that passes
 /// `filter`, paired with its effective date, plus the count of ledger files seen.
 fn collect(root: &Path, default_currency: &str, filter: &Filter) -> Result<(Vec<Dated>, usize), String> {
@@ -712,6 +779,7 @@ mod tests {
             kind,
             account: account.into(),
             other: other.map(Into::into),
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
@@ -726,6 +794,7 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: Some("coffee".into()),
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
@@ -748,6 +817,7 @@ mod tests {
             kind: Kind::Income,
             account: "checking".into(),
             other: Some("salary".into()),
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
@@ -765,6 +835,7 @@ mod tests {
             kind: Kind::Transfer,
             account: "checking".into(),
             other: Some("cash".into()),
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
@@ -782,6 +853,7 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: None,
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
@@ -867,6 +939,7 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: Some("coffee".into()),
+            assert: None,
             date: DateTime::parse_from_str("2026-07-18 09:30:00 +0200", TIMESTAMP_FMT).ok(),
             state: State::Cleared,
             projects: Vec::new(),
@@ -1011,6 +1084,41 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_with_assertion() {
+        let t = parse_line("$ -4.50 @[[cash]] #[[coffee]] = 480 EUR  Blue Bottle", EUR).unwrap();
+        assert_eq!(t.assert, Some(48000));
+        assert_eq!(t.other.as_deref(), Some("coffee"));
+        assert_eq!(t.memo, "Blue Bottle");
+        assert_eq!(
+            format_line(&t),
+            "$ -4.50 EUR  @[[cash]] #[[coffee]] = 480.00 EUR  Blue Bottle"
+        );
+    }
+
+    #[test]
+    fn check_passes_and_fails() {
+        // cash: +200 (ATM in), then -4.50 (coffee) → 195.50 = 19550 minor.
+        let good = ledger_dir(
+            "finchk-ok",
+            "2026-07-19+ledger.md",
+            "$ 2026-07-10 00:00:00 +0200 200 EUR @[[bnp]] > @[[cash]]\n\
+             $ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]] = 195.50 EUR\n",
+        );
+        assert!(check(&good, EUR).unwrap().contains("1 balance assertion(s) OK"));
+        fs::remove_dir_all(&good).ok();
+
+        // Wrong asserted balance → error naming the account and the mismatch.
+        let bad = ledger_dir(
+            "finchk-bad",
+            "2026-07-19+ledger.md",
+            "$ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]] = 999 EUR\n",
+        );
+        let err = check(&bad, EUR).unwrap_err();
+        assert!(err.contains("failed") && err.contains("@cash"), "{err}");
+        fs::remove_dir_all(&bad).ok();
+    }
+
+    #[test]
     fn round_trip_with_projects() {
         let t = Transaction {
             amount: 8000,
@@ -1018,6 +1126,7 @@ mod tests {
             kind: Kind::Expense,
             account: "card".into(),
             other: Some("food".into()),
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: vec!["trip".into()],
@@ -1044,6 +1153,7 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: Some("coffee".into()),
+            assert: None,
             date: None,
             state: State::Uncleared,
             projects: vec!["japan-trip/leisure".into(), "work".into()],

@@ -40,6 +40,8 @@ enum FinCmd {
     Report(ReportArgs),
     /// List matching transactions chronologically with a running total.
     Reg(ReportArgs),
+    /// Verify every balance assertion (`… @[[acct]] = X`) across all ledgers.
+    Check,
 }
 
 #[derive(Args)]
@@ -104,6 +106,9 @@ pub struct AddArgs {
     /// Mark the transaction pending (`!`).
     #[arg(long = "pending")]
     pending: bool,
+    /// Assert the account's balance after this transaction (for reconciliation).
+    #[arg(long = "assert", value_name = "BALANCE", allow_hyphen_values = true)]
+    assert: Option<String>,
 }
 
 pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
@@ -112,6 +117,10 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         Some(FinCmd::Add(add_args)) => add(palace, add_args),
         Some(FinCmd::Report(report_args)) => report(palace, report_args),
         Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
+        Some(FinCmd::Check) => {
+            let root = palace.root().join("notes/management/daily");
+            finance::check(&root, &finance::default_currency())
+        }
     }
 }
 
@@ -222,6 +231,11 @@ fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, S
         .map(|p| clean_link("project", p).map(|p| finance::normalize_name(&p)))
         .collect::<Result<Vec<_>, _>>()?;
 
+    let assert = match args.assert.as_deref() {
+        Some(s) => Some(parse_balance(s)?),
+        None => None,
+    };
+
     // Stamp the full instant by default (like a note); `--date` overrides.
     let date = Some(match args.date.as_deref() {
         Some(s) => parse_when(s)?,
@@ -241,11 +255,24 @@ fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, S
         kind,
         account,
         other,
+        assert,
         date,
         state,
         projects,
         memo: args.memo.join(" "),
     })
+}
+
+/// Parse a signed balance for `--assert` into minor units.
+fn parse_balance(s: &str) -> Result<i64, String> {
+    let s = s.trim();
+    let (neg, mag) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let minor = finance::amount_to_minor(mag)
+        .ok_or_else(|| format!("fin: invalid assert balance: {s}"))?;
+    Ok(if neg { -minor } else { minor })
 }
 
 /// Parse a `--date` value: a full `YYYY-MM-DD HH:MM:SS ±ZZZZ` timestamp, or a
@@ -295,6 +322,7 @@ mod tests {
             date: None,
             cleared: false,
             pending: false,
+            assert: None,
         }
     }
 
@@ -359,6 +387,13 @@ mod tests {
         let mut a = add_args();
         a.account = "ca[sh".into();
         assert!(build_txn(a, now()).is_err());
+    }
+
+    #[test]
+    fn assert_flag_parses_signed_balance() {
+        let mut a = add_args();
+        a.assert = Some("-12.00".into());
+        assert_eq!(build_txn(a, now()).unwrap().assert, Some(-1200));
     }
 
     #[test]
