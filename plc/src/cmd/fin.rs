@@ -54,6 +54,15 @@ enum FinCmd {
     Check(CheckArgs),
     /// Calendar heatmap / plot of daily spend, à la `plc stat`.
     Stat(FinStatArgs),
+    /// Reformat every ledger file in place (canonical spacing / wrapping).
+    Fmt(FmtArgs),
+}
+
+#[derive(Args)]
+pub struct FmtArgs {
+    /// Report which files would change, without writing them.
+    #[arg(long = "check")]
+    check: bool,
 }
 
 #[derive(Args)]
@@ -188,6 +197,10 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
             finance::check(&root, &finance::default_currency(), check_args.strict)
         }
         Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
+        Some(FinCmd::Fmt(fmt_args)) => {
+            let root = palace.root().join("notes/management/daily");
+            finance::fmt(&root, &finance::default_currency(), fmt_args.check)
+        }
     }
 }
 
@@ -655,12 +668,15 @@ mod tests {
 
     #[test]
     fn long_entry_wraps_when_added() {
-        // Many tags push past 66 cols → block form, every line within budget.
+        // Tags and memo drop to continuation lines (the head keeps the
+        // accounting); every continuation line stays within the 79-col budget.
         let mut a = add_args();
         a.memo = vec!["latte".into()];
         a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
         let entry = finance::format_entry(&build_txn(a, now()).unwrap());
         assert!(entry.contains('\n'), "should wrap: {entry}");
-        assert!(entry.lines().all(|l| l.chars().count() <= 66), "over 66: {entry}");
+        for line in entry.lines().skip(1) {
+            assert!(line.chars().count() <= 79, "continuation over 79: {line}");
+        }
     }
 }

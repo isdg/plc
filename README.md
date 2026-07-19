@@ -272,17 +272,23 @@ the balance. Add one or more with `-p` (repeatable):
 
 # 5 Advanced entries
 
-## 5.1 Long lines wrap to a block
+## 5.1 The memo sits on its own line
 
-The vault is reflowed to 66 columns, so when a transaction would exceed that,
-`plc fin add` writes a **block**: a `$` head line plus indented continuation
-lines (each ≤ 66), which parse back to the same transaction.
+The `$` head line carries the whole **accounting** — date, amount, account,
+category (or transfer destination), balance assertion, and `~` tags — always
+together on one line, so `@account` and `#category` never separate. The **memo**
+always drops to its own indented line below; a long memo wraps at 79 columns.
+The vault is reflowed to 79 columns, but `+ledger` files are excluded from
+reflow, so the accounting head can run long when it has to.
 
-    $ plc fin add 4.50 airport latte before the long flight home \
-        -a cash -c coffee -p japan-trip/leisure -p work
+    $ plc fin add 11 takos -a revolut -c food/out
 
-    $ 2026-07-19 18:20:00 +0200 -4.50 EUR  @[[cash]] #[[coffee]]
-        ~[[japan-trip/leisure]] ~[[work]]
+    $ 2026-07-19 16:39:34 +0200 -11.00 EUR  @[[revolut]] #[[food/out]]
+        takos
+
+Tags stay up on the head with the rest of the accounting:
+
+    $ 2026-07-19 18:20:00 +0200 -4.50 EUR  @[[cash]] #[[coffee]] ~[[japan-trip]]
         airport latte before the long flight home
 
 ## 5.2 Splitting one payment across categories
@@ -307,7 +313,8 @@ Assert an account's balance right after a transaction to catch drift, with
 `--assert` (or a `= <balance>` on the line):
 
     $ plc fin add 4.50 coffee -a cash -c coffee --assert 195.50
-    #  → $ … -4.50 EUR  @[[cash]] #[[coffee]] = 195.50 EUR  coffee
+    #  → $ … -4.50 EUR  @[[cash]] #[[coffee]] = 195.50 EUR
+    #        coffee
 
 `plc fin check` replays every transaction in date order and verifies each
 assertion:
@@ -323,9 +330,11 @@ assertion:
 
 # 6 Reports
 
-    plc fin report [PATTERN…]     summary: net, by account / category / project
-    plc fin reg    [PATTERN…]     chronological register + running total
-    plc fin check  [--strict]     verify balance assertions (and declarations)
+    plc fin report  [PATTERN…]    summary: net, by account / category / project
+    plc fin reg     [PATTERN…]    chronological register + running total
+    plc fin balance [PATTERN…]    net worth, account balances, recent (alias bal)
+    plc fin check   [--strict]    verify balance assertions (and declarations)
+    plc fin fmt     [--check]      reformat every ledger file in place
 
 `PATTERN` keeps transactions whose account, category, tag, or memo contains it
 (case-insensitive; multiple patterns match if any does). Both `report` and
@@ -338,6 +347,11 @@ assertion:
 For example, July's dining, cleared only:
 
     $ plc fin report food/dining --month 2026-07 --cleared
+
+`plc fin fmt` re-renders every ledger file into the canonical layout above
+(accounting on the head, memo below, wrapped at 79). It only rewrites files that
+change; `--check` reports what would change without touching anything — handy
+after bulk edits or an import.
 
 ---
 

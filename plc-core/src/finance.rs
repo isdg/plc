@@ -41,10 +41,11 @@ pub const TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S %z";
 
 use crate::ascii_lower;
 
-/// Max width of any emitted ledger line. The vault is reflowed to this many
-/// columns, so a longer entry is written as a multi-line block instead (see
-/// [`format_entry`]) to keep every line intact under reflow.
-const MAX_LINE: usize = 66;
+/// Max width of any emitted continuation (memo/tag) line. The vault is reflowed
+/// to this many columns, so long memos are wrapped to keep every line intact
+/// under reflow. The `$` head line (the accounting) is never split — see
+/// [`format_entry`].
+const MAX_LINE: usize = 79;
 
 /// Normalize a finance name — an account (`@`), category (`#`), or tag (`~`):
 /// drop any `|alias`/`#heading`/`^block` suffix, then ASCII-lowercase and trim,
@@ -156,43 +157,18 @@ pub fn format_line(t: &Transaction) -> String {
     line
 }
 
-/// Render a transaction for the ledger file: the compact [`format_line`] when it
-/// fits in [`MAX_LINE`], otherwise a multi-line **block** — a `$` head line
-/// (amount / account / category only) followed by indented continuation lines
-/// (each ≤ `MAX_LINE`) carrying the overflow tags and then the wrapped memo.
+/// Render a transaction for the ledger file. The `$` head line carries the whole
+/// accounting — timestamp, state, amount, account, category / transfer
+/// destination, balance assertion, and `~` tags — always on one line, so
+/// `@account` and `#category` never separate. The memo, when present, always
+/// drops to its own indented continuation line(s), wrapped at [`MAX_LINE`].
 /// Round-trips through [`parse_entries`].
 pub fn format_entry(t: &Transaction) -> String {
     if !t.split.is_empty() {
         return format_split(t);
     }
-    let one = format_line(t);
-    if one.chars().count() <= MAX_LINE {
-        return one;
-    }
-    // Overflow: shrink the head to `$ [ts] [state] ±amount cur @[[account]]`
-    // (plus the transfer destination, which the head needs to stay a transfer)
-    // and push the category, assertion, tags, and memo onto continuation lines,
-    // so every line stays within MAX_LINE.
-    let transfer = matches!(t.kind, Kind::Transfer);
-    let head = Transaction {
-        other: if transfer { t.other.clone() } else { None },
-        assert: None,
-        projects: Vec::new(),
-        split: Vec::new(),
-        memo: String::new(),
-        ..t.clone()
-    };
+    let head = Transaction { memo: String::new(), ..t.clone() };
     let mut lines = vec![format_line(&head)];
-    if !transfer {
-        if let Some(cat) = &t.other {
-            lines.push(format!("    #[[{cat}]]"));
-        }
-    }
-    if let Some(a) = t.assert {
-        let sign = if a < 0 { "-" } else { "" };
-        lines.push(format!("    = {sign}{} {}", format_amount(a), t.currency));
-    }
-    wrap_into(&mut lines, t.projects.iter().map(|p| format!("~[[{p}]]")));
     wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
     lines.join("\n")
 }
@@ -746,6 +722,70 @@ pub fn balance(
     Ok(lines.join("\n"))
 }
 
+/// Reformat every `*+ledger.md` file under `root` in place: re-parse each
+/// transaction and re-render it via [`format_entry`] (canonical spacing, memo on
+/// its own line, [`MAX_LINE`]-col wrapping), preserving each file's header. With
+/// `check`, report what *would* change without writing. Returns a summary.
+pub fn fmt(root: &Path, default_currency: &str, check: bool) -> Result<String, String> {
+    if !root.is_dir() {
+        return Err(format!("fin: cannot read {}", root.display()));
+    }
+    let mut seen = 0usize;
+    let mut changed: Vec<String> = Vec::new();
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("+ledger.md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        seen += 1;
+        let formatted = reformat_content(&content, default_currency);
+        if formatted != content {
+            changed.push(path.display().to_string());
+            if !check {
+                fs::write(path, &formatted).map_err(|e| format!("fin fmt: {}: {e}", path.display()))?;
+            }
+        }
+    }
+    if changed.is_empty() {
+        return Ok(format!("  fin fmt — {seen} ledger file(s) already formatted  ✓"));
+    }
+    let verb = if check { "would reformat" } else { "reformatted" };
+    let mut lines = vec![format!("  fin fmt — {verb} {}/{seen} ledger file(s)", changed.len())];
+    lines.extend(changed.iter().take(20).map(|p| format!("    {p}")));
+    if changed.len() > 20 {
+        lines.push(format!("    … and {} more", changed.len() - 20));
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Rewrite one ledger file's text: keep the header (everything up to the first
+/// transaction line), then re-render every transaction canonically. A file with
+/// no transactions is returned unchanged.
+fn reformat_content(content: &str, default_currency: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some(first) = lines.iter().position(|l| parse_line(l, default_currency).is_some()) else {
+        return content.to_string();
+    };
+    // Header = lines before the first transaction, trailing blanks trimmed.
+    let mut end = first;
+    while end > 0 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    let header = lines[..end].join("\n");
+    let body = lines[first..].join("\n");
+    let rendered: Vec<String> = parse_entries(&body, default_currency).iter().map(format_entry).collect();
+    format!("{header}\n\n{}\n", rendered.join("\n"))
+}
+
 /// A transaction paired with its effective date (its own timestamp, or the
 /// ledger file's day when it carries none).
 type Dated = (Option<NaiveDate>, Transaction);
@@ -1288,6 +1328,38 @@ mod tests {
     }
 
     #[test]
+    fn fmt_rewrites_canonically_and_is_idempotent() {
+        // A messy file: compact one-liners with the memo on the head and loose
+        // spacing. `fmt` should re-render each entry canonically (memo below),
+        // keep the header, preserve the transactions, and be idempotent.
+        let dir = ledger_dir(
+            "finfmt",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ -11.00 EUR   @[[revolut]] #[[food/out]]   takos\n\
+             $ -2.20 EUR @[[cash]] #[[savings]]  cash balance\n",
+        );
+        let file = dir.join("2026/07/2026-07-19+ledger.md");
+
+        let out = fmt(&dir, EUR, false).unwrap();
+        assert!(out.contains("reformatted"), "{out}");
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(after.contains("[[ledger]]"), "header dropped: {after}");
+        // Memo dropped to its own indented line; account + category stay on head.
+        assert!(after.contains("@[[revolut]] #[[food/out]]\n    takos"), "{after}");
+        assert!(after.contains("@[[cash]] #[[savings]]\n    cash balance"), "{after}");
+        // Transactions survive the round-trip unchanged.
+        assert_eq!(parse_entries(&after, EUR).len(), 2);
+
+        // Second run: nothing left to change.
+        let again = fmt(&dir, EUR, false).unwrap();
+        assert!(again.contains("already formatted"), "not idempotent: {again}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), after);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn hierarchical_categories_roll_up_with_depth() {
         let dir = ledger_dir(
             "finhier",
@@ -1401,10 +1473,11 @@ mod tests {
     }
 
     #[test]
-    fn heavy_entry_wraps_head_under_66_and_round_trips() {
+    fn heavy_entry_keeps_accounting_on_head_and_round_trips() {
         // A kitchen-sink expense: full timestamp, cleared, nested account +
-        // category, assertion, two tags, long memo — the head alone would blow
-        // past 66, so the category and assertion move to continuation lines.
+        // category, assertion, two tags, long memo. The accounting (account,
+        // category, assertion) stays on the head — even past MAX_LINE — while
+        // the tags and memo wrap onto continuation lines kept within MAX_LINE.
         let t = Transaction {
             amount: 4250,
             currency: "EUR".into(),
@@ -1419,9 +1492,11 @@ mod tests {
             memo: "dinner with the whole team after the quarterly review".into(),
         };
         let block = format_entry(&t);
-        assert!(block.contains('\n'), "should wrap: {block}");
-        for line in block.lines() {
-            assert!(line.chars().count() <= 66, "line over 66: {:?}", line);
+        let lines: Vec<&str> = block.lines().collect();
+        assert!(lines[0].contains("@[[rev/eur]] #[[food/dining]]"), "acc+cat split: {}", lines[0]);
+        assert!(lines[0].contains("= 3583.53 EUR"), "assertion off head: {}", lines[0]);
+        for line in &lines[1..] {
+            assert!(line.chars().count() <= MAX_LINE, "continuation over {MAX_LINE}: {line:?}");
         }
         assert_eq!(parse_entries(&block, EUR), vec![t]);
     }
@@ -1546,8 +1621,11 @@ mod tests {
             memo: "ramen".into(),
         };
         assert_eq!(format_line(&t), "$ -80.00 EUR  @[[card]] #[[food]] ~[[trip]]  ramen");
-        // Short enough → one line; round-trips.
-        assert_eq!(format_entry(&t), format_line(&t));
+        // Head carries the accounting (incl. tags); only the memo drops below.
+        assert_eq!(
+            format_entry(&t),
+            "$ -80.00 EUR  @[[card]] #[[food]] ~[[trip]]\n    ramen"
+        );
         assert_eq!(parse_entries(&format_entry(&t), EUR), vec![t]);
     }
 
@@ -1575,8 +1653,11 @@ mod tests {
         };
         let block = format_entry(&t);
         assert!(block.contains('\n'), "should wrap: {block}");
-        for line in block.lines() {
-            assert!(line.chars().count() <= 66, "line over 66: {line:?}");
+        // Head keeps account + category together; tags/memo wrap within MAX_LINE.
+        let lines: Vec<&str> = block.lines().collect();
+        assert!(lines[0].contains("@[[cash]] #[[coffee]]"), "acc+cat split: {}", lines[0]);
+        for line in &lines[1..] {
+            assert!(line.chars().count() <= MAX_LINE, "continuation over {MAX_LINE}: {line:?}");
         }
         assert_eq!(parse_entries(&block, EUR), vec![t]);
     }
