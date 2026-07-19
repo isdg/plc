@@ -25,7 +25,7 @@
 //! Both directions live here so a round-trip (`parse_line(format_line(t)) == t`)
 //! pins the grammar.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -667,13 +667,16 @@ type Dated = (Option<NaiveDate>, Transaction);
 /// transactions in date order, tracking each `@` account's running balance per
 /// currency, and check that the asserted balance matches after the asserting
 /// transaction. `Ok` with a count when all pass; `Err` listing the mismatches.
-pub fn check(root: &Path, default_currency: &str) -> Result<String, String> {
+pub fn check(root: &Path, default_currency: &str, strict: bool) -> Result<String, String> {
     let (mut items, _) = collect(root, default_currency, &Filter::default())?;
     items.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut bal: BTreeMap<(String, String), i64> = BTreeMap::new();
     let mut checked = 0usize;
     let mut fails: Vec<String> = Vec::new();
+    if strict {
+        fails.extend(undeclared(root, &items));
+    }
     for (eff, t) in &items {
         let key = |acct: &str| (t.currency.clone(), acct.to_string());
         match t.kind {
@@ -702,11 +705,71 @@ pub fn check(root: &Path, default_currency: &str) -> Result<String, String> {
         }
     }
     if !fails.is_empty() {
-        let mut msg = vec![format!("fin: {} balance assertion(s) failed:", fails.len())];
+        let mut msg = vec![format!("fin: {} check(s) failed:", fails.len())];
         msg.extend(fails);
         return Err(msg.join("\n"));
     }
     Ok(format!("  {checked} balance assertion(s) OK  ✓"))
+}
+
+/// Declared finance names, gathered from `account`/`category`/`commodity`
+/// directive lines (column 0) in any ledger file.
+#[derive(Default)]
+struct Declarations {
+    accounts: HashSet<String>,
+    categories: HashSet<String>,
+    commodities: HashSet<String>,
+}
+
+/// Scan every ledger file for declaration directives.
+fn scan_declarations(root: &Path) -> Declarations {
+    let mut d = Declarations::default();
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        let path = entry.path();
+        if !path.file_name().and_then(|s| s.to_str()).is_some_and(|n| n.ends_with("+ledger.md")) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else { continue };
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix("account ") {
+                d.accounts.insert(normalize_name(rest));
+            } else if let Some(rest) = line.strip_prefix("category ") {
+                d.categories.insert(normalize_name(rest));
+            } else if let Some(rest) = line.strip_prefix("commodity ") {
+                d.commodities.insert(rest.trim().to_string());
+            }
+        }
+    }
+    d
+}
+
+/// Under `--strict`: names used by transactions but never declared (likely
+/// typos), as sorted diagnostic lines. Empty when everything checks out.
+fn undeclared(root: &Path, items: &[Dated]) -> Vec<String> {
+    let d = scan_declarations(root);
+    let (mut accts, mut cats, mut curs) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    for (_, t) in items {
+        accts.insert(t.account.clone());
+        curs.insert(t.currency.clone());
+        match t.kind {
+            Kind::Transfer => {
+                if let Some(dest) = &t.other {
+                    accts.insert(dest.clone());
+                }
+            }
+            _ if !t.split.is_empty() => cats.extend(t.split.iter().map(|(c, _)| c.clone())),
+            _ => {
+                if let Some(c) = &t.other {
+                    cats.insert(c.clone());
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    out.extend(accts.iter().filter(|a| !d.accounts.contains(*a)).map(|a| format!("  undeclared account: @{a}")));
+    out.extend(cats.iter().filter(|c| !d.categories.contains(*c)).map(|c| format!("  undeclared category: #{c}")));
+    out.extend(curs.iter().filter(|c| !d.commodities.contains(*c)).map(|c| format!("  undeclared commodity: {c}")));
+    out
 }
 
 /// Walk `root` for `*+ledger.md` files and return every transaction that passes
@@ -1202,7 +1265,7 @@ mod tests {
             "$ 2026-07-10 00:00:00 +0200 200 EUR @[[bnp]] > @[[cash]]\n\
              $ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]] = 195.50 EUR\n",
         );
-        assert!(check(&good, EUR).unwrap().contains("1 balance assertion(s) OK"));
+        assert!(check(&good, EUR, false).unwrap().contains("1 balance assertion(s) OK"));
         fs::remove_dir_all(&good).ok();
 
         // Wrong asserted balance → error naming the account and the mismatch.
@@ -1211,9 +1274,26 @@ mod tests {
             "2026-07-19+ledger.md",
             "$ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]] = 999 EUR\n",
         );
-        let err = check(&bad, EUR).unwrap_err();
+        let err = check(&bad, EUR, false).unwrap_err();
         assert!(err.contains("failed") && err.contains("@cash"), "{err}");
         fs::remove_dir_all(&bad).ok();
+    }
+
+    #[test]
+    fn strict_flags_undeclared_names() {
+        // `cash` and EUR are declared; `coffee` is not.
+        let dir = ledger_dir(
+            "finstrict",
+            "2026-07-19+ledger.md",
+            "account cash\ncommodity EUR\n\n$ -4.50 EUR @[[cash]] #[[coffee]]\n",
+        );
+        // Non-strict: only assertions checked → passes.
+        assert!(check(&dir, EUR, false).is_ok());
+        // Strict: the undeclared category is flagged.
+        let err = check(&dir, EUR, true).unwrap_err();
+        assert!(err.contains("undeclared category: #coffee"), "{err}");
+        assert!(!err.contains("undeclared account"), "cash was declared: {err}");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

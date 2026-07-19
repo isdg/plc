@@ -40,8 +40,16 @@ enum FinCmd {
     Report(ReportArgs),
     /// List matching transactions chronologically with a running total.
     Reg(ReportArgs),
-    /// Verify every balance assertion (`… @[[acct]] = X`) across all ledgers.
-    Check,
+    /// Verify balance assertions (and, with --strict, undeclared names).
+    Check(CheckArgs),
+}
+
+#[derive(Args)]
+pub struct CheckArgs {
+    /// Also flag accounts/categories/commodities used but never declared
+    /// (`account NAME` / `category NAME` / `commodity CODE` directive lines).
+    #[arg(long = "strict")]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -121,9 +129,9 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         Some(FinCmd::Add(add_args)) => add(palace, add_args),
         Some(FinCmd::Report(report_args)) => report(palace, report_args),
         Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
-        Some(FinCmd::Check) => {
+        Some(FinCmd::Check(check_args)) => {
             let root = palace.root().join("notes/management/daily");
-            finance::check(&root, &finance::default_currency())
+            finance::check(&root, &finance::default_currency(), check_args.strict)
         }
     }
 }
