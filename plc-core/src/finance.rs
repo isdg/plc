@@ -30,7 +30,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use walkdir::WalkDir;
 
 /// Timestamp format for a transaction's instant — identical to the note stamp
@@ -463,12 +463,59 @@ pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
     per
 }
 
-/// Walk `root` for `*+ledger.md` files, parse every transaction line, and return
-/// a formatted per-currency report (net, totals by category, balances by
-/// account). Mirrors the walk/aggregate shape of [`crate::orphans::report`].
-/// `default_currency` fills in for lines that omit an explicit code. When `only`
-/// is `Some(state)`, restrict the report to transactions in that state.
-pub fn report(root: &Path, default_currency: &str, only: Option<State>) -> Result<String, String> {
+/// Which transactions a report includes. Empty/`None` fields impose no limit.
+#[derive(Debug, Clone, Default)]
+pub struct Filter {
+    /// Restrict to this reconciliation state.
+    pub state: Option<State>,
+    /// Keep a transaction if any pattern (lowercase substring) matches its
+    /// account, category/dest, a tag, or its memo. Multiple patterns OR together.
+    pub patterns: Vec<String>,
+    /// Effective date on/after this day (inclusive).
+    pub since: Option<NaiveDate>,
+    /// Effective date on/before this day (inclusive).
+    pub until: Option<NaiveDate>,
+}
+
+impl Filter {
+    /// Whether `t` (with effective date `eff`) passes every active criterion.
+    fn matches(&self, t: &Transaction, eff: Option<NaiveDate>) -> bool {
+        if let Some(s) = self.state {
+            if t.state != s {
+                return false;
+            }
+        }
+        if self.since.is_some() || self.until.is_some() {
+            let Some(d) = eff else { return false };
+            if self.since.is_some_and(|s| d < s) || self.until.is_some_and(|u| d > u) {
+                return false;
+            }
+        }
+        if !self.patterns.is_empty() {
+            let hit = |p: &String| {
+                t.account.contains(p.as_str())
+                    || t.other.as_deref().is_some_and(|o| o.contains(p.as_str()))
+                    || t.projects.iter().any(|pr| pr.contains(p.as_str()))
+                    || t.memo.to_lowercase().contains(p.as_str())
+            };
+            if !self.patterns.iter().any(hit) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Walk `root` for `*+ledger.md` files, parse every transaction, keep those that
+/// pass `filter`, and return the formatted per-currency report. Mirrors the
+/// walk/aggregate shape of [`crate::orphans::report`]. `default_currency` fills
+/// in for lines that omit an explicit code. A transaction's effective date is
+/// its own timestamp, or — when it has none — the ledger file's day.
+pub fn report(
+    root: &Path,
+    default_currency: &str,
+    filter: &Filter,
+) -> Result<String, String> {
     if !root.is_dir() {
         return Err(format!("fin: cannot read {}", root.display()));
     }
@@ -489,12 +536,20 @@ pub fn report(root: &Path, default_currency: &str, only: Option<State>) -> Resul
             continue;
         };
         ledger_files += 1;
-        txns.extend(parse_entries(&content, default_currency));
-    }
-    if let Some(state) = only {
-        txns.retain(|t| t.state == state);
+        let file_day = file_day(name);
+        for t in parse_entries(&content, default_currency) {
+            let eff = t.date.map(|d| d.date_naive()).or(file_day);
+            if filter.matches(&t, eff) {
+                txns.push(t);
+            }
+        }
     }
     Ok(render(&summarize(&txns), ledger_files))
+}
+
+/// The day encoded in a `YYYY-MM-DD+ledger.md` filename, if present.
+fn file_day(name: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(name.get(..10)?, "%Y-%m-%d").ok()
 }
 
 /// Format a summary as a human-readable block, in the visual style of
@@ -759,11 +814,60 @@ mod tests {
         )
         .unwrap();
 
-        let all = report(&dir, EUR, None).unwrap();
+        let all = report(&dir, EUR, &Filter::default()).unwrap();
         assert!(all.contains("coffee") && all.contains("lunch"), "{all}");
-        let cleared = report(&dir, EUR, Some(State::Cleared)).unwrap();
+        let only = Filter { state: Some(State::Cleared), ..Filter::default() };
+        let cleared = report(&dir, EUR, &only).unwrap();
         assert!(cleared.contains("coffee") && !cleared.contains("lunch"), "{cleared}");
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Write one ledger file `name` with `body` under a temp dir; return the dir.
+    fn ledger_dir(tag: &str, name: &str, body: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("plc-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let sub = dir.join("2026/07");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join(name), body).unwrap();
+        dir
+    }
+
+    #[test]
+    fn report_filters_by_pattern() {
+        let dir = ledger_dir(
+            "finpat",
+            "2026-07-19+ledger.md",
+            "$ -4.50 EUR @[[cash]] #[[coffee]]\n$ -900 EUR @[[bnp]] #[[rent]]\n",
+        );
+        let f = Filter { patterns: vec!["coffee".into()], ..Filter::default() };
+        let out = report(&dir, EUR, &f).unwrap();
+        assert!(out.contains("coffee") && !out.contains("rent"), "{out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn report_filters_by_date_range() {
+        let dir = ledger_dir(
+            "findate",
+            "2026-07-19+ledger.md",
+            "$ 2026-07-01 00:00:00 +0200 -900 EUR @[[bnp]] #[[rent]]\n\
+             $ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]]\n",
+        );
+        let f = Filter { since: NaiveDate::from_ymd_opt(2026, 7, 10), ..Filter::default() };
+        let out = report(&dir, EUR, &f).unwrap();
+        assert!(out.contains("coffee") && !out.contains("rent"), "{out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn effective_date_falls_back_to_file_day() {
+        // No explicit timestamp → the entry's date is the file's day (2026-07-05).
+        let dir = ledger_dir("finfday", "2026-07-05+ledger.md", "$ -4.50 EUR @[[cash]] #[[coffee]]\n");
+        let after = Filter { since: NaiveDate::from_ymd_opt(2026, 7, 10), ..Filter::default() };
+        assert!(!report(&dir, EUR, &after).unwrap().contains("coffee"));
+        let upto = Filter { until: NaiveDate::from_ymd_opt(2026, 7, 6), ..Filter::default() };
+        assert!(report(&dir, EUR, &upto).unwrap().contains("coffee"));
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -891,7 +995,7 @@ mod tests {
         // A normal daily note (no +ledger) must be ignored, even if it holds a `$` line.
         fs::write(sub.join("2026-07-19.md"), "$ -999 EUR @[[cash]]\n").unwrap();
 
-        let out = report(&dir, EUR, None).unwrap();
+        let out = report(&dir, EUR, &Filter::default()).unwrap();
         assert!(out.contains("EUR"), "{out}");
         assert!(out.contains("net"), "{out}");
         assert!(out.contains("coffee"), "{out}");
@@ -905,7 +1009,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("plc-finempty-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let out = report(&dir, EUR, None).unwrap();
+        let out = report(&dir, EUR, &Filter::default()).unwrap();
         assert!(out.contains("no transactions found"), "{out}");
         fs::remove_dir_all(&dir).ok();
     }

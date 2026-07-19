@@ -19,9 +19,9 @@
 //! them. See `plc_core::finance` for the full grammar. Bare `plc fin` just seeds
 //! and prints today's ledger path so you can open it by hand.
 
-use chrono::{DateTime, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
+use chrono::{DateTime, Datelike, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
 use clap::{Args, Subcommand};
-use plc_core::finance::{self, Kind, State, Transaction};
+use plc_core::finance::{self, Filter, Kind, State, Transaction};
 
 use crate::config::Palace;
 use crate::note;
@@ -42,12 +42,25 @@ enum FinCmd {
 
 #[derive(Args)]
 pub struct ReportArgs {
+    /// Keep only transactions whose account/category/tag/memo contains a PATTERN
+    /// (case-insensitive). Multiple patterns match if any one does.
+    #[arg(value_name = "PATTERN")]
+    patterns: Vec<String>,
     /// Only cleared (`*`) transactions.
     #[arg(long = "cleared", conflicts_with = "pending")]
     cleared: bool,
     /// Only pending (`!`) transactions.
     #[arg(long = "pending")]
     pending: bool,
+    /// Only on/after this date (YYYY-MM-DD).
+    #[arg(long = "since", value_name = "YYYY-MM-DD")]
+    since: Option<String>,
+    /// Only on/before this date (YYYY-MM-DD).
+    #[arg(long = "until", value_name = "YYYY-MM-DD")]
+    until: Option<String>,
+    /// Restrict to one month (YYYY-MM); sets since/until to its bounds.
+    #[arg(long = "month", value_name = "YYYY-MM", conflicts_with_all = ["since", "until"])]
+    month: Option<String>,
 }
 
 #[derive(Args)]
@@ -96,17 +109,45 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
     }
 }
 
-/// `plc fin report`: aggregate every `+ledger` file under the daily tree.
+/// `plc fin report`: aggregate the matching `+ledger` transactions.
 fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
-    let only = if args.cleared {
+    let state = if args.cleared {
         Some(State::Cleared)
     } else if args.pending {
         Some(State::Pending)
     } else {
         None
     };
+    let (since, until) = date_range(&args)?;
+    let filter = Filter {
+        state,
+        patterns: args.patterns.iter().map(|p| p.to_lowercase()).collect(),
+        since,
+        until,
+    };
     let root = palace.root().join("notes/management/daily");
-    finance::report(&root, &finance::default_currency(), only)
+    finance::report(&root, &finance::default_currency(), &filter)
+}
+
+/// Resolve the `--since`/`--until`/`--month` flags into an inclusive date range.
+fn date_range(args: &ReportArgs) -> Result<(Option<NaiveDate>, Option<NaiveDate>), String> {
+    if let Some(m) = &args.month {
+        let first = NaiveDate::parse_from_str(&format!("{}-01", m.trim()), "%Y-%m-%d")
+            .map_err(|_| format!("fin: invalid month (want YYYY-MM): {m}"))?;
+        let (y, mo) = (first.year(), first.month());
+        let (ny, nm) = if mo == 12 { (y + 1, 1) } else { (y, mo + 1) };
+        let last = NaiveDate::from_ymd_opt(ny, nm, 1)
+            .and_then(|d| d.pred_opt())
+            .ok_or_else(|| format!("fin: invalid month: {m}"))?;
+        return Ok((Some(first), Some(last)));
+    }
+    let parse = |o: &Option<String>| match o {
+        Some(s) => NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+            .map(Some)
+            .map_err(|_| format!("fin: invalid date (want YYYY-MM-DD): {s}")),
+        None => Ok(None),
+    };
+    Ok((parse(&args.since)?, parse(&args.until)?))
 }
 
 /// Today's ledger location: `(subdir, filename)` under the daily tree.
