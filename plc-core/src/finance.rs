@@ -30,7 +30,12 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
+use chrono::{DateTime, FixedOffset};
 use walkdir::WalkDir;
+
+/// Timestamp format for a transaction's instant — identical to the note stamp
+/// line (`isg 2026-07-19 11:28:22 +0200`), so money and prose share one clock.
+pub const TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S %z";
 
 use crate::{ascii_lower, normalize_target};
 
@@ -64,6 +69,16 @@ pub fn amount_to_minor(s: &str) -> Option<i64> {
     parse_amount(s.trim()).map(|(_neg, minor)| minor)
 }
 
+/// Reconciliation state: whether the transaction has cleared the real-world
+/// account. `*` = cleared, `!` = pending; the default is uncleared (no marker).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum State {
+    #[default]
+    Uncleared,
+    Cleared,
+    Pending,
+}
+
 /// What a transaction does to its account(s).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -85,6 +100,11 @@ pub struct Transaction {
     pub kind: Kind,
     pub account: String,
     pub other: Option<String>,
+    /// The transaction's instant (`2026-07-19 11:28:22 +0200`); `None` means
+    /// "inherit the ledger file's day". `plc fin add` stamps this with now().
+    pub date: Option<DateTime<FixedOffset>>,
+    /// Reconciliation state (`*`/`!`/none).
+    pub state: State,
     /// Cross-cutting project/event tags (`~[[japan-trip/work]]`); a grouping
     /// attribute, not a money leg — excluded from the balance.
     pub projects: Vec<String>,
@@ -99,7 +119,17 @@ pub fn format_line(t: &Transaction) -> String {
         Kind::Income => format!("+{amount}"),
         Kind::Transfer => amount,
     };
-    let mut line = format!("$ {signed} {}  @[[{}]]", t.currency, t.account);
+    let mut line = String::from("$ ");
+    if let Some(ts) = t.date {
+        line.push_str(&ts.format(TIMESTAMP_FMT).to_string());
+        line.push(' ');
+    }
+    match t.state {
+        State::Cleared => line.push_str("* "),
+        State::Pending => line.push_str("! "),
+        State::Uncleared => {}
+    }
+    line.push_str(&format!("{signed} {}  @[[{}]]", t.currency, t.account));
     match (t.kind, &t.other) {
         (Kind::Transfer, Some(dest)) => line.push_str(&format!(" > @[[{dest}]]")),
         (_, Some(cat)) => line.push_str(&format!(" #[[{cat}]]")),
@@ -159,10 +189,26 @@ fn wrap_into(lines: &mut Vec<String>, tokens: impl Iterator<Item = String>) {
 /// transaction line (prose, blank, missing `$`/amount/account, malformed amount).
 /// `default_currency` is used when the line carries no explicit code.
 pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
-    let rest = line.trim_start().strip_prefix('$')?;
+    let mut rest = line.trim_start().strip_prefix('$')?;
     // The `$` must be a standalone sigil, not the first char of some `$word`.
     if !rest.starts_with(|c: char| c.is_whitespace()) {
         return None;
+    }
+
+    // Optional leading timestamp (`YYYY-MM-DD HH:MM:SS ±ZZZZ`) and reconciliation
+    // state (`*`/`!`), before the amount. A missing timestamp inherits the file's day.
+    let mut date = None;
+    if let Some((ts, after)) = take_timestamp(rest) {
+        date = Some(ts);
+        rest = after;
+    }
+    let mut state = State::Uncleared;
+    if let Some((tok, after)) = next_token(rest) {
+        match tok {
+            "*" => (state, rest) = (State::Cleared, after),
+            "!" => (state, rest) = (State::Pending, after),
+            _ => {}
+        }
     }
 
     let (amount_tok, rest) = next_token(rest)?;
@@ -199,7 +245,7 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
     }
 
     let memo = rest.trim().to_string();
-    Some(Transaction { amount, currency, kind, account, other, projects, memo })
+    Some(Transaction { amount, currency, kind, account, other, date, state, projects, memo })
 }
 
 /// If `s` begins with a `~[[tag]]`, push its normalized tag onto `projects` and
@@ -251,6 +297,18 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
 /// A block continuation line: indented (leading space/tab) and non-blank.
 fn is_continuation(line: &str) -> bool {
     line.starts_with([' ', '\t']) && !line.trim().is_empty()
+}
+
+/// If `s` begins with a full timestamp (`date time ±offset`, three
+/// whitespace-separated tokens in [`TIMESTAMP_FMT`]), parse and consume it,
+/// returning the instant and the remainder. Otherwise `None` (no consumption) —
+/// so a normal `-4.50 EUR @[[…]]` head is left untouched.
+fn take_timestamp(s: &str) -> Option<(DateTime<FixedOffset>, &str)> {
+    let (d, r1) = next_token(s)?;
+    let (t, r2) = next_token(r1)?;
+    let (z, rest) = next_token(r2)?;
+    let dt = DateTime::parse_from_str(&format!("{d} {t} {z}"), TIMESTAMP_FMT).ok()?;
+    Some((dt, rest))
 }
 
 /// Split off the first whitespace-delimited token, returning it and the rest
@@ -408,8 +466,9 @@ pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
 /// Walk `root` for `*+ledger.md` files, parse every transaction line, and return
 /// a formatted per-currency report (net, totals by category, balances by
 /// account). Mirrors the walk/aggregate shape of [`crate::orphans::report`].
-/// `default_currency` fills in for lines that omit an explicit code.
-pub fn report(root: &Path, default_currency: &str) -> Result<String, String> {
+/// `default_currency` fills in for lines that omit an explicit code. When `only`
+/// is `Some(state)`, restrict the report to transactions in that state.
+pub fn report(root: &Path, default_currency: &str, only: Option<State>) -> Result<String, String> {
     if !root.is_dir() {
         return Err(format!("fin: cannot read {}", root.display()));
     }
@@ -431,6 +490,9 @@ pub fn report(root: &Path, default_currency: &str) -> Result<String, String> {
         };
         ledger_files += 1;
         txns.extend(parse_entries(&content, default_currency));
+    }
+    if let Some(state) = only {
+        txns.retain(|t| t.state == state);
     }
     Ok(render(&summarize(&txns), ledger_files))
 }
@@ -500,6 +562,8 @@ mod tests {
             kind,
             account: account.into(),
             other: other.map(Into::into),
+            date: None,
+            state: State::Uncleared,
             projects: Vec::new(),
             memo: String::new(),
         }
@@ -512,6 +576,8 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: Some("coffee".into()),
+            date: None,
+            state: State::Uncleared,
             projects: Vec::new(),
             memo: "Blue Bottle".into(),
         }
@@ -532,6 +598,8 @@ mod tests {
             kind: Kind::Income,
             account: "checking".into(),
             other: Some("salary".into()),
+            date: None,
+            state: State::Uncleared,
             projects: Vec::new(),
             memo: "July pay".into(),
         };
@@ -547,6 +615,8 @@ mod tests {
             kind: Kind::Transfer,
             account: "checking".into(),
             other: Some("cash".into()),
+            date: None,
+            state: State::Uncleared,
             projects: Vec::new(),
             memo: "ATM".into(),
         };
@@ -562,6 +632,8 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: None,
+            date: None,
+            state: State::Uncleared,
             projects: Vec::new(),
             memo: String::new(),
         };
@@ -638,6 +710,64 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_with_timestamp_and_state() {
+        let t = Transaction {
+            amount: 450,
+            currency: "EUR".into(),
+            kind: Kind::Expense,
+            account: "cash".into(),
+            other: Some("coffee".into()),
+            date: DateTime::parse_from_str("2026-07-18 09:30:00 +0200", TIMESTAMP_FMT).ok(),
+            state: State::Cleared,
+            projects: Vec::new(),
+            memo: "Blue Bottle".into(),
+        };
+        assert_eq!(
+            format_line(&t),
+            "$ 2026-07-18 09:30:00 +0200 * -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle"
+        );
+        assert_eq!(parse_line(&format_line(&t), EUR).as_ref(), Some(&t));
+    }
+
+    #[test]
+    fn pending_marker_round_trips() {
+        let t = parse_line("$ ! -4.50 @[[cash]] #[[coffee]]", EUR).unwrap();
+        assert_eq!(t.state, State::Pending);
+        assert_eq!(t.date, None);
+        assert_eq!(format_line(&t), "$ ! -4.50 EUR  @[[cash]] #[[coffee]]");
+    }
+
+    #[test]
+    fn no_date_no_state_is_backward_compatible() {
+        // Existing lines (no date/state) parse to None/Uncleared and reprint
+        // byte-identically — nothing before the amount.
+        let t = parse_line("$ -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle", EUR).unwrap();
+        assert_eq!(t.date, None);
+        assert_eq!(t.state, State::Uncleared);
+        assert_eq!(format_line(&t), "$ -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle");
+    }
+
+    #[test]
+    fn report_filters_by_state() {
+        let dir = std::env::temp_dir().join(format!("plc-finstate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let sub = dir.join("2026/07");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(
+            sub.join("2026-07-19+ledger.md"),
+            "isg\n\n[[ledger]]\n\n$ * -4.50 EUR @[[cash]] #[[coffee]]\n$ -9.00 EUR @[[cash]] #[[lunch]]\n",
+        )
+        .unwrap();
+
+        let all = report(&dir, EUR, None).unwrap();
+        assert!(all.contains("coffee") && all.contains("lunch"), "{all}");
+        let cleared = report(&dir, EUR, Some(State::Cleared)).unwrap();
+        assert!(cleared.contains("coffee") && !cleared.contains("lunch"), "{cleared}");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn round_trip_with_projects() {
         let t = Transaction {
             amount: 8000,
@@ -645,6 +775,8 @@ mod tests {
             kind: Kind::Expense,
             account: "card".into(),
             other: Some("food".into()),
+            date: None,
+            state: State::Uncleared,
             projects: vec!["trip".into()],
             memo: "ramen".into(),
         };
@@ -669,6 +801,8 @@ mod tests {
             kind: Kind::Expense,
             account: "cash".into(),
             other: Some("coffee".into()),
+            date: None,
+            state: State::Uncleared,
             projects: vec!["japan-trip/leisure".into(), "work".into()],
             memo: "latte at the airport before the long flight home".into(),
         };
@@ -757,7 +891,7 @@ mod tests {
         // A normal daily note (no +ledger) must be ignored, even if it holds a `$` line.
         fs::write(sub.join("2026-07-19.md"), "$ -999 EUR @[[cash]]\n").unwrap();
 
-        let out = report(&dir, EUR).unwrap();
+        let out = report(&dir, EUR, None).unwrap();
         assert!(out.contains("EUR"), "{out}");
         assert!(out.contains("net"), "{out}");
         assert!(out.contains("coffee"), "{out}");
@@ -771,7 +905,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("plc-finempty-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let out = report(&dir, EUR).unwrap();
+        let out = report(&dir, EUR, None).unwrap();
         assert!(out.contains("no transactions found"), "{out}");
         fs::remove_dir_all(&dir).ok();
     }

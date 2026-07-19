@@ -19,9 +19,9 @@
 //! them. See `plc_core::finance` for the full grammar. Bare `plc fin` just seeds
 //! and prints today's ledger path so you can open it by hand.
 
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
 use clap::{Args, Subcommand};
-use plc_core::finance::{self, Kind, Transaction};
+use plc_core::finance::{self, Kind, State, Transaction};
 
 use crate::config::Palace;
 use crate::note;
@@ -37,7 +37,17 @@ enum FinCmd {
     /// Append a transaction to today's ledger.
     Add(AddArgs),
     /// Summarize transactions across all ledgers (net, by category, by account).
-    Report,
+    Report(ReportArgs),
+}
+
+#[derive(Args)]
+pub struct ReportArgs {
+    /// Only cleared (`*`) transactions.
+    #[arg(long = "cleared", conflicts_with = "pending")]
+    cleared: bool,
+    /// Only pending (`!`) transactions.
+    #[arg(long = "pending")]
+    pending: bool,
 }
 
 #[derive(Args)]
@@ -67,20 +77,36 @@ pub struct AddArgs {
     /// Project/event tag, nested with `/` (e.g. `japan-trip/work`). Repeatable.
     #[arg(short = 'p', long = "project", value_name = "PROJECT")]
     project: Vec<String>,
+    /// Explicit date YYYY-MM-DD (default: today, the ledger's day).
+    #[arg(short = 'd', long = "date", value_name = "YYYY-MM-DD")]
+    date: Option<String>,
+    /// Mark the transaction cleared (`*`).
+    #[arg(long = "cleared", conflicts_with = "pending")]
+    cleared: bool,
+    /// Mark the transaction pending (`!`).
+    #[arg(long = "pending")]
+    pending: bool,
 }
 
 pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
     match args.cmd {
         None => seed_today(palace),
         Some(FinCmd::Add(add_args)) => add(palace, add_args),
-        Some(FinCmd::Report) => report(palace),
+        Some(FinCmd::Report(report_args)) => report(palace, report_args),
     }
 }
 
 /// `plc fin report`: aggregate every `+ledger` file under the daily tree.
-fn report(palace: &Palace) -> Result<String, String> {
+fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
+    let only = if args.cleared {
+        Some(State::Cleared)
+    } else if args.pending {
+        Some(State::Pending)
+    } else {
+        None
+    };
     let root = palace.root().join("notes/management/daily");
-    finance::report(&root, &finance::default_currency())
+    finance::report(&root, &finance::default_currency(), only)
 }
 
 /// Today's ledger location: `(subdir, filename)` under the daily tree.
@@ -100,8 +126,19 @@ fn seed_today(palace: &Palace) -> Result<String, String> {
         .map_err(|e| format!("fin: {e}"))
 }
 
-/// `plc fin add`: build the transaction line and append it to today's ledger.
+/// `plc fin add`: build the transaction and append it to today's ledger.
 fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
+    let txn = build_txn(args, Local::now().fixed_offset())?;
+    let entry = finance::format_entry(&txn);
+    let (subdir, filename) = ledger_location();
+    note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
+        .map(|p| p.display().to_string())
+        .map_err(|e| format!("fin: {e}"))
+}
+
+/// Build a [`Transaction`] from `add` args. `now` is the default timestamp used
+/// when `--date` is absent (injected so tests are deterministic).
+fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, String> {
     let amount = finance::amount_to_minor(&args.amount)
         .ok_or_else(|| format!("fin: invalid amount: {}", args.amount))?;
     let account = clean_link("account", &args.account)?;
@@ -115,8 +152,7 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
         (Some(dest), _, _) => (Kind::Transfer, Some(clean_link("account", &dest)?)),
         (None, cat, income) => {
             let kind = if income { Kind::Income } else { Kind::Expense };
-            let other = cat.map(|c| clean_link("category", &c)).transpose()?;
-            (kind, other)
+            (kind, cat.map(|c| clean_link("category", &c)).transpose()?)
         }
     };
 
@@ -126,14 +162,47 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
         .map(|p| clean_link("project", p).map(|p| finance::normalize_tag(&p)))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let txn =
-        Transaction { amount, currency, kind, account, other, projects, memo: args.memo.join(" ") };
-    let entry = finance::format_entry(&txn);
+    // Stamp the full instant by default (like a note); `--date` overrides.
+    let date = Some(match args.date.as_deref() {
+        Some(s) => parse_when(s)?,
+        None => now,
+    });
+    let state = if args.cleared {
+        State::Cleared
+    } else if args.pending {
+        State::Pending
+    } else {
+        State::Uncleared
+    };
 
-    let (subdir, filename) = ledger_location();
-    note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("fin: {e}"))
+    Ok(Transaction {
+        amount,
+        currency,
+        kind,
+        account,
+        other,
+        date,
+        state,
+        projects,
+        memo: args.memo.join(" "),
+    })
+}
+
+/// Parse a `--date` value: a full `YYYY-MM-DD HH:MM:SS ±ZZZZ` timestamp, or a
+/// bare `YYYY-MM-DD` taken as that day at local midnight.
+fn parse_when(s: &str) -> Result<DateTime<FixedOffset>, String> {
+    let s = s.trim();
+    if let Ok(dt) = DateTime::parse_from_str(s, finance::TIMESTAMP_FMT) {
+        return Ok(dt);
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        if let Some(naive) = d.and_hms_opt(0, 0, 0) {
+            if let LocalResult::Single(dt) = Local.from_local_datetime(&naive) {
+                return Ok(dt.fixed_offset());
+            }
+        }
+    }
+    Err(format!("fin: invalid date (want YYYY-MM-DD or full timestamp): {s}"))
 }
 
 /// Validate a value destined for a `[[wikilink]]`: non-blank and free of the
@@ -163,84 +232,80 @@ mod tests {
             income: false,
             currency: Some("EUR".into()),
             project: vec![],
+            date: None,
+            cleared: false,
+            pending: false,
         }
     }
 
-    /// Reproduce `add`'s line-building without touching the filesystem.
-    fn line_of(args: AddArgs) -> Result<String, String> {
-        let amount = finance::amount_to_minor(&args.amount)
-            .ok_or_else(|| format!("fin: invalid amount: {}", args.amount))?;
-        let account = clean_link("account", &args.account)?;
-        let currency = args
-            .currency
-            .map(|c| c.trim().to_uppercase())
-            .filter(|c| !c.is_empty())
-            .unwrap_or_else(finance::default_currency);
-        let (kind, other) = match (args.to, args.category, args.income) {
-            (Some(dest), _, _) => (Kind::Transfer, Some(clean_link("account", &dest)?)),
-            (None, cat, income) => {
-                let kind = if income { Kind::Income } else { Kind::Expense };
-                (kind, cat.map(|c| clean_link("category", &c)).transpose()?)
-            }
-        };
-        let projects = args
-            .project
-            .iter()
-            .map(|p| clean_link("project", p).map(|p| finance::normalize_tag(&p)))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(finance::format_entry(&Transaction {
-            amount,
-            currency,
-            kind,
-            account,
-            other,
-            projects,
-            memo: args.memo.join(" "),
-        }))
+    /// A fixed "now" so `build_txn`'s default stamp is deterministic in tests.
+    fn now() -> DateTime<FixedOffset> {
+        DateTime::parse_from_str("2026-07-19 11:28:22 +0200", finance::TIMESTAMP_FMT).unwrap()
     }
 
     #[test]
-    fn builds_expense_line() {
-        assert_eq!(line_of(add_args()).unwrap(), "$ -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle");
+    fn maps_expense_args() {
+        let t = build_txn(add_args(), now()).unwrap();
+        assert_eq!(t.kind, Kind::Expense);
+        assert_eq!((t.amount, t.account.as_str(), t.other.as_deref()), (450, "cash", Some("coffee")));
+        assert_eq!(t.memo, "Blue Bottle");
+        assert_eq!(t.date, Some(now())); // stamped by default
+        assert_eq!(t.state, State::Uncleared);
     }
 
     #[test]
-    fn builds_income_line() {
+    fn maps_income_args() {
         let mut a = add_args();
         a.income = true;
         a.category = Some("salary".into());
-        a.memo = vec![];
         a.amount = "2400".into();
-        assert_eq!(line_of(a).unwrap(), "$ +2400.00 EUR  @[[cash]] #[[salary]]");
+        let t = build_txn(a, now()).unwrap();
+        assert_eq!(t.kind, Kind::Income);
+        assert_eq!(t.amount, 240000);
+        assert_eq!(t.other.as_deref(), Some("salary"));
     }
 
     #[test]
-    fn builds_transfer_line() {
+    fn maps_transfer_args() {
         let mut a = add_args();
         a.category = None;
         a.to = Some("checking".into());
-        a.memo = vec!["ATM".into()];
         a.amount = "200".into();
-        assert_eq!(line_of(a).unwrap(), "$ 200.00 EUR  @[[cash]] > @[[checking]]  ATM");
+        let t = build_txn(a, now()).unwrap();
+        assert_eq!(t.kind, Kind::Transfer);
+        assert_eq!((t.account.as_str(), t.other.as_deref()), ("cash", Some("checking")));
+    }
+
+    #[test]
+    fn projects_normalized_slash_preserved() {
+        let mut a = add_args();
+        a.project = vec!["Japan-Trip/Work".into()];
+        assert_eq!(build_txn(a, now()).unwrap().projects, vec!["japan-trip/work"]);
+    }
+
+    #[test]
+    fn date_flag_overrides_now_and_sets_state() {
+        let mut a = add_args();
+        a.date = Some("2026-07-15".into()); // date-only → that day at local midnight
+        a.cleared = true;
+        let t = build_txn(a, now()).unwrap();
+        assert_eq!(t.state, State::Cleared);
+        assert_ne!(t.date, Some(now()));
+        assert_eq!(t.date.unwrap().format("%Y-%m-%d").to_string(), "2026-07-15");
     }
 
     #[test]
     fn rejects_bracket_in_account() {
         let mut a = add_args();
         a.account = "ca[sh".into();
-        assert!(line_of(a).is_err());
+        assert!(build_txn(a, now()).is_err());
     }
 
     #[test]
-    fn builds_line_with_project() {
-        // `-p` flows through, lowercased with the `/` hierarchy preserved.
+    fn rejects_invalid_date() {
         let mut a = add_args();
-        a.memo = vec![];
-        a.project = vec!["Japan-Trip/Work".into()];
-        assert_eq!(
-            line_of(a).unwrap(),
-            "$ -4.50 EUR  @[[cash]] #[[coffee]] ~[[japan-trip/work]]"
-        );
+        a.date = Some("18/07/2026".into());
+        assert!(build_txn(a, now()).is_err());
     }
 
     #[test]
@@ -249,7 +314,7 @@ mod tests {
         let mut a = add_args();
         a.memo = vec!["latte".into()];
         a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
-        let entry = line_of(a).unwrap();
+        let entry = finance::format_entry(&build_txn(a, now()).unwrap());
         assert!(entry.contains('\n'), "should wrap: {entry}");
         assert!(entry.lines().all(|l| l.chars().count() <= 66), "over 66: {entry}");
     }
