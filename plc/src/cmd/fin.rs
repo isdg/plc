@@ -85,6 +85,10 @@ pub struct AddArgs {
     /// Category for an expense or income.
     #[arg(short = 'c', long = "category", value_name = "CATEGORY")]
     category: Option<String>,
+    /// Split the amount across categories: `--split CAT=AMOUNT` (repeatable).
+    /// The legs must sum to AMOUNT. Conflicts with --category/--to.
+    #[arg(long = "split", value_name = "CAT=AMOUNT", conflicts_with_all = ["category", "to"])]
+    split: Vec<String>,
     /// Transfer the amount to this account instead of categorizing it.
     #[arg(long = "to", value_name = "ACCOUNT", conflicts_with_all = ["category", "income"])]
     to: Option<String>,
@@ -225,6 +229,19 @@ fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, S
         }
     };
 
+    // Split legs (if any) distribute `amount` across categories; they must sum
+    // to it, and the single `other` category is dropped.
+    let split = parse_splits(&args.split)?;
+    if !split.is_empty() {
+        let sum: i64 = split.iter().map(|(_, a)| a).sum();
+        if sum != amount {
+            return Err(format!(
+                "fin: split legs sum to {sum} minor units, not the stated total {amount}"
+            ));
+        }
+    }
+    let other = if split.is_empty() { other } else { None };
+
     let projects = args
         .project
         .iter()
@@ -259,8 +276,24 @@ fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, S
         date,
         state,
         projects,
+        split,
         memo: args.memo.join(" "),
     })
+}
+
+/// Parse `--split CAT=AMOUNT` args into `(normalized category, minor units)`.
+fn parse_splits(args: &[String]) -> Result<Vec<(String, i64)>, String> {
+    args.iter()
+        .map(|s| {
+            let (cat, amt) = s
+                .split_once('=')
+                .ok_or_else(|| format!("fin: --split wants CAT=AMOUNT, got: {s}"))?;
+            let cat = finance::normalize_name(&clean_link("split category", cat)?);
+            let amount = finance::amount_to_minor(amt)
+                .ok_or_else(|| format!("fin: invalid split amount: {amt}"))?;
+            Ok((cat, amount))
+        })
+        .collect()
 }
 
 /// Parse a signed balance for `--assert` into minor units.
@@ -315,6 +348,7 @@ mod tests {
             memo: vec!["Blue".into(), "Bottle".into()],
             account: "cash".into(),
             category: Some("coffee".into()),
+            split: vec![],
             to: None,
             income: false,
             currency: Some("EUR".into()),
@@ -387,6 +421,26 @@ mod tests {
         let mut a = add_args();
         a.account = "ca[sh".into();
         assert!(build_txn(a, now()).is_err());
+    }
+
+    #[test]
+    fn split_legs_distribute_and_must_sum() {
+        let mut a = add_args();
+        a.amount = "90".into();
+        a.category = None;
+        a.memo = vec!["Costco".into()];
+        a.split = vec!["food=60".into(), "household=25".into(), "tax=5".into()];
+        let t = build_txn(a, now()).unwrap();
+        assert_eq!(t.amount, 9000);
+        assert_eq!(t.other, None);
+        assert_eq!(t.split, vec![("food".into(), 6000), ("household".into(), 2500), ("tax".into(), 500)]);
+
+        // Legs that don't sum to the total are rejected.
+        let mut bad = add_args();
+        bad.amount = "90".into();
+        bad.category = None;
+        bad.split = vec!["food=60".into(), "tax=5".into()];
+        assert!(build_txn(bad, now()).is_err());
     }
 
     #[test]

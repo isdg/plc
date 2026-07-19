@@ -115,6 +115,10 @@ pub struct Transaction {
     /// Cross-cutting project/event tags (`~[[japan-trip/work]]`); a grouping
     /// attribute, not a money leg — excluded from the balance.
     pub projects: Vec<String>,
+    /// Split legs: `(category, magnitude)` pairs distributing one payment across
+    /// several categories. Empty for a simple transaction (which uses `other`);
+    /// when non-empty, `other` is `None` and `amount` equals their sum.
+    pub split: Vec<(String, i64)>,
     pub memo: String,
 }
 
@@ -156,6 +160,9 @@ pub fn format_line(t: &Transaction) -> String {
 /// (each ≤ `MAX_LINE`) carrying the overflow tags and then the wrapped memo.
 /// Round-trips through [`parse_entries`].
 pub fn format_entry(t: &Transaction) -> String {
+    if !t.split.is_empty() {
+        return format_split(t);
+    }
     let one = format_line(t);
     if one.chars().count() <= MAX_LINE {
         return one;
@@ -165,6 +172,29 @@ pub fn format_entry(t: &Transaction) -> String {
     let mut lines = vec![format_line(&head)];
     let tokens = t.projects.iter().map(|p| format!("~[[{p}]]"));
     wrap_into(&mut lines, tokens);
+    wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
+    lines.join("\n")
+}
+
+/// Render a split transaction as a block: a head line carrying the (signed)
+/// total on its `@account`, then one `#[[category]] ±amount` posting line per
+/// split leg (signed like the total), then wrapped tags and memo.
+fn format_split(t: &Transaction) -> String {
+    // Head: the total on the account, with no category/tags/memo/split.
+    let head = Transaction {
+        other: None,
+        assert: None,
+        projects: Vec::new(),
+        split: Vec::new(),
+        memo: String::new(),
+        ..t.clone()
+    };
+    let sign = if matches!(t.kind, Kind::Income) { "+" } else { "-" };
+    let mut lines = vec![format_line(&head)];
+    for (cat, amt) in &t.split {
+        lines.push(format!("    #[[{cat}]]  {sign}{} {}", format_amount(*amt), t.currency));
+    }
+    wrap_into(&mut lines, t.projects.iter().map(|p| format!("~[[{p}]]")));
     wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
     lines.join("\n")
 }
@@ -265,7 +295,8 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
     }
 
     let memo = rest.trim().to_string();
-    Some(Transaction { amount, currency, kind, account, other, assert, date, state, projects, memo })
+    let split = Vec::new(); // populated from `#[[cat]] amount` continuation lines
+    Some(Transaction { amount, currency, kind, account, other, assert, date, state, projects, split, memo })
 }
 
 /// If `s` begins with a `~[[tag]]`, push its normalized tag onto `projects` and
@@ -296,9 +327,20 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
         if !txn.memo.is_empty() {
             memo_parts.push(std::mem::take(&mut txn.memo));
         }
-        // Absorb indented continuation lines: leading `~[[tag]]`s, then memo.
+        // Absorb indented continuation lines: `#[[cat]] amount` split legs,
+        // `~[[tag]]`s, then memo.
         while i < lines.len() && is_continuation(lines[i]) {
-            let mut rest = lines[i].trim();
+            let line = lines[i].trim();
+            if let Some((cat_raw, after)) = take_split_leg(line) {
+                if let Some((amt_tok, _)) = next_token(after) {
+                    if let Some((_, mag)) = parse_amount(amt_tok) {
+                        txn.split.push((normalize_name(cat_raw), mag));
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+            let mut rest = line;
             while let Some(after) = take_project(rest.trim_start(), &mut txn.projects) {
                 rest = after;
             }
@@ -317,6 +359,15 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
 /// A block continuation line: indented (leading space/tab) and non-blank.
 fn is_continuation(line: &str) -> bool {
     line.starts_with([' ', '\t']) && !line.trim().is_empty()
+}
+
+/// A split-leg continuation `#[[cat]] amount`: return the raw category and the
+/// remainder (the amount), or `None` if the line isn't a `#[[…]]` posting.
+fn take_split_leg(line: &str) -> Option<(&str, &str)> {
+    if !line.starts_with("#[[") {
+        return None;
+    }
+    take_sigil_link(line, '#')
 }
 
 /// If `s` begins with a full timestamp (`date time ±offset`, three
@@ -454,9 +505,15 @@ impl CurrencyTotals {
 /// transaction still has a destination and the book balances.
 const UNCATEGORIZED: &str = "uncategorized";
 
-/// The category leg of an expense/income, falling back to the suspense bucket.
-fn category_of(t: &Transaction) -> String {
-    t.other.clone().unwrap_or_else(|| UNCATEGORIZED.to_string())
+/// The category-side legs of an expense/income as `(category, magnitude)`: the
+/// split legs when present, else the single `other` category (or the suspense
+/// bucket). Magnitudes sum to `amount`, so the book balances.
+fn category_legs(t: &Transaction) -> Vec<(String, i64)> {
+    if !t.split.is_empty() {
+        return t.split.clone();
+    }
+    let cat = t.other.clone().unwrap_or_else(|| UNCATEGORIZED.to_string());
+    vec![(cat, t.amount)]
 }
 
 /// Fold transactions into per-currency totals. Pure — no I/O — so the aggregation
@@ -470,18 +527,22 @@ pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
             Kind::Expense => {
                 cur.expense += t.amount;
                 // Money leaves the account (source) and lands in the expense
-                // category (destination): -amount / +amount → nets to zero.
-                // A missing category still needs a destination, so it falls into
-                // a suspense bucket rather than unbalancing the book.
+                // category/categories (destination): -total on the account,
+                // +leg on each category → nets to zero. Splits distribute across
+                // several categories; a missing category → suspense bucket.
                 *cur.accounts.entry(t.account.clone()).or_default() -= t.amount;
-                *cur.categories.entry(category_of(t)).or_default() += t.amount;
+                for (cat, amt) in category_legs(t) {
+                    *cur.categories.entry(cat).or_default() += amt;
+                }
             }
             Kind::Income => {
                 cur.income += t.amount;
-                // Money leaves the income category (source) and lands in the
-                // account (destination).
+                // Money leaves the income category/categories (source) and lands
+                // in the account (destination).
                 *cur.accounts.entry(t.account.clone()).or_default() += t.amount;
-                *cur.categories.entry(category_of(t)).or_default() -= t.amount;
+                for (cat, amt) in category_legs(t) {
+                    *cur.categories.entry(cat).or_default() -= amt;
+                }
             }
             Kind::Transfer => {
                 *cur.accounts.entry(t.account.clone()).or_default() -= t.amount;
@@ -783,6 +844,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
+            split: Vec::new(),
             memo: String::new(),
         }
     }
@@ -798,6 +860,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
+            split: Vec::new(),
             memo: "Blue Bottle".into(),
         }
     }
@@ -821,6 +884,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
+            split: Vec::new(),
             memo: "July pay".into(),
         };
         assert_eq!(format_line(&t), "$ +2400.00 EUR  @[[checking]] #[[salary]]  July pay");
@@ -839,6 +903,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
+            split: Vec::new(),
             memo: "ATM".into(),
         };
         assert_eq!(format_line(&t), "$ 200.00 EUR  @[[checking]] > @[[cash]]  ATM");
@@ -857,6 +922,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: Vec::new(),
+            split: Vec::new(),
             memo: String::new(),
         };
         assert_eq!(format_line(&t), "$ -10.00 EUR  @[[cash]]");
@@ -943,6 +1009,7 @@ mod tests {
             date: DateTime::parse_from_str("2026-07-18 09:30:00 +0200", TIMESTAMP_FMT).ok(),
             state: State::Cleared,
             projects: Vec::new(),
+            split: Vec::new(),
             memo: "Blue Bottle".into(),
         };
         assert_eq!(
@@ -1084,6 +1151,37 @@ mod tests {
     }
 
     #[test]
+    fn split_block_round_trips_and_balances() {
+        // A split expense: card pays 90, distributed across three categories.
+        // Canonical block form: total on the head, split legs then memo indented.
+        let content = "$ 2026-07-19 00:00:00 +0200 -90.00 EUR  @[[card]]\n\
+                       \x20   #[[food]]  -60.00 EUR\n\
+                       \x20   #[[household]]  -25.00 EUR\n\
+                       \x20   #[[tax]]  -5.00 EUR\n\
+                       \x20   Costco";
+        let txns = parse_entries(content, EUR);
+        assert_eq!(txns.len(), 1);
+        let t = &txns[0];
+        assert_eq!(t.amount, 9000);
+        assert_eq!(t.account, "card");
+        assert_eq!(t.other, None);
+        assert_eq!(t.memo, "Costco");
+        assert_eq!(
+            t.split,
+            vec![("food".into(), 6000), ("household".into(), 2500), ("tax".into(), 500)]
+        );
+        // Round-trips to the same block.
+        assert_eq!(format_entry(t), content);
+        // Summed across categories, the book still balances.
+        let s = summarize(&txns);
+        let eur = &s["EUR"];
+        assert_eq!(eur.categories["food"], 6000);
+        assert_eq!(eur.categories["household"], 2500);
+        assert_eq!(eur.accounts["card"], -9000);
+        assert_eq!(eur.residual(), 0);
+    }
+
+    #[test]
     fn round_trip_with_assertion() {
         let t = parse_line("$ -4.50 @[[cash]] #[[coffee]] = 480 EUR  Blue Bottle", EUR).unwrap();
         assert_eq!(t.assert, Some(48000));
@@ -1130,6 +1228,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: vec!["trip".into()],
+            split: Vec::new(),
             memo: "ramen".into(),
         };
         assert_eq!(format_line(&t), "$ -80.00 EUR  @[[card]] #[[food]] ~[[trip]]  ramen");
@@ -1157,6 +1256,7 @@ mod tests {
             date: None,
             state: State::Uncleared,
             projects: vec!["japan-trip/leisure".into(), "work".into()],
+            split: Vec::new(),
             memo: "latte at the airport before the long flight home".into(),
         };
         let block = format_entry(&t);
