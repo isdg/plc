@@ -313,8 +313,13 @@ fn take_project<'a>(s: &'a str, projects: &mut Vec<String>) -> Option<&'a str> {
 }
 
 /// Parse every transaction in ledger `content`, joining each block-form entry
-/// (a `$` head line plus following indented continuation lines) into one
-/// transaction. Non-transaction lines (header, blanks, prose) are skipped.
+/// (a `$` head line plus its following continuation lines) into one transaction.
+/// Non-transaction lines before the first `$` (header, blanks) are skipped.
+///
+/// A continuation is any non-blank line that is not itself a new `$` transaction
+/// — recognized **without relying on indentation**, so the block survives a
+/// markdown formatter that strips leading whitespace or collapses runs of
+/// spaces. A blank line or the next `$` ends the entry.
 pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> {
     let lines: Vec<&str> = content.lines().collect();
     let mut out = Vec::new();
@@ -329,9 +334,12 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
         if !txn.memo.is_empty() {
             memo_parts.push(std::mem::take(&mut txn.memo));
         }
-        // Absorb indented continuation lines: `#[[cat]] amount` split legs,
-        // `~[[tag]]`s, then memo.
-        while i < lines.len() && is_continuation(lines[i]) {
+        // Absorb continuation lines (`#[[cat]] amount` split legs, `~[[tag]]`s,
+        // then memo) until a blank line or the next `$` transaction.
+        while i < lines.len()
+            && !lines[i].trim().is_empty()
+            && parse_line(lines[i], default_currency).is_none()
+        {
             let line = lines[i].trim();
             if let Some((cat_raw, after)) = take_split_leg(line) {
                 if let Some((amt_tok, _)) = next_token(after) {
@@ -356,11 +364,6 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
         out.push(txn);
     }
     out
-}
-
-/// A block continuation line: indented (leading space/tab) and non-blank.
-fn is_continuation(line: &str) -> bool {
-    line.starts_with([' ', '\t']) && !line.trim().is_empty()
 }
 
 /// A split-leg continuation `#[[cat]] amount`: return the raw category and the
@@ -1298,6 +1301,34 @@ mod tests {
         assert_eq!(eur.categories["household"], 2500);
         assert_eq!(eur.accounts["card"], -9000);
         assert_eq!(eur.residual(), 0);
+    }
+
+    #[test]
+    fn survives_formatter_reflow() {
+        // What a 66-col markdown formatter leaves: continuation lines
+        // de-indented to column 0 and the `EUR  @[[` double space collapsed.
+        let reflowed = "$ 2026-07-19 13:01:56 +0200 +3694.76 EUR @[[rev/eur]] #[[opening]]\n\
+                        hello world\n\
+                        $ 2026-07-19 13:02:00 +0200 -21.23 EUR @[[rev/eur]] #[[food]]\n\
+                        goodbye world\n";
+        let txns = parse_entries(reflowed, EUR);
+        assert_eq!(txns.len(), 2);
+        assert_eq!(txns[0].amount, 369476);
+        assert_eq!(txns[0].account, "rev/eur");
+        assert_eq!(txns[0].memo, "hello world"); // de-indented memo still attaches
+        assert_eq!(txns[1].other.as_deref(), Some("food"));
+        assert_eq!(txns[1].memo, "goodbye world");
+    }
+
+    #[test]
+    fn deindented_split_block_parses() {
+        let reflowed = "$ -90.00 EUR @[[card]]\n\
+                        #[[food]] -60.00 EUR\n\
+                        #[[household]] -30.00 EUR\n\
+                        Costco\n";
+        let t = &parse_entries(reflowed, EUR)[0];
+        assert_eq!(t.split, vec![("food".into(), 6000), ("household".into(), 3000)]);
+        assert_eq!(t.memo, "Costco");
     }
 
     #[test]
