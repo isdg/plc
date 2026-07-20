@@ -371,20 +371,22 @@ measures).
 
 Declare the accounts and categories you actually use, and `plc fin add` will
 refuse an undeclared one — so `-c cofee` is caught instead of silently creating
-a bogus category. Declarations live in `.plc/config` (see §9) and are managed
-with two mirror commands:
+a bogus category. Accounts and categories are the same essence (named ledger
+buckets), so one command manages both — `--physical` for accounts (`@`),
+`--ephemeral` for categories (`#`). Declarations live in `.plc/config` (see §9):
 
-    plc fin acct                 list declared accounts   (alias: accts)
-    plc fin acct -a cash bnp     declare account(s)
-    plc fin acct -r bnp          remove account(s)
-    plc fin acct --import        seed from every account already used in ledgers
-    plc fin cat  …               the same, for categories  (alias: cats)
+    plc fin declare                        list every declared account + category
+    plc fin declare cash bnp --physical    declare account(s)
+    plc fin declare coffee   --ephemeral   declare category(ies)
+    plc fin declare bnp --physical -r      remove
+    plc fin declare --import               seed from every name used in ledgers
+                                           (add --physical/--ephemeral for one kind)
 
 Once a set is non-empty it is enforced; an unknown name is rejected:
 
     $ plc fin add 4.50 latte -a cash -c cofee
     fin: undeclared name(s) — declare them or pass -n to add now:
-      #cofee  (plc fin cat -a cofee)
+      #cofee  (plc fin declare cofee --ephemeral)
 
 Pass `-n/--new` to declare the name on the fly and add in one go. An empty set
 means "not enforced yet", so fresh vaults and bulk imports keep working; run
@@ -458,8 +460,11 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
     plc fin check   [--strict]    verify assertions (+ undeclared names)
     plc fin fmt     [--check]     reformat every ledger file in place
     plc fin stat    [PATTERN…]    spend calendar/plot/stats (see README)
-    plc fin acct  [-a|-r NAME…|--import]   declare/list accounts   (alias accts)
-    plc fin cat   [-a|-r NAME…|--import]   declare/list categories (alias cats)
+    plc fin declare [NAME…]       list/declare the vocabulary
+      --physical                  operate on accounts (@)
+      --ephemeral                 operate on categories (#)
+      -r, --rm                    remove the named entries
+          --import                seed from names already used in ledgers
     plc fin last  [-n N]          the most recent transactions
     plc fin undo                  remove the last added transaction
 

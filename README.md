@@ -196,12 +196,12 @@ file per day. Quick tour:
     $ plc fin reg coffee                                  # register, filtered
 
 `fin` has its own subcommands (`add`, `report`, `reg`, `balance`/`bal`, `check`,
-`fmt`, `stat`, `acct`/`cat`, `last`, `undo`) and a full grammar for dates,
+`fmt`, `stat`, `declare`, `last`, `undo`) and a full grammar for dates,
 transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
-the amount. You can declare a vocabulary of accounts/categories (`plc fin acct`
-/ `cat`) that `add` validates against, and reverse a mistake with `plc fin
-undo`. Settings live in `.plc/config`. **See [docs/fin.md](docs/fin.md) for the
-complete finance manual.**
+the amount. You can declare a vocabulary of accounts (`--physical`) and
+categories (`--ephemeral`) with `plc fin declare` that `add` validates against,
+and reverse a mistake with `plc fin undo`. Settings live in `.plc/config`.
+**See [docs/fin.md](docs/fin.md) for the complete finance manual.**
 
 ---
 

@@ -45,8 +45,9 @@ fn currency_from(settings: &Settings) -> String {
     }
 }
 
-/// Which declared set a management command operates on. Accounts and categories
-/// behave almost identically, so one implementation serves both.
+/// Which declared set `declare` operates on. Physical accounts and ephemeral
+/// categories are the same essence (named ledger buckets), so one command with
+/// a `--physical` / `--ephemeral` flag serves both.
 #[derive(Clone, Copy)]
 enum Decl {
     Account,
@@ -60,17 +61,23 @@ impl Decl {
             Decl::Category => "category",
         }
     }
+    fn plural(self) -> &'static str {
+        match self {
+            Decl::Account => "accounts",
+            Decl::Category => "categories",
+        }
+    }
     fn sigil(self) -> char {
         match self {
             Decl::Account => '@',
             Decl::Category => '#',
         }
     }
-    /// The subcommand name that manages this kind (`plc fin <cmd>`).
-    fn command(self) -> &'static str {
+    /// The `plc fin declare` flag that selects this kind.
+    fn flag(self) -> &'static str {
         match self {
-            Decl::Account => "acct",
-            Decl::Category => "cat",
+            Decl::Account => "--physical",
+            Decl::Category => "--ephemeral",
         }
     }
 }
@@ -101,12 +108,9 @@ enum FinCmd {
     Stat(FinStatArgs),
     /// Reformat every ledger file in place (canonical spacing / wrapping).
     Fmt(FmtArgs),
-    /// Declare/list accounts (bare = list; `-a` add, `-r` remove, `--import`).
-    #[command(alias = "accts")]
-    Acct(ManageArgs),
-    /// Declare/list categories (bare = list; `-a` add, `-r` remove, `--import`).
-    #[command(alias = "cats")]
-    Cat(ManageArgs),
+    /// Declare/list the known accounts (`--physical`) and categories
+    /// (`--ephemeral`). Bare = list both; NAME(s) add; `-r` remove; `--import`.
+    Declare(DeclareArgs),
     /// Show the most recently added transactions (recent-activity log).
     Last(LastArgs),
     /// Remove the last added transaction from its ledger and the log.
@@ -114,23 +118,29 @@ enum FinCmd {
 }
 
 #[derive(Args)]
+pub struct DeclareArgs {
+    /// Names to declare (or, with `-r`, remove). Omit to list.
+    #[arg(value_name = "NAME")]
+    names: Vec<String>,
+    /// Operate on physical accounts (`@`).
+    #[arg(long = "physical", conflicts_with = "ephemeral")]
+    physical: bool,
+    /// Operate on ephemeral categories (`#`).
+    #[arg(long = "ephemeral")]
+    ephemeral: bool,
+    /// Remove the named entries instead of adding them.
+    #[arg(short = 'r', long = "rm")]
+    rm: bool,
+    /// Seed the set from every name already used across the ledgers.
+    #[arg(long = "import", conflicts_with = "rm")]
+    import: bool,
+}
+
+#[derive(Args)]
 pub struct LastArgs {
     /// How many recent transactions to show (default 10).
     #[arg(short = 'n', long = "recent", value_name = "N", default_value = "10")]
     recent: usize,
-}
-
-#[derive(Args)]
-pub struct ManageArgs {
-    /// Declare NAME(s) — add them to the vault's known set.
-    #[arg(short = 'a', long = "add", value_name = "NAME", num_args = 1.., conflicts_with_all = ["rm", "import"])]
-    add: Vec<String>,
-    /// Remove NAME(s) from the known set.
-    #[arg(short = 'r', long = "rm", value_name = "NAME", num_args = 1.., conflicts_with = "import")]
-    rm: Vec<String>,
-    /// Seed the set from every name already used across the ledgers.
-    #[arg(long = "import")]
-    import: bool,
 }
 
 #[derive(Args)]
@@ -277,8 +287,7 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
             let root = palace.root().join("notes/management/daily");
             finance::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
         }
-        Some(FinCmd::Acct(manage_args)) => manage(palace, manage_args, Decl::Account),
-        Some(FinCmd::Cat(manage_args)) => manage(palace, manage_args, Decl::Category),
+        Some(FinCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
         Some(FinCmd::Last(last_args)) => last_log(palace, last_args),
         Some(FinCmd::Undo) => undo(palace),
         Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
@@ -659,8 +668,8 @@ fn guard_declared(
         return settings.save(palace.root());
     }
     let mut lines = vec!["fin: undeclared name(s) — declare them or pass -n to add now:".to_string()];
-    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc fin acct -a {a})")));
-    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc fin cat -a {c})")));
+    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc fin declare {a} --physical)")));
+    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc fin declare {c} --ephemeral)")));
     Err(lines.join("\n"))
 }
 
@@ -671,52 +680,79 @@ fn declare(list: &mut Vec<String>, name: &str) {
     }
 }
 
-/// `plc fin acct` / `plc fin cat`: manage the declared set (bare = list).
-fn manage(palace: &Palace, args: ManageArgs, kind: Decl) -> Result<String, String> {
-    let mut settings = Settings::load(palace.root());
-    let (label, sigil) = (kind.label(), kind.sigil());
+/// The kind selected by `--physical`/`--ephemeral`, or `None` when neither is
+/// given (bare list / import-both).
+fn declare_kind(args: &DeclareArgs) -> Option<Decl> {
+    match (args.physical, args.ephemeral) {
+        (true, _) => Some(Decl::Account),
+        (_, true) => Some(Decl::Category),
+        _ => None,
+    }
+}
 
-    if !args.add.is_empty() {
+/// `plc fin declare`: one command for both accounts (`--physical`) and
+/// categories (`--ephemeral`). Bare lists everything; NAME(s) add (or remove
+/// with `-r`); `--import` seeds from used names.
+fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
+    let mut settings = Settings::load(palace.root());
+    let kind = declare_kind(&args);
+
+    if !args.names.is_empty() {
+        let kind = kind.ok_or_else(|| {
+            "fin declare: say which kind — --physical (account) or --ephemeral (category)".to_string()
+        })?;
         let names: Vec<String> = args
-            .add
+            .names
             .iter()
-            .map(|n| clean_link(label, n).map(|n| finance::normalize_name(&n)))
+            .map(|n| clean_link(kind.label(), n).map(|n| finance::normalize_name(&n)))
             .collect::<Result<_, _>>()?;
         let list = pick(&mut settings, kind);
-        for n in &names {
-            declare(list, n);
+        if args.rm {
+            list.retain(|n| !names.contains(n));
+        } else {
+            names.iter().for_each(|n| declare(list, n));
         }
         settings.save(palace.root())?;
-        return Ok(format!("declared {} {label}(s): {}", names.len(), names.join(", ")));
+        let verb = if args.rm { "removed" } else { "declared" };
+        return Ok(format!("{verb} {} {}: {}", names.len(), kind.plural(), names.join(", ")));
     }
-    if !args.rm.is_empty() {
-        let names: Vec<String> = args.rm.iter().map(|n| finance::normalize_name(n)).collect();
-        let list = pick(&mut settings, kind);
-        list.retain(|n| !names.contains(n));
-        settings.save(palace.root())?;
-        return Ok(format!("removed {} {label}(s): {}", names.len(), names.join(", ")));
-    }
+
     if args.import {
         let root = palace.root().join("notes/management/daily");
-        let (accts, cats) = finance::names(&root, &currency_from(&settings))?;
-        let used = match kind {
-            Decl::Account => accts,
-            Decl::Category => cats,
-        };
-        let before = pick(&mut settings, kind).len();
-        for n in &used {
-            declare(pick(&mut settings, kind), n);
+        let (used_accts, used_cats) = finance::names(&root, &currency_from(&settings))?;
+        let mut done = Vec::new();
+        for k in kind.map_or(vec![Decl::Account, Decl::Category], |k| vec![k]) {
+            let used = match k {
+                Decl::Account => &used_accts,
+                Decl::Category => &used_cats,
+            };
+            let before = pick(&mut settings, k).len();
+            used.iter().for_each(|n| declare(pick(&mut settings, k), n));
+            done.push(format!("{} {}", pick(&mut settings, k).len() - before, k.plural()));
         }
-        let added = pick(&mut settings, kind).len() - before;
         settings.save(palace.root())?;
-        return Ok(format!("imported {added} new {label}(s) from ledgers ({} total)", pick(&mut settings, kind).len()));
+        return Ok(format!("imported {} from ledgers", done.join(", ")));
     }
-    // Bare: list.
-    let list = pick(&mut settings, kind);
+
+    // Bare (or kind-filtered): list.
+    Ok(match kind {
+        Some(k) => list_kind(&settings, k),
+        None => format!("{}\n{}", list_kind(&settings, Decl::Account), list_kind(&settings, Decl::Category)),
+    })
+}
+
+/// Render one declared set as a titled block (or an empty-state hint).
+fn list_kind(settings: &Settings, kind: Decl) -> String {
+    let list = match kind {
+        Decl::Account => &settings.accounts,
+        Decl::Category => &settings.categories,
+    };
+    let (plural, sigil, flag) = (kind.plural(), kind.sigil(), kind.flag());
     if list.is_empty() {
-        return Ok(format!("(none declared — add with `plc fin {} -a NAME`)", kind.command()));
+        return format!("{plural}: (none — add with `plc fin declare NAME {flag}`)");
     }
-    Ok(list.iter().map(|n| format!("{sigil}{n}")).collect::<Vec<_>>().join("\n"))
+    let names: Vec<String> = list.iter().map(|n| format!("  {sigil}{n}")).collect();
+    format!("{plural}:\n{}", names.join("\n"))
 }
 
 /// The declared list for a kind (mutable borrow of the right settings field).
