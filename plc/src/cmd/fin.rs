@@ -100,6 +100,17 @@ enum FinCmd {
     /// Declare/list categories (bare = list; `-a` add, `-r` remove, `--import`).
     #[command(alias = "cats")]
     Cat(ManageArgs),
+    /// Show the most recently added transactions (recent-activity log).
+    Last(LastArgs),
+    /// Remove the last added transaction from its ledger and the log.
+    Undo,
+}
+
+#[derive(Args)]
+pub struct LastArgs {
+    /// How many recent transactions to show (default 10).
+    #[arg(short = 'n', long = "recent", value_name = "N", default_value = "10")]
+    recent: usize,
 }
 
 #[derive(Args)]
@@ -261,6 +272,8 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         }
         Some(FinCmd::Acct(manage_args)) => manage(palace, manage_args, Decl::Account),
         Some(FinCmd::Cat(manage_args)) => manage(palace, manage_args, Decl::Category),
+        Some(FinCmd::Last(last_args)) => last_log(palace, last_args),
+        Some(FinCmd::Undo) => undo(palace),
         Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
         Some(FinCmd::Fmt(fmt_args)) => {
             let cur = resolved_currency(palace);
@@ -463,6 +476,110 @@ fn ledger_location(date: NaiveDate) -> (String, String) {
     )
 }
 
+/// Recent-transaction log file inside the `.plc` state dir.
+const LOG: &str = "last-transactions";
+/// Cap the log at this many records so it can't grow without bound.
+const LOG_CAP: usize = 200;
+
+/// One logged add: the ledger file (vault-relative) and its rendered entry block.
+struct LogRecord {
+    path: String,
+    entry: String,
+}
+
+fn log_file(palace: &Palace) -> std::path::PathBuf {
+    palace.state_dir().join(LOG)
+}
+
+/// Record a just-appended entry (best-effort — never fails the add), keeping the
+/// log bounded to the last `LOG_CAP` records.
+fn log_add(palace: &Palace, relpath: &str, entry: &str) {
+    let mut records = read_log(palace);
+    records.push(LogRecord { path: relpath.to_string(), entry: entry.to_string() });
+    let start = records.len().saturating_sub(LOG_CAP);
+    let _ = write_log(palace, &records[start..]);
+}
+
+/// Read + parse the log (oldest first).
+fn read_log(palace: &Palace) -> Vec<LogRecord> {
+    parse_log(&std::fs::read_to_string(log_file(palace)).unwrap_or_default())
+}
+
+/// Parse log text into records. Records are delimited by a `==== <relpath>`
+/// header line; the lines that follow are the entry block (trailing blanks
+/// trimmed).
+fn parse_log(text: &str) -> Vec<LogRecord> {
+    let mut records: Vec<LogRecord> = Vec::new();
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("==== ") {
+            records.push(LogRecord { path: p.to_string(), entry: String::new() });
+        } else if let Some(r) = records.last_mut() {
+            if !r.entry.is_empty() {
+                r.entry.push('\n');
+            }
+            r.entry.push_str(line);
+        }
+    }
+    for r in &mut records {
+        r.entry = r.entry.trim_end().to_string();
+    }
+    records
+}
+
+fn render_log(records: &[LogRecord]) -> String {
+    let mut out = String::new();
+    for r in records {
+        out.push_str(&format!("==== {}\n{}\n", r.path, r.entry));
+    }
+    out
+}
+
+fn write_log(palace: &Palace, records: &[LogRecord]) -> Result<(), String> {
+    std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("fin: {e}"))?;
+    std::fs::write(log_file(palace), render_log(records)).map_err(|e| format!("fin: {e}"))
+}
+
+/// Remove `entry` from the end of `content`, if it is the trailing block.
+/// `None` when `content` no longer ends with `entry` (edited since).
+fn strip_trailing_entry(content: &str, entry: &str) -> Option<String> {
+    let trimmed = content.trim_end();
+    let kept = trimmed.strip_suffix(entry)?.trim_end();
+    Some(format!("{kept}\n"))
+}
+
+/// `plc fin last`: the most recently added transactions, newest first.
+fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
+    let records = read_log(palace);
+    if records.is_empty() {
+        return Ok("  (no recent transactions)".to_string());
+    }
+    let shown = args.recent.min(records.len());
+    let mut out = vec![String::new(), format!("  Recent — {shown} transaction(s)"), String::new()];
+    for r in records.iter().rev().take(args.recent) {
+        for line in r.entry.lines() {
+            out.push(format!("  {line}"));
+        }
+        out.push(String::new());
+    }
+    Ok(out.join("\n").trim_end().to_string())
+}
+
+/// `plc fin undo`: remove the last logged entry from its ledger file (only if it
+/// is still the trailing block) and drop it from the log.
+fn undo(palace: &Palace) -> Result<String, String> {
+    let mut records = read_log(palace);
+    let last = records.pop().ok_or_else(|| "fin undo: nothing to undo".to_string())?;
+    let file = palace.root().join(&last.path);
+    let content = std::fs::read_to_string(&file)
+        .map_err(|e| format!("fin undo: cannot read {}: {e}", last.path))?;
+    let kept = strip_trailing_entry(&content, &last.entry).ok_or_else(|| {
+        format!("fin undo: last entry is no longer at the end of {} (edited since?) — not undoing", last.path)
+    })?;
+    std::fs::write(&file, kept).map_err(|e| format!("fin undo: {e}"))?;
+    write_log(palace, &records)?;
+    Ok(format!("undid (removed from {}):\n{}", last.path, last.entry))
+}
+
 /// Bare `plc fin`: seed today's ledger (if new) and print its path.
 fn seed_today(palace: &Palace) -> Result<String, String> {
     let (subdir, filename) = ledger_location(Local::now().date_naive());
@@ -487,9 +604,10 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
     let day = txn.date.map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
     let entry = finance::format_entry(&txn);
     let (subdir, filename) = ledger_location(day);
-    note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("fin: {e}"))
+    let path = note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
+        .map_err(|e| format!("fin: {e}"))?;
+    log_add(palace, &format!("{subdir}/{filename}"), &entry);
+    Ok(path.display().to_string())
 }
 
 /// The account(s) and category(ies) a transaction actually uses.
@@ -780,6 +898,31 @@ mod tests {
         (a.amount, a.category, a.split) = ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
         let t = build_txn(a, now(), "EUR").unwrap();
         assert_eq!(used_names(&t), (vec!["cash".into()], vec!["food".into(), "tax".into()]));
+    }
+
+    #[test]
+    fn log_parse_render_round_trip() {
+        let text = "==== a/b+ledger.md\n$ -4.50 EUR  @[[cash]] #[[coffee]]\n    coffee\n\
+                    ==== a/c+ledger.md\n$ -11.00 EUR  @[[revolut]] #[[food/out]]\n    takos\n";
+        let recs = parse_log(text);
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].path, "a/b+ledger.md");
+        assert_eq!(recs[1].entry, "$ -11.00 EUR  @[[revolut]] #[[food/out]]\n    takos");
+        assert_eq!(render_log(&recs), text); // canonical round-trip
+    }
+
+    #[test]
+    fn strip_trailing_entry_removes_only_the_tail() {
+        let entry = "$ -11.00 EUR  @[[revolut]] #[[food/out]]\n    takos";
+        let content = "isg\n\n[[ledger]]\n\n\
+                       $ -4.50 EUR  @[[cash]] #[[coffee]]\n    coffee\n\
+                       $ -11.00 EUR  @[[revolut]] #[[food/out]]\n    takos\n";
+        let kept = strip_trailing_entry(content, entry).unwrap();
+        assert!(kept.contains("coffee"), "{kept}");
+        assert!(!kept.contains("takos"), "{kept}");
+        assert!(kept.ends_with('\n'));
+        // A stale entry (not the trailing block) is refused.
+        assert_eq!(strip_trailing_entry(content, "$ -99.00 EUR  @[[x]] #[[y]]"), None);
     }
 
     #[test]
