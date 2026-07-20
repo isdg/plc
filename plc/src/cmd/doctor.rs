@@ -39,24 +39,31 @@ fn config_section(fix: bool) -> String {
     let rc_path = config::plcrc_path();
     let rc_shown = rc_path.as_ref().map_or_else(|| "~/.plcrc".to_string(), |p| p.display().to_string());
 
-    match (&env_dir, &rc_dir) {
-        (None, None) => {
-            lines.push("  ! PALACE_DIR is not set (environment or ~/.plcrc)".to_string());
-            lines.push(format!("      set it: echo 'export PALACE_DIR=\"/path/to/vault\"' >> {rc_shown}"));
+    // The persistent path lives in ~/.plcrc; an environment `PALACE_DIR` is a
+    // legitimate temporal override (tests, a second vault) and is not a problem
+    // as long as a persistent one exists. Only nag when nothing is persisted.
+    match (&rc_dir, &env_dir) {
+        (Some(rc), env) => {
+            lines.push(format!("  · PALACE_DIR (~/.plcrc) → {rc}"));
+            if let Some(e) = env.as_deref().map(str::trim).filter(|e| *e != rc) {
+                lines.push(format!("  · environment overrides it this run → {e}"));
+            }
         }
-        (Some(env), rc) if rc.as_deref() != Some(env.trim()) => {
-            // Set in the environment but not (matching) in ~/.plcrc.
-            lines.push("  ! PALACE_DIR comes from the environment, not persisted to ~/.plcrc".to_string());
+        (None, Some(env)) => {
+            lines.push("  ! PALACE_DIR is set in the environment but not persisted to ~/.plcrc".to_string());
             if fix {
                 match persist_plcrc(env.trim()) {
                     Ok(p) => lines.push(format!("      fixed: wrote export PALACE_DIR to {p}")),
                     Err(e) => lines.push(format!("      could not write {rc_shown}: {e}")),
                 }
             } else {
-                lines.push("      run `plc doctor --fix` to write it".to_string());
+                lines.push("      run `plc doctor --fix` to persist it".to_string());
             }
         }
-        _ => lines.push(format!("  · PALACE_DIR from ~/.plcrc → {}", rc_dir.as_deref().unwrap_or(""))),
+        (None, None) => {
+            lines.push("  ! PALACE_DIR is not set (environment or ~/.plcrc)".to_string());
+            lines.push(format!("      set it: echo 'export PALACE_DIR=\"/path/to/vault\"' >> {rc_shown}"));
+        }
     }
 
     // Whatever the source, does the resolved vault actually validate?
