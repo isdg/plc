@@ -921,6 +921,12 @@ fn build_txn(
         (account, kind, other, assert)
     };
 
+    // A transaction must move between two *different* buckets — reject a transfer
+    // whose source and destination are the same account (nets to nothing).
+    if matches!(kind, Kind::Transfer) && other.as_deref() == Some(account.as_str()) {
+        return Err(format!("ledger: source and destination are the same account (@{account})"));
+    }
+
     let projects = args
         .project
         .iter()
@@ -963,34 +969,36 @@ struct TxnShape {
     assert: Option<i64>,
 }
 
-/// Parse a symbolic `-T` spec into a transaction shape:
-///   `A -> B`  money leaves A → expense into category B, or transfer to account B
-///   `A <- B`  money enters A → income from category B, or transfer from account B
-///   `A = N`   assert A's balance is N (no flow)
-/// A target is an account when written `@name` (or bare and declared), a category
+/// Parse a symbolic `-T` spec into a transaction shape. The arrow shows the flow
+/// of money and either side may be the account — the kind is derived from which
+/// side is an account vs a category:
+///   `src -> dst` / `dst <- src`  money flows src → dst
+///     account → category = expense · category → account = income
+///     account → account   = transfer
+///   `A = N`  assert A's balance is N (no flow)
+/// A name is an account when written `@name` (or bare and declared), a category
 /// when `#name` (or bare and not declared).
 fn parse_txn_spec(spec: &str, accounts: &[String]) -> Result<TxnShape, String> {
-    if let Some((l, r)) = spec.split_once("->") {
-        let (is_acct, name) = classify_target(r, accounts)?;
-        let kind = if is_acct { Kind::Transfer } else { Kind::Expense };
-        return Ok(TxnShape { account: spec_account(l)?, kind, other: Some(name), assert: None });
-    }
-    if let Some((l, r)) = spec.split_once("<-") {
-        let a = spec_account(l)?;
-        let (is_acct, name) = classify_target(r, accounts)?;
-        return Ok(if is_acct {
-            // transfer from account `name` into `a`
-            TxnShape { account: name, kind: Kind::Transfer, other: Some(a), assert: None }
-        } else {
-            // income into `a` from category `name`
-            TxnShape { account: a, kind: Kind::Income, other: Some(name), assert: None }
-        });
-    }
     if let Some((l, r)) = spec.split_once('=') {
         let assert = parse_balance(r.trim())?;
         return Ok(TxnShape { account: spec_account(l)?, kind: Kind::Expense, other: None, assert: Some(assert) });
     }
-    Err(format!("ledger add: -T wants `A -> B`, `A <- B`, or `A = N`; got: {spec}"))
+    // Reduce both arrows to a directed (src → dst) flow.
+    let (src, dst) = if let Some((l, r)) = spec.split_once("->") {
+        (l, r)
+    } else if let Some((l, r)) = spec.split_once("<-") {
+        (r, l)
+    } else {
+        return Err(format!("ledger add: -T wants `A -> B`, `B <- A`, or `A = N`; got: {spec}"));
+    };
+    let (src_acct, src) = classify_target(src, accounts)?;
+    let (dst_acct, dst) = classify_target(dst, accounts)?;
+    match (src_acct, dst_acct) {
+        (true, true) => Ok(TxnShape { account: src, kind: Kind::Transfer, other: Some(dst), assert: None }),
+        (true, false) => Ok(TxnShape { account: src, kind: Kind::Expense, other: Some(dst), assert: None }),
+        (false, true) => Ok(TxnShape { account: dst, kind: Kind::Income, other: Some(src), assert: None }),
+        (false, false) => Err(format!("ledger add: -T needs an account (declared, or `@name`) in `{spec}`")),
+    }
 }
 
 /// The left-hand account of a `-T` spec: drop an optional `@`, validate, normalize.
@@ -1122,9 +1130,30 @@ mod tests {
         let t = build("revolut -> @wallet");
         assert_eq!(t.kind, Kind::Transfer);
         assert_eq!(t.other.as_deref(), Some("wallet"));
+        // associative: the account may sit on either side of the arrow
+        let t = build("taxi <- revolut"); // category <- account == revolut -> taxi
+        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Expense, "revolut", Some("taxi")));
+        let t = build("salary -> revolut"); // category -> account == revolut <- salary
+        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Income, "revolut", Some("salary")));
         // assertion: revolut = 2300
         let t = build("revolut = 2300");
         assert_eq!((t.account.as_str(), t.assert), ("revolut", Some(230000)));
+        // two categories → no account → error
+        let mut a = add_args();
+        (a.account, a.category, a.txn) = (None, None, Some("taxi <- food".to_string()));
+        assert!(build_txn(a, now(), "EUR", &accts).is_err());
+    }
+
+    #[test]
+    fn rejects_transfer_to_same_account() {
+        // via -T
+        let mut a = add_args();
+        (a.account, a.category, a.txn) = (None, None, Some("revolut -> revolut".to_string()));
+        assert!(build_txn(a, now(), "EUR", &["revolut".to_string()]).is_err());
+        // via flags
+        let mut a = add_args();
+        (a.account, a.category, a.to) = (Some("cash".into()), None, Some("cash".into()));
+        assert!(build_txn(a, now(), "EUR", &[]).is_err());
     }
 
     #[test]

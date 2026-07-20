@@ -223,19 +223,26 @@ file each transaction where it belongs.
 ## 3.4 Symbolic shorthand (`-T`)
 
 Instead of `-a`/`-c`/`--to`/`--income`/`--assert`, you can draw the transaction
-with a single `-T SPEC`, where the arrow shows which way the money flows around
-the first account:
+with a single `-T SPEC`, where the arrow shows which way the money flows:
 
     $ plc ledger add 5000 pay   -T "revolut <- salary"     # income  (from a category)
     $ plc ledger add 11   lunch -T "revolut -> food/out"   # expense (into a category)
     $ plc ledger add 200  atm   -T "revolut -> cash"       # transfer (to an account)
     $ plc ledger add 0    check -T "revolut = 2300"        # balance assertion
 
-The right-hand side is treated as an **account** (so `->`/`<-` is a transfer)
-when it is a declared account or written `@name`; otherwise it is a **category**
-(an expense/income). Force either with an explicit `@`/`#` prefix. `-T` is just
-shorthand — the flag form (`-a revolut -c salary --income`) is equivalent, and
-the two styles can't be mixed on one command.
+The kind is derived from which side is an **account** vs a **category**:
+account → category is an expense, category → account is income, account →
+account is a transfer. A name is an account when it is a declared account or
+written `@name`, a category when `#name` or a bare undeclared name.
+
+The spec is **associative** — either side may be the account, so these are the
+same expense:
+
+    -T "revolut -> taxi"        ==        -T "taxi <- revolut"
+
+`-T` is shorthand for the flag form (`-a revolut -c salary --income`); the two
+can't be mixed on one command. Source and destination must differ — a transfer
+to the same account is rejected.
 
 ---
 
