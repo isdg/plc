@@ -351,7 +351,7 @@ assertion:
       1 balance assertion(s) OK
 
     $ plc ledger check        # if the books have drifted
-    fin: 1 check(s) failed:
+    ledger: 1 check(s) failed:
       2026-07-19  @cash: expected +999.00 EUR, got +185.50
 
 ## 5.4 Arithmetic in the amount
@@ -426,7 +426,7 @@ journal at once (reading `.plc/config` plus any in-file `account NAME` /
 `category NAME` / `commodity CODE` directive lines):
 
     $ plc ledger check --strict
-    fin: 2 check(s) failed:
+    ledger: 2 check(s) failed:
       undeclared account: @card
       undeclared category: #food
 
