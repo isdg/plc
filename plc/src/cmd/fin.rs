@@ -574,21 +574,11 @@ fn strip_trailing_entry(content: &str, entry: &str) -> Option<String> {
     Some(format!("{kept}\n"))
 }
 
-/// `plc fin last`: the most recently added transactions, newest first.
+/// `plc fin last`: the most recent transactions, newest first — read from the
+/// ledgers themselves, so it covers all history, not just this tool's own adds.
 fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
-    let records = read_log(palace);
-    if records.is_empty() {
-        return Ok("  (no recent transactions)".to_string());
-    }
-    let shown = args.recent.min(records.len());
-    let mut out = vec![String::new(), format!("  Recent — {shown} transaction(s)"), String::new()];
-    for r in records.iter().rev().take(args.recent) {
-        for line in r.entry.lines() {
-            out.push(format!("  {line}"));
-        }
-        out.push(String::new());
-    }
-    Ok(out.join("\n").trim_end().to_string())
+    let root = palace.root().join("notes/management/daily");
+    finance::recent(&root, &resolved_currency(palace), &Filter::default(), args.recent)
 }
 
 /// `plc fin undo`: remove the last logged entry from its ledger file (only if it
@@ -837,10 +827,9 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     // will only cover adds made from now on. Not auto-fixable (adds populate it).
     if !used_accts.is_empty() && !log_file(palace).is_file() {
         findings.push(
-            "  ! no recent-transaction log (.plc/last-transactions) though ledgers exist —"
-                .to_string(),
+            "  ! no undo log (.plc/last-transactions) though ledgers exist —".to_string(),
         );
-        findings.push("      `plc fin undo`/`last` will only track adds made from now on".to_string());
+        findings.push("      `plc fin undo` will only cover adds made from now on".to_string());
     }
 
     // A pre-`.plc` do-pointer left at the vault root.

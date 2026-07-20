@@ -423,16 +423,18 @@ you to resolve with the printed command.
 
 ---
 
-# 8 Recent log and undo
+# 8 Recent activity and undo
 
-Every `plc fin add` is recorded to `.plc/last-transactions`. Review the tail and
-reverse a mistaken add:
+`plc fin last` shows your most recent transactions, newest first, read straight
+from the ledgers — so it covers all history, including imports and hand-edits:
 
-    $ plc fin last -n 3         # the 3 most recent, newest first
-    $ plc fin undo              # remove the last add from its ledger + the log
+    $ plc fin last -n 3         # the 3 most recent
 
-`undo` only removes the entry when it is still the trailing block of its file —
-if you have edited the ledger since, it refuses rather than guess.
+`plc fin undo` reverses a mistaken add. Each `add` records what it appended to
+`.plc/last-transactions`; `undo` removes the last such entry from its ledger —
+but only when it is still the trailing block of the file (if you have edited the
+ledger since, it refuses rather than guess). `undo` therefore only reaches adds
+made through this tool, whereas `last` reads everything.
 
 ---
 

@@ -812,6 +812,30 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
     Ok(lines.join("\n"))
 }
 
+/// The `recent` most recent matching transactions, newest first — a compact
+/// activity view read straight from the ledgers (so it covers all history, not
+/// just adds made through this tool). Powers `plc fin last`.
+pub fn recent(root: &Path, default_currency: &str, filter: &Filter, recent: usize) -> Result<String, String> {
+    let (mut items, _) = collect(root, default_currency, filter)?;
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    if items.is_empty() {
+        return Ok("\n  (no transactions found)".to_string());
+    }
+    let shown = recent.min(items.len());
+    let mut lines = vec![String::new(), format!("  Recent — {shown} of {} transaction(s)", items.len()), String::new()];
+    for (eff, t) in items.iter().rev().take(recent) {
+        let date = eff.map_or_else(|| "----------".to_string(), |d| d.format("%Y-%m-%d").to_string());
+        let memo = if t.memo.is_empty() { String::new() } else { format!("  {}", t.memo) };
+        lines.push(format!(
+            "  {date}  {:>11} {:<3}  {}{memo}",
+            signed_amount(t),
+            t.currency,
+            describe(t),
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
 /// A compact balance snapshot: per-currency net worth, income/expense/net, and
 /// non-zero account balances, followed by the most recent `recent` transactions
 /// (newest first). Honors the same filter as report/register — a quick "where do
