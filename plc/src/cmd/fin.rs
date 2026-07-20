@@ -800,7 +800,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         let (undeclared, unused) = diff_names(used, &declared);
         if !undeclared.is_empty() {
             fixable += undeclared.len();
-            findings.push(format!("  ⚠ {} {plural} used but not declared:", undeclared.len()));
+            findings.push(format!("  ! {} {plural} used but not declared:", undeclared.len()));
             findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc fin declare {n} {flag})")));
             if fix {
                 undeclared.iter().for_each(|n| declare(pick(&mut settings, kind), n));
@@ -808,16 +808,46 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             }
         }
         if !unused.is_empty() {
-            findings.push(format!("  ⚠ {} {plural} declared but never used (typo/stale?):", unused.len()));
+            findings.push(format!("  ! {} {plural} declared but never used (typo/stale?):", unused.len()));
             findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc fin declare {n} {flag} -r)")));
         }
+    }
+
+    // No default currency pinned in the config (relying on PLC_CURRENCY/EUR).
+    if settings.currency.is_none() {
+        let dominant = finance::currencies(&root, &currency_from(&settings))?
+            .into_iter()
+            .max_by_key(|(_, n)| *n)
+            .map(|(c, _)| c);
+        match dominant {
+            Some(c) => {
+                fixable += 1;
+                findings.push(format!("  ! no default currency in .plc/config — ledgers use {c}"));
+                findings.push(format!("      set it: add `currency = {c}` (or `plc fin doctor --fix`)"));
+                if fix {
+                    settings.currency = Some(c.clone());
+                    fixed.push(format!("set currency = {c}"));
+                }
+            }
+            None => findings.push("  · no default currency in .plc/config (defaults to EUR)".to_string()),
+        }
+    }
+
+    // Transactions exist but the recent-transaction log is missing: `undo`/`last`
+    // will only cover adds made from now on. Not auto-fixable (adds populate it).
+    if !used_accts.is_empty() && !log_file(palace).is_file() {
+        findings.push(
+            "  ! no recent-transaction log (.plc/last-transactions) though ledgers exist —"
+                .to_string(),
+        );
+        findings.push("      `plc fin undo`/`last` will only track adds made from now on".to_string());
     }
 
     // A pre-`.plc` do-pointer left at the vault root.
     let legacy = palace.root().join(".last-do");
     if legacy.is_file() {
         fixable += 1;
-        findings.push("  ⚠ legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
+        findings.push("  ! legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
         if fix {
             std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("fin doctor: {e}"))?;
             std::fs::rename(&legacy, palace.state_dir().join("last-do")).map_err(|e| format!("fin doctor: {e}"))?;
@@ -839,7 +869,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             out.push("  nothing auto-fixable; the items above need a manual call".to_string());
         }
     } else if fixable > 0 {
-        out.push("  run `plc fin doctor --fix` to apply the safe repairs (import undeclared, migrate pointer)".to_string());
+        out.push("  run `plc fin doctor --fix` to apply the safe repairs (import undeclared, set currency, migrate pointer)".to_string());
     }
     Ok(out.join("\n"))
 }

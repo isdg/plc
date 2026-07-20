@@ -407,13 +407,15 @@ journal at once (reading `.plc/config` plus any in-file `account NAME` /
 and reports what's off, with a repair command for each finding:
 
     $ plc fin doctor
-      ⚠ 1 categories used but not declared:
+      ! 1 categories used but not declared:
           #transport  (plc fin declare transport --ephemeral)
-      ⚠ 1 categories declared but never used (typo/stale?):
+      ! 1 categories declared but never used (typo/stale?):
           #rent  (plc fin declare rent --ephemeral -r)
+      ! no default currency in .plc/config — ledgers use EUR
       · accounts: guard off (12 used, none declared) — `plc fin declare --import --physical`
 
-It also flags a legacy `.last-do` left at the vault root. `plc fin doctor --fix`
+It also warns when transactions exist but there's no recent-transaction log yet,
+and flags a legacy `.last-do` left at the vault root. `plc fin doctor --fix`
 applies the safe repairs — importing undeclared names into an already-active
 guard and migrating the pointer into `.plc/` — while leaving judgement calls
 (an unused declaration might be a typo *or* a real bucket you've yet to use) for

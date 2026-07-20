@@ -1064,6 +1064,14 @@ pub fn names(root: &Path, default_currency: &str) -> Result<(Vec<String>, Vec<St
     Ok((accts.into_iter().collect(), cats.into_iter().collect()))
 }
 
+/// Distinct currencies used across all ledgers, each with its transaction count,
+/// sorted by code. Lets `plc fin doctor` spot a missing / mismatched default.
+pub fn currencies(root: &Path, default_currency: &str) -> Result<Vec<(String, usize)>, String> {
+    let (items, _) = collect(root, default_currency, &Filter::default())?;
+    let txns: Vec<Transaction> = items.into_iter().map(|(_, t)| t).collect();
+    Ok(summarize(&txns).into_iter().map(|(c, t)| (c, t.count)).collect())
+}
+
 /// Walk `root` for `*+ledger.md` files and return every transaction that passes
 /// `filter`, paired with its effective date, plus the count of ledger files seen.
 fn collect(root: &Path, default_currency: &str, filter: &Filter) -> Result<(Vec<Dated>, usize), String> {
@@ -1977,6 +1985,19 @@ mod tests {
         assert!(!accounts_section.contains("wallet"), "zero account leaked: {out}");
         assert!(out.contains("last"), "{out}");
         assert!(out.contains("Blue Bottle"), "recent memo missing: {out}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn currencies_lists_used_with_counts() {
+        let dir = ledger_dir(
+            "fincur",
+            "2026-07-19+ledger.md",
+            "$ -4.50 EUR @[[cash]] #[[coffee]]\n\
+             $ -1.00 EUR @[[cash]] #[[tea]]\n\
+             $ -9.00 USD @[[card]] #[[book]]\n",
+        );
+        assert_eq!(currencies(&dir, EUR).unwrap(), vec![("EUR".into(), 2), ("USD".into(), 1)]);
         fs::remove_dir_all(&dir).ok();
     }
 
