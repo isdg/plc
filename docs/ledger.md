@@ -409,12 +409,17 @@ buckets), so one command manages both — `--physical` for accounts (`@`),
 Once a set is non-empty it is enforced; an unknown name is rejected:
 
     $ plc ledger add 4.50 latte -a cash -c cofee
-    fin: undeclared name(s) — declare them or pass -n to add now:
+    ledger: undeclared name(s) — declare them or pass -n to add now:
       #cofee  (plc ledger declare cofee --ephemeral)
 
 Pass `-n/--new` to declare the name on the fly and add in one go. An empty set
 means "not enforced yet", so fresh vaults and bulk imports keep working; run
 `--import` once to adopt everything you already use.
+
+A name can't be declared as **both** an account and a category — `declare`
+rejects the second, and no single transaction may use the same name on both
+legs (`@revolut` with `#revolut`). `plc ledger doctor` flags any pre-existing
+clash.
 
 `plc ledger check --strict` reports the same undeclared names across the whole
 journal at once (reading `.plc/config` plus any in-file `account NAME` /

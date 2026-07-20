@@ -711,6 +711,24 @@ fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
             .iter()
             .map(|n| clean_link(kind.label(), n).map(|n| ledger::normalize_name(&n)))
             .collect::<Result<_, _>>()?;
+        // A name can't be both an account and a category.
+        if !args.rm {
+            let other = match kind {
+                Decl::Account => &settings.categories,
+                Decl::Category => &settings.accounts,
+            };
+            let clash: Vec<&String> = names.iter().filter(|n| other.contains(n)).collect();
+            if !clash.is_empty() {
+                let other_kind = match kind {
+                    Decl::Account => "a category",
+                    Decl::Category => "an account",
+                };
+                return Err(format!(
+                    "ledger declare: already declared as {other_kind}: {} — a name can't be both @ and #",
+                    clash.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
         let list = pick(&mut settings, kind);
         if args.rm {
             list.retain(|n| !names.contains(n));
@@ -778,6 +796,16 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     let mut findings: Vec<String> = Vec::new();
     let mut fixable = 0usize; // problems `--fix` can repair
     let mut fixed: Vec<String> = Vec::new();
+
+    // A name declared as both an account and a category (can't auto-fix — which
+    // side is right is your call).
+    let both: Vec<String> = settings.accounts.iter().filter(|a| settings.categories.contains(*a)).cloned().collect();
+    if !both.is_empty() {
+        findings.push(format!("  ! {} name(s) declared as both @ and #:", both.len()));
+        findings.extend(both.iter().map(|n| {
+            format!("      {n}  (drop one: plc ledger declare {n} --physical -r | --ephemeral -r)")
+        }));
+    }
 
     for (kind, used) in [(Decl::Account, &used_accts), (Decl::Category, &used_cats)] {
         let declared = pick(&mut settings, kind).clone();
@@ -921,10 +949,17 @@ fn build_txn(
         (account, kind, other, assert)
     };
 
-    // A transaction must move between two *different* buckets — reject a transfer
-    // whose source and destination are the same account (nets to nothing).
-    if matches!(kind, Kind::Transfer) && other.as_deref() == Some(account.as_str()) {
-        return Err(format!("ledger: source and destination are the same account (@{account})"));
+    // A transaction must move between *different* buckets. The account can't also
+    // be its counterpart — not as a transfer destination, and not as a category
+    // (a name may not be both `@` and `#` within one transaction).
+    let clashes =
+        other.as_deref() == Some(account.as_str()) || split.iter().any(|(c, _)| c == &account);
+    if clashes {
+        return Err(if matches!(kind, Kind::Transfer) {
+            format!("ledger: source and destination are the same account (@{account})")
+        } else {
+            format!("ledger: @{account} and #{account} are the same name — use distinct names")
+        });
     }
 
     let projects = args
@@ -1153,6 +1188,23 @@ mod tests {
         // via flags
         let mut a = add_args();
         (a.account, a.category, a.to) = (Some("cash".into()), None, Some("cash".into()));
+        assert!(build_txn(a, now(), "EUR", &[]).is_err());
+    }
+
+    #[test]
+    fn rejects_account_and_category_same_name() {
+        // expense with @revolut and #revolut
+        let mut a = add_args();
+        (a.account, a.category) = (Some("revolut".into()), Some("revolut".into()));
+        assert!(build_txn(a, now(), "EUR", &[]).is_err());
+        // forced via -T (#revolut category on an @revolut account)
+        let mut a = add_args();
+        (a.account, a.category, a.txn) = (None, None, Some("revolut -> #revolut".to_string()));
+        assert!(build_txn(a, now(), "EUR", &["revolut".to_string()]).is_err());
+        // a split leg sharing the account name
+        let mut a = add_args();
+        (a.account, a.category, a.amount, a.split) =
+            (Some("cash".into()), None, "10".into(), vec!["cash=10".into()]);
         assert!(build_txn(a, now(), "EUR", &[]).is_err());
     }
 
