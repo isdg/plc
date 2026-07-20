@@ -34,11 +34,37 @@ use crate::settings::Settings;
 /// The vault's default currency: `$PLC_CURRENCY` if set, else the `.plc/config`
 /// `currency`, else `EUR`. (`fin add --cur` overrides this per transaction.)
 fn resolved_currency(palace: &Palace) -> String {
+    currency_from(&Settings::load(palace.root()))
+}
+
+/// Currency from an already-loaded `Settings`: `$PLC_CURRENCY` > config > `EUR`.
+fn currency_from(settings: &Settings) -> String {
     match std::env::var("PLC_CURRENCY") {
         Ok(c) if !c.trim().is_empty() => c.trim().to_uppercase(),
-        _ => Settings::load(palace.root())
-            .currency
-            .unwrap_or_else(|| "EUR".to_string()),
+        _ => settings.currency.clone().unwrap_or_else(|| "EUR".to_string()),
+    }
+}
+
+/// Which declared set a management command operates on. Accounts and categories
+/// behave almost identically, so one implementation serves both.
+#[derive(Clone, Copy)]
+enum Decl {
+    Account,
+    Category,
+}
+
+impl Decl {
+    fn label(self) -> &'static str {
+        match self {
+            Decl::Account => "account",
+            Decl::Category => "category",
+        }
+    }
+    fn sigil(self) -> char {
+        match self {
+            Decl::Account => '@',
+            Decl::Category => '#',
+        }
     }
 }
 
@@ -68,6 +94,25 @@ enum FinCmd {
     Stat(FinStatArgs),
     /// Reformat every ledger file in place (canonical spacing / wrapping).
     Fmt(FmtArgs),
+    /// Declare/list accounts (bare = list; `-a` add, `-r` remove, `--import`).
+    #[command(alias = "accts")]
+    Acct(ManageArgs),
+    /// Declare/list categories (bare = list; `-a` add, `-r` remove, `--import`).
+    #[command(alias = "cats")]
+    Cat(ManageArgs),
+}
+
+#[derive(Args)]
+pub struct ManageArgs {
+    /// Declare NAME(s) — add them to the vault's known set.
+    #[arg(short = 'a', long = "add", value_name = "NAME", num_args = 1.., conflicts_with_all = ["rm", "import"])]
+    add: Vec<String>,
+    /// Remove NAME(s) from the known set.
+    #[arg(short = 'r', long = "rm", value_name = "NAME", num_args = 1.., conflicts_with = "import")]
+    rm: Vec<String>,
+    /// Seed the set from every name already used across the ledgers.
+    #[arg(long = "import")]
+    import: bool,
 }
 
 #[derive(Args)]
@@ -192,6 +237,10 @@ pub struct AddArgs {
     /// Mark the transaction pending (`!`).
     #[arg(long = "pending")]
     pending: bool,
+    /// Declare any new account/category used here on the fly, instead of being
+    /// rejected by the typo guard (when a declared set exists).
+    #[arg(short = 'n', long = "new")]
+    new: bool,
     /// Assert the account's balance after this transaction (for reconciliation).
     #[arg(long = "assert", value_name = "BALANCE", allow_hyphen_values = true)]
     assert: Option<String>,
@@ -205,10 +254,13 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
         Some(FinCmd::Balance(balance_args)) => balance(palace, balance_args),
         Some(FinCmd::Check(check_args)) => {
-            let cur = resolved_currency(palace);
+            let settings = Settings::load(palace.root());
+            let cur = currency_from(&settings);
             let root = palace.root().join("notes/management/daily");
-            finance::check(&root, &cur, check_args.strict)
+            finance::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
         }
+        Some(FinCmd::Acct(manage_args)) => manage(palace, manage_args, Decl::Account),
+        Some(FinCmd::Cat(manage_args)) => manage(palace, manage_args, Decl::Category),
         Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
         Some(FinCmd::Fmt(fmt_args)) => {
             let cur = resolved_currency(palace);
@@ -423,14 +475,131 @@ fn seed_today(palace: &Palace) -> Result<String, String> {
 /// transaction's own date (from `--date`, else today), so a back-dated entry
 /// lands in the correct `YYYY-MM-DD+ledger.md`, not today's.
 fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
-    let default_cur = resolved_currency(palace);
+    let mut settings = Settings::load(palace.root());
+    let default_cur = currency_from(&settings);
+    let declare_new = args.new;
     let txn = build_txn(args, Local::now().fixed_offset(), &default_cur)?;
+
+    // Typo guard: reject an account/category not in a non-empty declared set,
+    // unless `-n` declares it now. Empty sets → no check (fresh-vault default).
+    guard_declared(palace, &mut settings, &txn, declare_new)?;
+
     let day = txn.date.map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
     let entry = finance::format_entry(&txn);
     let (subdir, filename) = ledger_location(day);
     note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("fin: {e}"))
+}
+
+/// The account(s) and category(ies) a transaction actually uses.
+fn used_names(txn: &Transaction) -> (Vec<String>, Vec<String>) {
+    let mut accts = vec![txn.account.clone()];
+    let mut cats = Vec::new();
+    match txn.kind {
+        Kind::Transfer => accts.extend(txn.other.clone()),
+        _ if !txn.split.is_empty() => cats.extend(txn.split.iter().map(|(c, _)| c.clone())),
+        _ => cats.extend(txn.other.clone()),
+    }
+    (accts, cats)
+}
+
+/// Reject an account/category absent from a *non-empty* declared set. With
+/// `declare_new`, add the unknown names to `.plc/config` and proceed instead.
+fn guard_declared(
+    palace: &Palace,
+    settings: &mut Settings,
+    txn: &Transaction,
+    declare_new: bool,
+) -> Result<(), String> {
+    let (accts, cats) = used_names(txn);
+    let missing = |used: &[String], declared: &[String]| -> Vec<String> {
+        if declared.is_empty() {
+            return Vec::new(); // no declarations yet → nothing to enforce
+        }
+        used.iter().filter(|n| !declared.contains(n)).cloned().collect()
+    };
+    let bad_accts = missing(&accts, &settings.accounts);
+    let bad_cats = missing(&cats, &settings.categories);
+    if bad_accts.is_empty() && bad_cats.is_empty() {
+        return Ok(());
+    }
+    if declare_new {
+        for a in &bad_accts {
+            declare(&mut settings.accounts, a);
+        }
+        for c in &bad_cats {
+            declare(&mut settings.categories, c);
+        }
+        return settings.save(palace.root());
+    }
+    let mut lines = vec!["fin: undeclared name(s) — declare them or pass -n to add now:".to_string()];
+    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc fin acct -a {a})")));
+    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc fin cat -a {c})")));
+    Err(lines.join("\n"))
+}
+
+/// Insert `name` into a sorted, de-duplicated declared list.
+fn declare(list: &mut Vec<String>, name: &str) {
+    if let Err(pos) = list.binary_search(&name.to_string()) {
+        list.insert(pos, name.to_string());
+    }
+}
+
+/// `plc fin acct` / `plc fin cat`: manage the declared set (bare = list).
+fn manage(palace: &Palace, args: ManageArgs, kind: Decl) -> Result<String, String> {
+    let mut settings = Settings::load(palace.root());
+    let (label, sigil) = (kind.label(), kind.sigil());
+
+    if !args.add.is_empty() {
+        let names: Vec<String> = args
+            .add
+            .iter()
+            .map(|n| clean_link(label, n).map(|n| finance::normalize_name(&n)))
+            .collect::<Result<_, _>>()?;
+        let list = pick(&mut settings, kind);
+        for n in &names {
+            declare(list, n);
+        }
+        settings.save(palace.root())?;
+        return Ok(format!("declared {} {label}(s): {}", names.len(), names.join(", ")));
+    }
+    if !args.rm.is_empty() {
+        let names: Vec<String> = args.rm.iter().map(|n| finance::normalize_name(n)).collect();
+        let list = pick(&mut settings, kind);
+        list.retain(|n| !names.contains(n));
+        settings.save(palace.root())?;
+        return Ok(format!("removed {} {label}(s): {}", names.len(), names.join(", ")));
+    }
+    if args.import {
+        let root = palace.root().join("notes/management/daily");
+        let (accts, cats) = finance::names(&root, &currency_from(&settings))?;
+        let used = match kind {
+            Decl::Account => accts,
+            Decl::Category => cats,
+        };
+        let before = pick(&mut settings, kind).len();
+        for n in &used {
+            declare(pick(&mut settings, kind), n);
+        }
+        let added = pick(&mut settings, kind).len() - before;
+        settings.save(palace.root())?;
+        return Ok(format!("imported {added} new {label}(s) from ledgers ({} total)", pick(&mut settings, kind).len()));
+    }
+    // Bare: list.
+    let list = pick(&mut settings, kind);
+    if list.is_empty() {
+        return Ok(format!("(no {label}s declared — add with `plc fin {label} -a NAME`)"));
+    }
+    Ok(list.iter().map(|n| format!("{sigil}{n}")).collect::<Vec<_>>().join("\n"))
+}
+
+/// The declared list for a kind (mutable borrow of the right settings field).
+fn pick(settings: &mut Settings, kind: Decl) -> &mut Vec<String> {
+    match kind {
+        Decl::Account => &mut settings.accounts,
+        Decl::Category => &mut settings.categories,
+    }
 }
 
 /// Build a [`Transaction`] from `add` args. `now` is the default timestamp used
@@ -584,6 +753,7 @@ mod tests {
             date: None,
             cleared: false,
             pending: false,
+            new: false,
             assert: None,
         }
     }
@@ -591,6 +761,34 @@ mod tests {
     /// A fixed "now" so `build_txn`'s default stamp is deterministic in tests.
     fn now() -> DateTime<FixedOffset> {
         DateTime::parse_from_str("2026-07-19 11:28:22 +0200", finance::TIMESTAMP_FMT).unwrap()
+    }
+
+    #[test]
+    fn used_names_by_kind() {
+        // Expense: account + category.
+        let t = build_txn(add_args(), now(), "EUR").unwrap();
+        assert_eq!(used_names(&t), (vec!["cash".into()], vec!["coffee".into()]));
+
+        // Transfer: two accounts, no category.
+        let mut a = add_args();
+        (a.to, a.category) = (Some("savings".into()), None);
+        let t = build_txn(a, now(), "EUR").unwrap();
+        assert_eq!(used_names(&t), (vec!["cash".into(), "savings".into()], vec![]));
+
+        // Split: account + each leg category.
+        let mut a = add_args();
+        (a.amount, a.category, a.split) = ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
+        let t = build_txn(a, now(), "EUR").unwrap();
+        assert_eq!(used_names(&t), (vec!["cash".into()], vec!["food".into(), "tax".into()]));
+    }
+
+    #[test]
+    fn declare_inserts_sorted_and_dedups() {
+        let mut list = vec![];
+        declare(&mut list, "rent");
+        declare(&mut list, "food");
+        declare(&mut list, "rent"); // dup ignored
+        assert_eq!(list, vec!["food".to_string(), "rent".to_string()]);
     }
 
     #[test]

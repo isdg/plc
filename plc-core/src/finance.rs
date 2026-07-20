@@ -794,7 +794,13 @@ type Dated = (Option<NaiveDate>, Transaction);
 /// transactions in date order, tracking each `@` account's running balance per
 /// currency, and check that the asserted balance matches after the asserting
 /// transaction. `Ok` with a count when all pass; `Err` listing the mismatches.
-pub fn check(root: &Path, default_currency: &str, strict: bool) -> Result<String, String> {
+pub fn check(
+    root: &Path,
+    default_currency: &str,
+    strict: bool,
+    declared_accounts: &[String],
+    declared_categories: &[String],
+) -> Result<String, String> {
     let (mut items, _) = collect(root, default_currency, &Filter::default())?;
     items.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -802,7 +808,7 @@ pub fn check(root: &Path, default_currency: &str, strict: bool) -> Result<String
     let mut checked = 0usize;
     let mut fails: Vec<String> = Vec::new();
     if strict {
-        fails.extend(undeclared(root, &items));
+        fails.extend(undeclared(root, &items, declared_accounts, declared_categories));
     }
     for (eff, t) in &items {
         let key = |acct: &str| (t.currency.clone(), acct.to_string());
@@ -871,9 +877,12 @@ fn scan_declarations(root: &Path) -> Declarations {
 }
 
 /// Under `--strict`: names used by transactions but never declared (likely
-/// typos), as sorted diagnostic lines. Empty when everything checks out.
-fn undeclared(root: &Path, items: &[Dated]) -> Vec<String> {
-    let d = scan_declarations(root);
+/// typos), as sorted diagnostic lines. Declarations come from in-file directive
+/// lines plus the caller's `.plc/config` sets. Empty when everything checks out.
+fn undeclared(root: &Path, items: &[Dated], extra_accounts: &[String], extra_categories: &[String]) -> Vec<String> {
+    let mut d = scan_declarations(root);
+    d.accounts.extend(extra_accounts.iter().cloned());
+    d.categories.extend(extra_categories.iter().cloned());
     let (mut accts, mut cats, mut curs) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     for (_, t) in items {
         accts.insert(t.account.clone());
@@ -897,6 +906,20 @@ fn undeclared(root: &Path, items: &[Dated]) -> Vec<String> {
     out.extend(cats.iter().filter(|c| !d.categories.contains(*c)).map(|c| format!("  undeclared category: #{c}")));
     out.extend(curs.iter().filter(|c| !d.commodities.contains(*c)).map(|c| format!("  undeclared commodity: {c}")));
     out
+}
+
+/// Every account and category name actually used across all ledgers, sorted and
+/// de-duplicated (accounts, categories). The `uncategorized` suspense bucket is
+/// excluded. Used by `plc fin acct/cat --import` to seed `.plc/config`.
+pub fn names(root: &Path, default_currency: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let (items, _) = collect(root, default_currency, &Filter::default())?;
+    let txns: Vec<Transaction> = items.into_iter().map(|(_, t)| t).collect();
+    let (mut accts, mut cats) = (BTreeSet::new(), BTreeSet::new());
+    for t in summarize(&txns).values() {
+        accts.extend(t.accounts.keys().cloned());
+        cats.extend(t.categories.keys().filter(|c| c.as_str() != UNCATEGORIZED).cloned());
+    }
+    Ok((accts.into_iter().collect(), cats.into_iter().collect()))
 }
 
 /// Walk `root` for `*+ledger.md` files and return every transaction that passes
@@ -1550,7 +1573,7 @@ mod tests {
             "$ 2026-07-10 00:00:00 +0200 200 EUR @[[bnp]] > @[[cash]]\n\
              $ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]] = 195.50 EUR\n",
         );
-        assert!(check(&good, EUR, false).unwrap().contains("1 balance assertion(s) OK"));
+        assert!(check(&good, EUR, false, &[], &[]).unwrap().contains("1 balance assertion(s) OK"));
         fs::remove_dir_all(&good).ok();
 
         // Wrong asserted balance → error naming the account and the mismatch.
@@ -1559,7 +1582,7 @@ mod tests {
             "2026-07-19+ledger.md",
             "$ 2026-07-18 00:00:00 +0200 -4.50 EUR @[[cash]] #[[coffee]] = 999 EUR\n",
         );
-        let err = check(&bad, EUR, false).unwrap_err();
+        let err = check(&bad, EUR, false, &[], &[]).unwrap_err();
         assert!(err.contains("failed") && err.contains("@cash"), "{err}");
         fs::remove_dir_all(&bad).ok();
     }
@@ -1597,9 +1620,9 @@ mod tests {
             "account cash\ncommodity EUR\n\n$ -4.50 EUR @[[cash]] #[[coffee]]\n",
         );
         // Non-strict: only assertions checked → passes.
-        assert!(check(&dir, EUR, false).is_ok());
+        assert!(check(&dir, EUR, false, &[], &[]).is_ok());
         // Strict: the undeclared category is flagged.
-        let err = check(&dir, EUR, true).unwrap_err();
+        let err = check(&dir, EUR, true, &[], &[]).unwrap_err();
         assert!(err.contains("undeclared category: #coffee"), "{err}");
         assert!(!err.contains("undeclared account"), "cash was declared: {err}");
         fs::remove_dir_all(&dir).ok();
