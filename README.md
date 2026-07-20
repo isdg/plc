@@ -196,7 +196,7 @@ file per day. Quick tour:
     $ plc fin reg coffee                                  # register, filtered
 
 `fin` has its own subcommands (`add`, `report`, `reg`, `balance`/`bal`, `check`,
-`fmt`, `stat`, `declare`, `last`, `undo`) and a full grammar for dates,
+`fmt`, `stat`, `declare`, `doctor`, `last`, `undo`) and a full grammar for dates,
 transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
 the amount. You can declare a vocabulary of accounts (`--physical`) and
 categories (`--ephemeral`) with `plc fin declare` that `add` validates against,

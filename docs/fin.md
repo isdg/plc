@@ -401,6 +401,24 @@ journal at once (reading `.plc/config` plus any in-file `account NAME` /
       undeclared account: @card
       undeclared category: #food
 
+## 7.1 `plc fin doctor`
+
+`doctor` compares `.plc/config` against the names actually used in your ledgers
+and reports what's off, with a repair command for each finding:
+
+    $ plc fin doctor
+      ⚠ 1 categories used but not declared:
+          #transport  (plc fin declare transport --ephemeral)
+      ⚠ 1 categories declared but never used (typo/stale?):
+          #rent  (plc fin declare rent --ephemeral -r)
+      · accounts: guard off (12 used, none declared) — `plc fin declare --import --physical`
+
+It also flags a legacy `.last-do` left at the vault root. `plc fin doctor --fix`
+applies the safe repairs — importing undeclared names into an already-active
+guard and migrating the pointer into `.plc/` — while leaving judgement calls
+(an unused declaration might be a typo *or* a real bucket you've yet to use) for
+you to resolve with the printed command.
+
 ---
 
 # 8 Recent log and undo
@@ -465,6 +483,7 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
       --ephemeral                 operate on categories (#)
       -r, --rm                    remove the named entries
           --import                seed from names already used in ledgers
+    plc fin doctor  [--fix]       check config vs ledgers; propose/apply repairs
     plc fin last  [-n N]          the most recent transactions
     plc fin undo                  remove the last added transaction
 

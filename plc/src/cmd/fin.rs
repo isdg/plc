@@ -111,10 +111,20 @@ enum FinCmd {
     /// Declare/list the known accounts (`--physical`) and categories
     /// (`--ephemeral`). Bare = list both; NAME(s) add; `-r` remove; `--import`.
     Declare(DeclareArgs),
+    /// Check `.plc/config` against the ledgers and propose repairs (`--fix`).
+    Doctor(DoctorArgs),
     /// Show the most recently added transactions (recent-activity log).
     Last(LastArgs),
     /// Remove the last added transaction from its ledger and the log.
     Undo,
+}
+
+#[derive(Args)]
+pub struct DoctorArgs {
+    /// Apply the safe repairs (import undeclared names into an active guard,
+    /// migrate a legacy do-pointer) instead of only reporting them.
+    #[arg(long = "fix")]
+    fix: bool,
 }
 
 #[derive(Args)]
@@ -288,6 +298,7 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
             finance::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
         }
         Some(FinCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
+        Some(FinCmd::Doctor(doctor_args)) => doctor(palace, doctor_args.fix),
         Some(FinCmd::Last(last_args)) => last_log(palace, last_args),
         Some(FinCmd::Undo) => undo(palace),
         Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
@@ -755,6 +766,84 @@ fn list_kind(settings: &Settings, kind: Decl) -> String {
     format!("{plural}:\n{}", names.join("\n"))
 }
 
+/// Split `used` names against a `declared` set: `(undeclared, unused)` —
+/// names used but never declared, and names declared but never used.
+fn diff_names(used: &[String], declared: &[String]) -> (Vec<String>, Vec<String>) {
+    let undeclared = used.iter().filter(|n| !declared.contains(n)).cloned().collect();
+    let unused = declared.iter().filter(|n| !used.contains(n)).cloned().collect();
+    (undeclared, unused)
+}
+
+/// `plc fin doctor`: compare `.plc/config` against the names actually used in the
+/// ledgers, report anything off, and propose (or, with `--fix`, apply) repairs.
+fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
+    let mut settings = Settings::load(palace.root());
+    let root = palace.root().join("notes/management/daily");
+    let (used_accts, used_cats) = finance::names(&root, &currency_from(&settings))?;
+
+    let mut findings: Vec<String> = Vec::new();
+    let mut fixable = 0usize; // problems `--fix` can repair
+    let mut fixed: Vec<String> = Vec::new();
+
+    for (kind, used) in [(Decl::Account, &used_accts), (Decl::Category, &used_cats)] {
+        let declared = pick(&mut settings, kind).clone();
+        let (sigil, flag, plural) = (kind.sigil(), kind.flag(), kind.plural());
+        if declared.is_empty() {
+            if !used.is_empty() {
+                findings.push(format!(
+                    "  · {plural}: guard off ({} used, none declared) — `plc fin declare --import {flag}` to enable",
+                    used.len()
+                ));
+            }
+            continue;
+        }
+        let (undeclared, unused) = diff_names(used, &declared);
+        if !undeclared.is_empty() {
+            fixable += undeclared.len();
+            findings.push(format!("  ⚠ {} {plural} used but not declared:", undeclared.len()));
+            findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc fin declare {n} {flag})")));
+            if fix {
+                undeclared.iter().for_each(|n| declare(pick(&mut settings, kind), n));
+                fixed.push(format!("declared {} {plural}", undeclared.len()));
+            }
+        }
+        if !unused.is_empty() {
+            findings.push(format!("  ⚠ {} {plural} declared but never used (typo/stale?):", unused.len()));
+            findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc fin declare {n} {flag} -r)")));
+        }
+    }
+
+    // A pre-`.plc` do-pointer left at the vault root.
+    let legacy = palace.root().join(".last-do");
+    if legacy.is_file() {
+        fixable += 1;
+        findings.push("  ⚠ legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
+        if fix {
+            std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("fin doctor: {e}"))?;
+            std::fs::rename(&legacy, palace.state_dir().join("last-do")).map_err(|e| format!("fin doctor: {e}"))?;
+            fixed.push("migrated .last-do → .plc/last-do".to_string());
+        }
+    }
+
+    if findings.is_empty() {
+        return Ok("\n  Doctor — all good  ✓".to_string());
+    }
+    let mut out = vec![String::new(), "  Doctor — .plc/config vs the ledgers".to_string(), String::new()];
+    out.extend(findings);
+    out.push(String::new());
+    if fix {
+        if !fixed.is_empty() {
+            settings.save(palace.root())?;
+            out.push(format!("  fixed: {}", fixed.join("; ")));
+        } else {
+            out.push("  nothing auto-fixable; the items above need a manual call".to_string());
+        }
+    } else if fixable > 0 {
+        out.push("  run `plc fin doctor --fix` to apply the safe repairs (import undeclared, migrate pointer)".to_string());
+    }
+    Ok(out.join("\n"))
+}
+
 /// The declared list for a kind (mutable borrow of the right settings field).
 fn pick(settings: &mut Settings, kind: Decl) -> &mut Vec<String> {
     match kind {
@@ -966,6 +1055,15 @@ mod tests {
         assert!(kept.ends_with('\n'));
         // A stale entry (not the trailing block) is refused.
         assert_eq!(strip_trailing_entry(content, "$ -99.00 EUR  @[[x]] #[[y]]"), None);
+    }
+
+    #[test]
+    fn diff_names_splits_undeclared_and_unused() {
+        let used = vec!["cash".to_string(), "revolut".to_string(), "cofee".to_string()];
+        let declared = vec!["cash".to_string(), "revolut".to_string(), "rent".to_string()];
+        let (undeclared, unused) = diff_names(&used, &declared);
+        assert_eq!(undeclared, vec!["cofee".to_string()]); // used, not declared
+        assert_eq!(unused, vec!["rent".to_string()]); // declared, not used
     }
 
     #[test]
