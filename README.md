@@ -60,6 +60,7 @@ These apply to whichever subcommand runs:
 alone):
 
     <PALACE_DIR>/
+      .plc/                           # settings + state: config, pointers, logs
       TOP.md                          # plc top
       notes/
         archive/
@@ -135,7 +136,7 @@ landing page.
 ### plc do `[-n | -l FILE | -L]`
 
 Week-based "do" notes (`do-<GGGG-Www>.md` under `notes/management/do`) with a
-"last" pointer stored in `<PALACE_DIR>/.last-do`.
+"last" pointer stored in `<PALACE_DIR>/.plc/last-do`.
 
     (no flag)          resolve the "last" do-note's path (errors if unset/stale)
     -n, --new          create this ISO week's do-note and mark it "last"
@@ -195,9 +196,12 @@ file per day. Quick tour:
     $ plc fin reg coffee                                  # register, filtered
 
 `fin` has its own subcommands (`add`, `report`, `reg`, `balance`/`bal`, `check`,
-`fmt`, `stat`) and a full grammar for dates, transfers, splits, tags, balance
-assertions, and hierarchy. **See [docs/fin.md](docs/fin.md) for the complete
-finance manual.**
+`fmt`, `stat`, `acct`/`cat`, `last`, `undo`) and a full grammar for dates,
+transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
+the amount. You can declare a vocabulary of accounts/categories (`plc fin acct`
+/ `cat`) that `add` validates against, and reverse a mistake with `plc fin
+undo`. Settings live in `.plc/config`. **See [docs/fin.md](docs/fin.md) for the
+complete finance manual.**
 
 ---
 

@@ -164,7 +164,8 @@ Every field except the amount and one account is optional. In order:
   transaction inherits the ledger file's day.
 - **state** — `*` cleared or `!` pending (reconciliation); omitted = uncleared.
 - **amount** — a decimal. `-` is an outflow (expense), `+` an inflow (income);
-  a transfer uses a bare magnitude.
+  a transfer uses a bare magnitude. On the `add` command line the amount may be
+  an arithmetic expression — `plc fin add '3*4.50+1'` books 14.50 (§5.4).
 - **currency** — an optional ISO code; defaults to `$PLC_CURRENCY`, else `EUR`.
   Reports subtotal per currency (there is no FX conversion).
 - **`@[[account]]`** — the account (required).
@@ -329,6 +330,15 @@ assertion:
     fin: 1 check(s) failed:
       2026-07-19  @cash: expected +999.00 EUR, got +185.50
 
+## 5.4 Arithmetic in the amount
+
+The `AMOUNT` argument (and each `--split` leg) may be an arithmetic expression
+— `+ - * / ( )` over decimals, rounded to the nearest cent — so you can total a
+receipt or split a bill inline:
+
+    $ plc fin add '3*4.50+1' lunch -a cash -c food       # → 14.50
+    $ plc fin add 90 shop -a card --split food=60 --split 'house=90-60'
+
 ---
 
 # 6 Reports
@@ -357,18 +367,32 @@ measures).
 
 ---
 
-# 7 Keeping it consistent (`--strict`)
+# 7 A declared vocabulary (typo guard)
 
-To catch typos, declare your accounts, categories, and commodities on their own
-lines in any ledger file (they are ignored by the transaction parser):
+Declare the accounts and categories you actually use, and `plc fin add` will
+refuse an undeclared one — so `-c cofee` is caught instead of silently creating
+a bogus category. Declarations live in `.plc/config` (see §9) and are managed
+with two mirror commands:
 
-    account cash
-    account bnp
-    category coffee
-    category food/groceries
-    commodity EUR
+    plc fin acct                 list declared accounts   (alias: accts)
+    plc fin acct -a cash bnp     declare account(s)
+    plc fin acct -r bnp          remove account(s)
+    plc fin acct --import        seed from every account already used in ledgers
+    plc fin cat  …               the same, for categories  (alias: cats)
 
-Then `plc fin check --strict` flags anything used but never declared:
+Once a set is non-empty it is enforced; an unknown name is rejected:
+
+    $ plc fin add 4.50 latte -a cash -c cofee
+    fin: undeclared name(s) — declare them or pass -n to add now:
+      #cofee  (plc fin cat -a cofee)
+
+Pass `-n/--new` to declare the name on the fly and add in one go. An empty set
+means "not enforced yet", so fresh vaults and bulk imports keep working; run
+`--import` once to adopt everything you already use.
+
+`plc fin check --strict` reports the same undeclared names across the whole
+journal at once (reading `.plc/config` plus any in-file `account NAME` /
+`category NAME` / `commodity CODE` directive lines):
 
     $ plc fin check --strict
     fin: 2 check(s) failed:
@@ -377,7 +401,42 @@ Then `plc fin check --strict` flags anything used but never declared:
 
 ---
 
-# 8 Command reference
+# 8 Recent log and undo
+
+Every `plc fin add` is recorded to `.plc/last-transactions`. Review the tail and
+reverse a mistaken add:
+
+    $ plc fin last -n 3         # the 3 most recent, newest first
+    $ plc fin undo              # remove the last add from its ledger + the log
+
+`undo` only removes the entry when it is still the trailing block of its file —
+if you have edited the ledger since, it refuses rather than guess.
+
+---
+
+# 9 Settings (`.plc/config`)
+
+Per-vault settings live in a plain-text file at `<PALACE_DIR>/.plc/config`,
+hand-editable or managed by the `acct`/`cat` commands:
+
+    # plc settings
+    currency = EUR
+
+    [categories]
+    food/groceries
+    rent
+
+    [accounts]
+    revolut
+    cash
+
+`currency` is the vault default when a transaction omits one; the full
+precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
+`[categories]` / `[accounts]` sections are the declared vocabulary from §7.
+
+---
+
+# 10 Command reference
 
     plc fin                       seed/print today's ledger path (open it yourself)
     plc fin add AMOUNT [MEMO…]    append a transaction (files it in its day)
@@ -386,17 +445,23 @@ Then `plc fin check --strict` flags anything used but never declared:
           --to ACCOUNT            transfer destination (instead of a category)
           --split CAT=AMOUNT      split across categories (repeatable; must sum)
       -i, --income                inflow (default is an expense/outflow)
-          --cur CUR               currency (default $PLC_CURRENCY, else EUR)
+      -n, --new                   declare any new account/category used here
+          --cur CUR               currency (default: see §9)
       -p, --project TAG           project/event tag, nested with `/` (repeatable)
       -d, --date WHEN             YYYY-MM-DD or a full timestamp (default: now)
           --cleared / --pending   reconciliation state
           --assert BALANCE        assert the account balance afterwards
+      (AMOUNT may be an arithmetic expression — §5.4)
     plc fin report  [PATTERN…]    summary report         (+ filters, --depth)
     plc fin reg     [PATTERN…]    chronological register (+ filters)
     plc fin balance [PATTERN…]    net-worth snapshot      (+ filters, -n N)
     plc fin check   [--strict]    verify assertions (+ undeclared names)
     plc fin fmt     [--check]     reformat every ledger file in place
     plc fin stat    [PATTERN…]    spend calendar/plot/stats (see README)
+    plc fin acct  [-a|-r NAME…|--import]   declare/list accounts   (alias accts)
+    plc fin cat   [-a|-r NAME…|--import]   declare/list categories (alias cats)
+    plc fin last  [-n N]          the most recent transactions
+    plc fin undo                  remove the last added transaction
 
 ## Storage
 
@@ -406,8 +471,10 @@ Transactions live in one file per day under the daily tree:
 
 Each file is an ordinary note (stamped header + `[[ledger]]` tag) whose body is
 transaction lines. `plc` only ever appends; edit the files freely by hand.
+Settings and state (the config, the recent-transaction log) live under
+`<PALACE_DIR>/.plc/`.
 
 ## Environment
 
     PALACE_DIR    the vault root (required)
-    PLC_CURRENCY  default currency when a line omits one (default: EUR)
+    PLC_CURRENCY  default currency, overriding `.plc/config` (default: EUR)
