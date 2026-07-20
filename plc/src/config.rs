@@ -5,6 +5,7 @@
 //! a palace that hasn't been decrypted yet.
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// A validated handle to the palace vault root (the directory that contains
@@ -13,12 +14,97 @@ pub struct Palace {
     root: PathBuf,
 }
 
+/// The `~/.plcrc` path (`$HOME/.plcrc`), or `None` when `$HOME` is unset.
+pub fn plcrc_path() -> Option<PathBuf> {
+    env::var_os("HOME").map(|h| PathBuf::from(h).join(".plcrc"))
+}
+
+/// Read the `PALACE_DIR` value from `~/.plcrc`, if the file sets one.
+pub fn read_plcrc_palace_dir() -> Option<String> {
+    parse_plcrc(&fs::read_to_string(plcrc_path()?).ok()?)
+}
+
+/// Extract `PALACE_DIR` from `~/.plcrc` text. Tolerant of shell syntax so the
+/// file can also be `source`d: an optional `export ` prefix, `#` comments, blank
+/// lines, and surrounding quotes are all handled.
+fn parse_plcrc(text: &str) -> Option<String> {
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((key, val)) = line.split_once('=') else { continue };
+        if key.trim() != "PALACE_DIR" {
+            continue;
+        }
+        let val = val.trim().trim_matches(['"', '\'']).trim();
+        if !val.is_empty() {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
+/// The configured vault path: `$PALACE_DIR` (when non-empty) else `~/.plcrc`'s
+/// `PALACE_DIR`, with a leading `~` expanded to `$HOME`. `None` when neither is
+/// set — the single source of truth for where the vault lives.
+pub fn palace_dir() -> Option<PathBuf> {
+    let raw = env::var("PALACE_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(read_plcrc_palace_dir)?;
+    Some(expand_tilde(&raw))
+}
+
+/// Expand a leading `~` / `~/` to `$HOME`; otherwise the path as-is.
+fn expand_tilde(s: &str) -> PathBuf {
+    expand_tilde_home(s, env::var_os("HOME"))
+}
+
+/// [`expand_tilde`] with an injected home, so it is testable without touching
+/// the process environment.
+fn expand_tilde_home(s: &str, home: Option<std::ffi::OsString>) -> PathBuf {
+    let s = s.trim();
+    match s.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => match home {
+            Some(h) => PathBuf::from(h).join(rest.trim_start_matches('/')),
+            None => PathBuf::from(s),
+        },
+        _ => PathBuf::from(s),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_plcrc_variants() {
+        assert_eq!(parse_plcrc("export PALACE_DIR=\"~/x\"\n"), Some("~/x".into()));
+        assert_eq!(parse_plcrc("PALACE_DIR=/y\n"), Some("/y".into()));
+        assert_eq!(parse_plcrc("# a comment\nexport PALACE_DIR = '/z'\n"), Some("/z".into()));
+        assert_eq!(parse_plcrc("# nothing here\nFOO=bar\n"), None);
+        assert_eq!(parse_plcrc("PALACE_DIR=\n"), None); // empty value
+    }
+
+    #[test]
+    fn expand_tilde_cases() {
+        let home = Some(std::ffi::OsString::from("/home/x"));
+        assert_eq!(expand_tilde_home("~/vault", home.clone()), PathBuf::from("/home/x/vault"));
+        assert_eq!(expand_tilde_home("~", home.clone()), PathBuf::from("/home/x"));
+        assert_eq!(expand_tilde_home("/abs/path", home), PathBuf::from("/abs/path"));
+        // `~user` (no slash) is left untouched.
+        assert_eq!(expand_tilde_home("~bob/x", Some("/h".into())), PathBuf::from("~bob/x"));
+    }
+}
+
 impl Palace {
-    /// Resolve `$PALACE_DIR` from the environment, then validate in stages.
+    /// Resolve the vault path (env or `~/.plcrc`), then validate in stages.
     pub fn resolve() -> Result<Palace, String> {
-        let dir = env::var_os("PALACE_DIR")
-            .ok_or_else(|| "palace: PALACE_DIR is not set".to_string())?;
-        Self::validate(PathBuf::from(dir))
+        let dir = palace_dir()
+            .ok_or_else(|| "palace: PALACE_DIR is not set (environment or ~/.plcrc)".to_string())?;
+        Self::validate(dir)
     }
 
     /// Staged validation, split out so it is unit-testable without env state.

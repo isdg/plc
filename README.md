@@ -35,13 +35,23 @@ Build and install the binary, point it at a vault, and scaffold it:
     $ plc init
     init: ~/vault — 9 created, 0 already present (9 dirs)
 
-`plc` resolves the vault from `$PALACE_DIR` and validates it in stages (its
-parent must exist, the dir must exist, and it must contain `notes/`), with a
-pointed error at whichever stage fails.
+`plc` resolves the vault path from `$PALACE_DIR`, falling back to `~/.plcrc`,
+then validates it in stages (its parent must exist, the dir must exist, and it
+must contain `notes/`), with a pointed error at whichever stage fails.
+
+To avoid exporting the path from your shell every session, persist it once in
+`~/.plcrc` — a plain, `source`-able file:
+
+    $ echo 'export PALACE_DIR="$HOME/vault"' > ~/.plcrc
+
+`plc` reads that file directly (an explicit `$PALACE_DIR` in the environment
+still wins). `plc doctor` verifies the config exists and resolves, and
+`plc doctor --fix` writes `~/.plcrc` for you when the path is only in the
+environment.
 
 ### Environment
 
-    PALACE_DIR    the vault root (required by all commands except `init` with an explicit DIR)
+    PALACE_DIR    the vault root — from the environment or ~/.plcrc (env wins)
     PLC_CURRENCY  default currency for `plc ledger` when a line omits one (default: EUR)
 
 ### Global options
@@ -206,12 +216,15 @@ and reverse a mistake with `plc ledger undo`. Settings live in `.plc/config`.
 
 ### plc doctor `[--fix]`
 
-Check the vault's health and propose repairs. Today it audits the ledger
+Check the vault's health and propose repairs. It runs even without a resolved
+vault, so it can diagnose the config itself: whether `PALACE_DIR` is set (env or
+`~/.plcrc`) and resolves to a real vault. It then audits the ledger
 `.plc/config` — accounts/categories used but not declared (or vice versa), a
 name declared as both `@` and `#`, a missing default currency, a legacy
 `.last-do` pointer — printing a fix command for each. `--fix` applies the safe
-ones. It's built to grow into a whole-vault checkup (orphans, stale pointers,
-broken links).
+ones (writing `~/.plcrc`, importing names, setting the currency, migrating the
+pointer). It's built to grow into a whole-vault checkup (orphans, stale
+pointers, broken links).
 
     $ plc doctor
     $ plc doctor --fix

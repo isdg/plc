@@ -10,7 +10,6 @@
 //! (art, books, bio/chem, dnd, …) and not the per-year `daily/<YYYY>` subdirs
 //! (`plc daily` makes those on demand).
 
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,9 +39,8 @@ pub struct InitArgs {
 pub fn run(args: InitArgs) -> Result<String, String> {
     let root: PathBuf = match args.dir {
         Some(d) => PathBuf::from(d),
-        None => env::var_os("PALACE_DIR")
-            .map(PathBuf::from)
-            .ok_or_else(|| "init: no target — pass a DIR or set PALACE_DIR".to_string())?,
+        None => crate::config::palace_dir()
+            .ok_or_else(|| "init: no target — pass a DIR or set PALACE_DIR (env or ~/.plcrc)".to_string())?,
     };
 
     let (created, existed) = scaffold(&root)?;
@@ -75,7 +73,7 @@ mod tests {
 
     #[test]
     fn scaffold_creates_then_is_idempotent() {
-        let root = env::temp_dir().join(format!("plc-init-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("plc-init-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
 
         // First run creates everything.
