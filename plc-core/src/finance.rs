@@ -76,6 +76,148 @@ pub fn amount_to_minor(s: &str) -> Option<i64> {
     parse_amount(s.trim()).map(|(_neg, minor)| minor)
 }
 
+/// Evaluate an amount *expression* — `+ - * / ( )` over decimal numbers — to
+/// minor units, rounded to the nearest cent (magnitude only, like
+/// [`amount_to_minor`], which it supersedes for `plc fin add`). So
+/// `"3*4.50+1"` → `1450`. `None` on malformed input or division by zero.
+pub fn eval_amount(s: &str) -> Option<i64> {
+    let toks = tokenize(s)?;
+    let mut ev = Eval { toks: &toks, i: 0 };
+    let v = ev.expr()?;
+    if ev.i != toks.len() || !v.is_finite() {
+        return None; // trailing junk or NaN/inf
+    }
+    Some((v * 100.0).round().abs() as i64)
+}
+
+#[derive(PartialEq)]
+enum Tok {
+    Num(f64),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    LParen,
+    RParen,
+}
+
+/// Lex an amount expression; `None` on any unexpected character or empty input.
+fn tokenize(s: &str) -> Option<Vec<Tok>> {
+    let mut toks = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            ' ' | '\t' => {
+                chars.next();
+            }
+            '+' => tok(&mut toks, &mut chars, Tok::Plus),
+            '-' => tok(&mut toks, &mut chars, Tok::Minus),
+            '*' => tok(&mut toks, &mut chars, Tok::Star),
+            '/' => tok(&mut toks, &mut chars, Tok::Slash),
+            '(' => tok(&mut toks, &mut chars, Tok::LParen),
+            ')' => tok(&mut toks, &mut chars, Tok::RParen),
+            '0'..='9' | '.' => {
+                let mut num = String::new();
+                while let Some(&d) = chars.peek() {
+                    if d.is_ascii_digit() || d == '.' {
+                        num.push(d);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                toks.push(Tok::Num(num.parse().ok()?));
+            }
+            _ => return None,
+        }
+    }
+    (!toks.is_empty()).then_some(toks)
+}
+
+fn tok(toks: &mut Vec<Tok>, chars: &mut std::iter::Peekable<std::str::Chars>, t: Tok) {
+    toks.push(t);
+    chars.next();
+}
+
+/// A recursive-descent evaluator: `expr → term (+|- term)*`,
+/// `term → factor (*|/ factor)*`, `factor → (-|+)? primary`,
+/// `primary → Num | ( expr )`.
+struct Eval<'a> {
+    toks: &'a [Tok],
+    i: usize,
+}
+
+impl Eval<'_> {
+    fn expr(&mut self) -> Option<f64> {
+        let mut v = self.term()?;
+        while let Some(t) = self.toks.get(self.i) {
+            match t {
+                Tok::Plus => {
+                    self.i += 1;
+                    v += self.term()?;
+                }
+                Tok::Minus => {
+                    self.i += 1;
+                    v -= self.term()?;
+                }
+                _ => break,
+            }
+        }
+        Some(v)
+    }
+
+    fn term(&mut self) -> Option<f64> {
+        let mut v = self.factor()?;
+        while let Some(t) = self.toks.get(self.i) {
+            match t {
+                Tok::Star => {
+                    self.i += 1;
+                    v *= self.factor()?;
+                }
+                Tok::Slash => {
+                    self.i += 1;
+                    let d = self.factor()?;
+                    if d == 0.0 {
+                        return None;
+                    }
+                    v /= d;
+                }
+                _ => break,
+            }
+        }
+        Some(v)
+    }
+
+    fn factor(&mut self) -> Option<f64> {
+        match self.toks.get(self.i)? {
+            Tok::Minus => {
+                self.i += 1;
+                Some(-self.factor()?)
+            }
+            Tok::Plus => {
+                self.i += 1;
+                self.factor()
+            }
+            Tok::Num(n) => {
+                let n = *n;
+                self.i += 1;
+                Some(n)
+            }
+            Tok::LParen => {
+                self.i += 1;
+                let v = self.expr()?;
+                if self.toks.get(self.i) == Some(&Tok::RParen) {
+                    self.i += 1;
+                    Some(v)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Reconciliation state: whether the transaction has cleared the real-world
 /// account. `*` = cleared, `!` = pending; the default is uncleared (no marker).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1209,6 +1351,28 @@ mod tests {
         };
         assert_eq!(format_line(&t), "$ -10.00 EUR  @[[cash]]");
         assert_eq!(parse_line(&format_line(&t), EUR).as_ref(), Some(&t));
+    }
+
+    #[test]
+    fn eval_amount_arithmetic() {
+        assert_eq!(eval_amount("4.50"), Some(450)); // plain
+        assert_eq!(eval_amount("4.50+2.20"), Some(670));
+        assert_eq!(eval_amount("3*4.50"), Some(1350));
+        assert_eq!(eval_amount("90/3"), Some(3000));
+        assert_eq!(eval_amount("(1+2)*10"), Some(3000));
+        assert_eq!(eval_amount(" 3 * 4.50 + 1 "), Some(1450)); // spaces
+        assert_eq!(eval_amount("10/3"), Some(333)); // rounded to cents
+        assert_eq!(eval_amount("2+3-1"), Some(400));
+    }
+
+    #[test]
+    fn eval_amount_rejects_garbage() {
+        assert_eq!(eval_amount(""), None);
+        assert_eq!(eval_amount("--"), None);
+        assert_eq!(eval_amount("2+"), None);
+        assert_eq!(eval_amount("abc"), None);
+        assert_eq!(eval_amount("1/0"), None);
+        assert_eq!(eval_amount("(1+2"), None); // unbalanced
     }
 
     #[test]

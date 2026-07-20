@@ -609,7 +609,7 @@ fn build_txn(
     now: DateTime<FixedOffset>,
     default_currency: &str,
 ) -> Result<Transaction, String> {
-    let amount = finance::amount_to_minor(&args.amount)
+    let amount = finance::eval_amount(&args.amount)
         .ok_or_else(|| format!("fin: invalid amount: {}", args.amount))?;
     let account = clean_link("account", &args.account)?;
     let currency = args
@@ -686,7 +686,7 @@ fn parse_splits(args: &[String]) -> Result<Vec<(String, i64)>, String> {
                 .split_once('=')
                 .ok_or_else(|| format!("fin: --split wants CAT=AMOUNT, got: {s}"))?;
             let cat = finance::normalize_name(&clean_link("split category", cat)?);
-            let amount = finance::amount_to_minor(amt)
+            let amount = finance::eval_amount(amt)
                 .ok_or_else(|| format!("fin: invalid split amount: {amt}"))?;
             Ok((cat, amount))
         })
