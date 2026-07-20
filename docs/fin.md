@@ -414,8 +414,7 @@ and reports what's off, with a repair command for each finding:
       ! no default currency in .plc/config — ledgers use EUR
       · accounts: guard off (12 used, none declared) — `plc fin declare --import --physical`
 
-It also warns when transactions exist but there's no recent-transaction log yet,
-and flags a legacy `.last-do` left at the vault root. `plc fin doctor --fix`
+It also flags a legacy `.last-do` left at the vault root. `plc fin doctor --fix`
 applies the safe repairs — importing undeclared names into an already-active
 guard and migrating the pointer into `.plc/` — while leaving judgement calls
 (an unused declaration might be a typo *or* a real bucket you've yet to use) for
@@ -425,16 +424,17 @@ you to resolve with the printed command.
 
 # 8 Recent activity and undo
 
-`plc fin last` shows your most recent transactions, newest first, read straight
-from the ledgers — so it covers all history, including imports and hand-edits:
+`.plc/last-transactions` is an always-current cache of your recent transactions,
+rebuilt from the ledgers on every `add` / `last` / `undo` (self-creating, so it
+covers all history — imports and hand-edits included — and never goes stale).
+
+`plc fin last` shows the most recent transactions, newest first:
 
     $ plc fin last -n 3         # the 3 most recent
 
-`plc fin undo` reverses a mistaken add. Each `add` records what it appended to
-`.plc/last-transactions`; `undo` removes the last such entry from its ledger —
-but only when it is still the trailing block of the file (if you have edited the
-ledger since, it refuses rather than guess). `undo` therefore only reaches adds
-made through this tool, whereas `last` reads everything.
+`plc fin undo` removes the most recent transaction from its ledger and refreshes
+the cache — it finds the exact recorded block in the file, and refuses if you
+have since edited it away rather than guess.
 
 ---
 

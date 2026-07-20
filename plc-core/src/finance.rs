@@ -812,28 +812,39 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
     Ok(lines.join("\n"))
 }
 
-/// The `recent` most recent matching transactions, newest first — a compact
-/// activity view read straight from the ledgers (so it covers all history, not
-/// just adds made through this tool). Powers `plc fin last`.
-pub fn recent(root: &Path, default_currency: &str, filter: &Filter, recent: usize) -> Result<String, String> {
-    let (mut items, _) = collect(root, default_currency, filter)?;
-    items.sort_by(|a, b| a.0.cmp(&b.0));
-    if items.is_empty() {
-        return Ok("\n  (no transactions found)".to_string());
+/// Recent transactions as `(path, entry-block)` pairs, oldest→newest, capped at
+/// `cap`. `path` is relative to `root`; `entry` is the canonical [`format_entry`]
+/// block as it appears in the file. Ordered by the transaction instant (bare-day
+/// entries first). Backs the always-current `.plc/last-transactions` cache and,
+/// through it, `plc fin last` and `undo`.
+pub fn recent_entries(root: &Path, default_currency: &str, cap: usize) -> Result<Vec<(String, String)>, String> {
+    if !root.is_dir() {
+        return Err(format!("fin: cannot read {}", root.display()));
     }
-    let shown = recent.min(items.len());
-    let mut lines = vec![String::new(), format!("  Recent — {shown} of {} transaction(s)", items.len()), String::new()];
-    for (eff, t) in items.iter().rev().take(recent) {
-        let date = eff.map_or_else(|| "----------".to_string(), |d| d.format("%Y-%m-%d").to_string());
-        let memo = if t.memo.is_empty() { String::new() } else { format!("  {}", t.memo) };
-        lines.push(format!(
-            "  {date}  {:>11} {:<3}  {}{memo}",
-            signed_amount(t),
-            t.currency,
-            describe(t),
-        ));
+    let mut rows: Vec<(Option<DateTime<FixedOffset>>, String, String)> = Vec::new();
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("+ledger.md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+        for t in parse_entries(&content, default_currency) {
+            rows.push((t.date, rel.clone(), format_entry(&t)));
+        }
     }
-    Ok(lines.join("\n"))
+    // Stable sort by instant keeps file/parse order within the same timestamp.
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let start = rows.len().saturating_sub(cap);
+    Ok(rows[start..].iter().map(|(_, p, e)| (p.clone(), e.clone())).collect())
 }
 
 /// A compact balance snapshot: per-currency net worth, income/expense/net, and
