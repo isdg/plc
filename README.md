@@ -22,6 +22,7 @@ shared across every note type — including ledgers.
     plc orphans    list notes with no links in or out
     plc stat       calendar heatmap + stats of daily-note activity
     plc ledger     plain-text double-entry ledger (alias: plc lr)
+    plc doctor     check vault health and propose repairs
 
 ---
 
@@ -195,13 +196,25 @@ file per day. Quick tour:
     $ plc ledger bal                                         # net-worth snapshot
     $ plc ledger reg coffee                                  # register, filtered
 
-`fin` has its own subcommands (`add`, `report`, `reg`, `balance`/`bal`, `check`,
-`fmt`, `stat`, `declare`, `doctor`, `last`, `undo`) and a full grammar for dates,
+`ledger` has its own subcommands (`add`, `report`, `reg`, `balance`/`bal`,
+`check`, `fmt`, `stat`, `declare`, `last`, `undo`) and a full grammar for dates,
 transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
 the amount. You can declare a vocabulary of accounts (`--physical`) and
 categories (`--ephemeral`) with `plc ledger declare` that `add` validates against,
 and reverse a mistake with `plc ledger undo`. Settings live in `.plc/config`.
 **See [docs/ledger.md](docs/ledger.md) for the complete ledger manual.**
+
+### plc doctor `[--fix]`
+
+Check the vault's health and propose repairs. Today it audits the ledger
+`.plc/config` — accounts/categories used but not declared (or vice versa), a
+name declared as both `@` and `#`, a missing default currency, a legacy
+`.last-do` pointer — printing a fix command for each. `--fix` applies the safe
+ones. It's built to grow into a whole-vault checkup (orphans, stale pointers,
+broken links).
+
+    $ plc doctor
+    $ plc doctor --fix
 
 ---
 

@@ -60,6 +60,8 @@ enum Cmd {
     Isg(cmd::isg::IsgArgs),
     /// List orphan notes (no outbound and no inbound links).
     Orphans(cmd::orphans::OrphansArgs),
+    /// Check vault health and propose repairs (`--fix`).
+    Doctor(cmd::doctor::DoctorArgs),
     /// Scaffold the canonical vault directory tree.
     Init(cmd::init::InitArgs),
 }
@@ -97,6 +99,7 @@ fn main() -> ExitCode {
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
         Cmd::Isg(args) => with_palace(|p| cmd::isg::run(p, args)),
         Cmd::Orphans(args) => cmd::orphans::run(args),
+        Cmd::Doctor(args) => with_palace(|p| cmd::doctor::run(p, args)),
         Cmd::Init(args) => cmd::init::run(args),
     };
 

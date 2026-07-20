@@ -111,20 +111,10 @@ enum LedgerCmd {
     /// Declare/list the known accounts (`--physical`) and categories
     /// (`--ephemeral`). Bare = list both; NAME(s) add; `-r` remove; `--import`.
     Declare(DeclareArgs),
-    /// Check `.plc/config` against the ledgers and propose repairs (`--fix`).
-    Doctor(DoctorArgs),
     /// Show the most recently added transactions (recent-activity log).
     Last(LastArgs),
     /// Remove the last added transaction from its ledger and the log.
     Undo,
-}
-
-#[derive(Args)]
-pub struct DoctorArgs {
-    /// Apply the safe repairs (import undeclared names into an active guard,
-    /// migrate a legacy do-pointer) instead of only reporting them.
-    #[arg(long = "fix")]
-    fix: bool,
 }
 
 #[derive(Args)]
@@ -306,7 +296,6 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
             ledger::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
         }
         Some(LedgerCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
-        Some(LedgerCmd::Doctor(doctor_args)) => doctor(palace, doctor_args.fix),
         Some(LedgerCmd::Last(last_args)) => last_log(palace, last_args),
         Some(LedgerCmd::Undo) => undo(palace),
         Some(LedgerCmd::Stat(stat_args)) => stat(palace, stat_args),
@@ -786,9 +775,10 @@ fn diff_names(used: &[String], declared: &[String]) -> (Vec<String>, Vec<String>
     (undeclared, unused)
 }
 
-/// `plc ledger doctor`: compare `.plc/config` against the names actually used in the
-/// ledgers, report anything off, and propose (or, with `--fix`, apply) repairs.
-fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
+/// The ledger health section of `plc doctor`: compare `.plc/config` against the
+/// names actually used in the ledgers, report anything off, and propose (or,
+/// with `--fix`, apply) repairs.
+pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     let mut settings = Settings::load(palace.root());
     let root = palace.root().join("notes/management/daily");
     let (used_accts, used_cats) = ledger::names(&root, &currency_from(&settings))?;
@@ -845,7 +835,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             Some(c) => {
                 fixable += 1;
                 findings.push(format!("  ! no default currency in .plc/config — ledgers use {c}"));
-                findings.push(format!("      set it: add `currency = {c}` (or `plc ledger doctor --fix`)"));
+                findings.push(format!("      set it: add `currency = {c}` (or `plc doctor --fix`)"));
                 if fix {
                     settings.currency = Some(c.clone());
                     fixed.push(format!("set currency = {c}"));
@@ -881,7 +871,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             out.push("  nothing auto-fixable; the items above need a manual call".to_string());
         }
     } else if fixable > 0 {
-        out.push("  run `plc ledger doctor --fix` to apply the safe repairs (import undeclared, set currency, migrate pointer)".to_string());
+        out.push("  run `plc doctor --fix` to apply the safe repairs (import undeclared, set currency, migrate pointer)".to_string());
     }
     Ok(out.join("\n"))
 }

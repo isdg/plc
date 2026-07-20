@@ -418,7 +418,7 @@ means "not enforced yet", so fresh vaults and bulk imports keep working; run
 
 A name can't be declared as **both** an account and a category — `declare`
 rejects the second, and no single transaction may use the same name on both
-legs (`@revolut` with `#revolut`). `plc ledger doctor` flags any pre-existing
+legs (`@revolut` with `#revolut`). `plc doctor` flags any pre-existing
 clash.
 
 `plc ledger check --strict` reports the same undeclared names across the whole
@@ -430,12 +430,12 @@ journal at once (reading `.plc/config` plus any in-file `account NAME` /
       undeclared account: @card
       undeclared category: #food
 
-## 7.1 `plc ledger doctor`
+## 7.1 `plc doctor`
 
 `doctor` compares `.plc/config` against the names actually used in your ledgers
 and reports what's off, with a repair command for each finding:
 
-    $ plc ledger doctor
+    $ plc doctor
       ! 1 categories used but not declared:
           #transport  (plc ledger declare transport --ephemeral)
       ! 1 categories declared but never used (typo/stale?):
@@ -443,7 +443,7 @@ and reports what's off, with a repair command for each finding:
       ! no default currency in .plc/config — ledgers use EUR
       · accounts: guard off (12 used, none declared) — `plc ledger declare --import --physical`
 
-It also flags a legacy `.last-do` left at the vault root. `plc ledger doctor --fix`
+It also flags a legacy `.last-do` left at the vault root. `plc doctor --fix`
 applies the safe repairs — importing undeclared names into an already-active
 guard and migrating the pointer into `.plc/` — while leaving judgement calls
 (an unused declaration might be a typo *or* a real bucket you've yet to use) for
@@ -518,9 +518,10 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
       --ephemeral                 operate on categories (#)
       -r, --rm                    remove the named entries
           --import                seed from names already used in ledgers
-    plc ledger doctor  [--fix]       check config vs ledgers; propose/apply repairs
     plc ledger last  [-n N]          the most recent transactions
     plc ledger undo                  remove the last added transaction
+
+    plc doctor        [--fix]        vault health check (top-level; §7.1)
 
 ## Storage
 
