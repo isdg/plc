@@ -66,6 +66,13 @@ impl Decl {
             Decl::Category => '#',
         }
     }
+    /// The subcommand name that manages this kind (`plc fin <cmd>`).
+    fn command(self) -> &'static str {
+        match self {
+            Decl::Account => "acct",
+            Decl::Category => "cat",
+        }
+    }
 }
 
 /// Heatmap-glyph meanings for the money scale (fixed buckets, currency units).
@@ -707,7 +714,7 @@ fn manage(palace: &Palace, args: ManageArgs, kind: Decl) -> Result<String, Strin
     // Bare: list.
     let list = pick(&mut settings, kind);
     if list.is_empty() {
-        return Ok(format!("(no {label}s declared — add with `plc fin {label} -a NAME`)"));
+        return Ok(format!("(none declared — add with `plc fin {} -a NAME`)", kind.command()));
     }
     Ok(list.iter().map(|n| format!("{sigil}{n}")).collect::<Vec<_>>().join("\n"))
 }
