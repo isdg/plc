@@ -50,4 +50,11 @@ impl Palace {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// The per-vault state/settings directory (`<root>/.plc`) — home to the
+    /// `plc fin` config, pointer files, and logs. A pure path: callers
+    /// `create_dir_all` before writing into it.
+    pub fn state_dir(&self) -> PathBuf {
+        self.root.join(".plc")
+    }
 }

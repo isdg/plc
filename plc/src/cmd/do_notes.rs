@@ -1,8 +1,9 @@
 //! `plc do` — manage week-based do-notes with a "last" pointer.
 //!
 //! Ports `dn()` (palace.zsh). Do-notes live in `notes/management/do/` named
-//! `do-<%G-W%V>.md`. A pointer file at `<PALACE_DIR>/.last-do` records the
-//! basename of the most recently used note.
+//! `do-<%G-W%V>.md`. A pointer file at `<PALACE_DIR>/.plc/last-do` records the
+//! basename of the most recently used note (older vaults kept it at the vault
+//! root as `.last-do`, which is still read as a fallback).
 //!
 //!   `plc do -n`          create this ISO week's note, mark it last → prints path
 //!   `plc do -l FILE`     re-point "last" at FILE (basename)     → prints confirmation
@@ -23,7 +24,10 @@ use crate::config::Palace;
 use crate::note;
 
 const SUBDIR: &str = "notes/management/do";
-const POINTER: &str = ".last-do";
+/// Pointer basename inside the `.plc` state dir.
+const POINTER: &str = "last-do";
+/// Pre-`.plc` pointer location, relative to the vault root — read as a fallback.
+const LEGACY_POINTER: &str = ".last-do";
 
 #[derive(Args)]
 pub struct DoArgs {
@@ -41,7 +45,8 @@ pub struct DoArgs {
 pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
     let root = palace.root();
     let note_dir = root.join(SUBDIR);
-    let pointer = root.join(POINTER);
+    let pointer = palace.state_dir().join(POINTER);
+    let legacy = root.join(LEGACY_POINTER);
     fs::create_dir_all(&note_dir).map_err(|e| format!("do: {e}"))?;
 
     if args.new {
@@ -49,9 +54,9 @@ pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
     } else if let Some(file) = args.last {
         mark_last(&note_dir, &pointer, &file)
     } else if args.list {
-        list_notes(&note_dir, &pointer)
+        list_notes(&note_dir, &pointer, &legacy)
     } else {
-        open_last(&note_dir, &pointer)
+        open_last(&note_dir, &pointer, &legacy)
     }
 }
 
@@ -75,8 +80,8 @@ fn mark_last(note_dir: &Path, pointer: &Path, file: &str) -> Result<String, Stri
 }
 
 /// `-L`: list `*.md` notes (byte-sorted), marking the "last" one with `*`.
-fn list_notes(note_dir: &Path, pointer: &Path) -> Result<String, String> {
-    let last = read_pointer(pointer);
+fn list_notes(note_dir: &Path, pointer: &Path, legacy: &Path) -> Result<String, String> {
+    let last = resolve_last(pointer, legacy);
     let mut names: Vec<String> = fs::read_dir(note_dir)
         .map_err(|e| format!("do: {e}"))?
         .flatten()
@@ -89,8 +94,8 @@ fn list_notes(note_dir: &Path, pointer: &Path) -> Result<String, String> {
 }
 
 /// no-arg: resolve the "last" note's path, erroring if unset or stale.
-fn open_last(note_dir: &Path, pointer: &Path) -> Result<String, String> {
-    let last = read_pointer(pointer)
+fn open_last(note_dir: &Path, pointer: &Path, legacy: &Path) -> Result<String, String> {
+    let last = resolve_last(pointer, legacy)
         .ok_or_else(|| "do: no last note recorded. Run 'plc do -n' first.".to_string())?;
     let target = note_dir.join(&last);
     if !target.is_file() {
@@ -114,6 +119,12 @@ fn format_list(names: &[String], last: Option<&str>) -> String {
         .join("\n")
 }
 
+/// The recorded "last" note: the `.plc/last-do` pointer, falling back to the
+/// legacy `<root>/.last-do` for vaults written before the move.
+fn resolve_last(pointer: &Path, legacy: &Path) -> Option<String> {
+    read_pointer(pointer).or_else(|| read_pointer(legacy))
+}
+
 /// Read the pointer's basename, trimming the trailing newline; `None` if the
 /// file is absent or blank.
 fn read_pointer(pointer: &Path) -> Option<String> {
@@ -122,7 +133,11 @@ fn read_pointer(pointer: &Path) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
+/// Write the pointer, creating its parent (`.plc`) if needed.
 fn write_pointer(pointer: &Path, name: &str) -> Result<(), String> {
+    if let Some(parent) = pointer.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("do: {e}"))?;
+    }
     fs::write(pointer, format!("{name}\n")).map_err(|e| format!("do: {e}"))
 }
 
@@ -160,6 +175,29 @@ mod tests {
 
         fs::write(&p, "   \n").unwrap();
         assert_eq!(read_pointer(&p), None); // blank → None
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_creates_plc_dir_and_legacy_is_read_as_fallback() {
+        let dir = std::env::temp_dir().join(format!("plc-dostate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let pointer = dir.join(".plc").join("last-do"); // parent does not exist yet
+        let legacy = dir.join(".last-do");
+
+        // No pointer, no legacy → nothing recorded.
+        assert_eq!(resolve_last(&pointer, &legacy), None);
+
+        // A legacy pointer (old vault) is still resolved.
+        fs::write(&legacy, "do-2026-W20.md\n").unwrap();
+        assert_eq!(resolve_last(&pointer, &legacy), Some("do-2026-W20.md".to_string()));
+
+        // Writing creates `.plc/` and the new pointer wins over the legacy one.
+        write_pointer(&pointer, "do-2026-W25.md").unwrap();
+        assert!(pointer.exists(), "write should create .plc/last-do");
+        assert_eq!(resolve_last(&pointer, &legacy), Some("do-2026-W25.md".to_string()));
 
         fs::remove_dir_all(&dir).ok();
     }
