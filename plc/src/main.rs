@@ -49,8 +49,9 @@ enum Cmd {
     Top,
     /// Manage do-notes (week-based) with a "last" pointer.
     Do(cmd::do_notes::DoArgs),
-    /// Track finances: append transactions to today's `+ledger` note.
-    Fin(cmd::fin::FinArgs),
+    /// Plain-text double-entry ledger: append transactions to `+ledger` notes.
+    #[command(visible_alias = "lr")]
+    Ledger(cmd::ledger::LedgerArgs),
     /// Render daily-note activity as a calendar heatmap + stats.
     Stat(cmd::stat::StatArgs),
     /// Manage free-form murmur notes.
@@ -91,7 +92,7 @@ fn main() -> ExitCode {
         Cmd::Shot(args) => cmd::shot::run(args),
         Cmd::Top => with_palace(cmd::top::run),
         Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
-        Cmd::Fin(args) => with_palace(|p| cmd::fin::run(p, args)),
+        Cmd::Ledger(args) => with_palace(|p| cmd::ledger::run(p, args)),
         Cmd::Stat(args) => with_palace(|p| cmd::stat::run(p, args)),
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
         Cmd::Isg(args) => with_palace(|p| cmd::isg::run(p, args)),

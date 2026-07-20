@@ -4,7 +4,7 @@
 pub mod calview;
 pub mod daily;
 pub mod do_notes;
-pub mod fin;
+pub mod ledger;
 pub mod init;
 pub mod isg;
 pub mod murmur;

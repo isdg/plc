@@ -15,13 +15,13 @@
 //!     revolut
 //!     cash
 //!
-//! Names are normalized with [`plc_core::finance::normalize_name`], the same
+//! Names are normalized with [`plc_core::ledger::normalize_name`], the same
 //! rule the ledger uses, so declared names match how transactions store them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use plc_core::finance::normalize_name;
+use plc_core::ledger::normalize_name;
 
 /// The parsed `.plc/config`. A missing file loads as [`Settings::default`].
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -90,7 +90,7 @@ impl Settings {
     pub fn save(&self, root: &Path) -> Result<(), String> {
         let dir = root.join(".plc");
         fs::create_dir_all(&dir).map_err(|e| format!("settings: {e}"))?;
-        let mut out = String::from("# plc settings — managed by `plc fin` (safe to hand-edit)\n");
+        let mut out = String::from("# plc settings — managed by `plc ledger` (safe to hand-edit)\n");
         if let Some(c) = &self.currency {
             out.push_str(&format!("currency = {c}\n"));
         }

@@ -9,7 +9,7 @@ scriptable: the file/path side is `plc`'s job, the editor side is the shell's.
 
 Notes are `.md` files under one vault (`$PALACE_DIR`), each seeded with a
 stamped header and linked with `[[wikilinks]]`. One clock and one link graph are
-shared across every note type — including finances.
+shared across every note type — including ledgers.
 
     plc init       scaffold the vault directory tree
     plc daily      today's (or a given date's) daily note
@@ -21,7 +21,7 @@ shared across every note type — including finances.
     plc isg        enumerated writing notes (isg0, isg1, …)
     plc orphans    list notes with no links in or out
     plc stat       calendar heatmap + stats of daily-note activity
-    plc fin        plain-text double-entry finances
+    plc ledger     plain-text double-entry ledger (alias: plc lr)
 
 ---
 
@@ -41,7 +41,7 @@ pointed error at whichever stage fails.
 ### Environment
 
     PALACE_DIR    the vault root (required by all commands except `init` with an explicit DIR)
-    PLC_CURRENCY  default currency for `plc fin` when a line omits one (default: EUR)
+    PLC_CURRENCY  default currency for `plc ledger` when a line omits one (default: EUR)
 
 ### Global options
 
@@ -65,7 +65,7 @@ alone):
       notes/
         archive/
         management/
-          daily/YYYY/MM/…             # plc daily, plc shot, plc fin
+          daily/YYYY/MM/…             # plc daily, plc shot, plc ledger
           do/                         # plc do
           weekly/                     # plc weekly
         me/writing/isg/               # plc isg
@@ -166,7 +166,7 @@ Enumerated writing notes under `notes/me/writing/isg`.
 ### plc orphans `[-r DIR] [-v]`
 
 List orphan notes — those with no outbound *and* no inbound `[[wikilinks]]`.
-Accounts, categories, and tags used by `plc fin` are links too, so they take
+Accounts, categories, and tags used by `plc ledger` are links too, so they take
 part in this graph.
 
     -r, --root DIR   search root (default: `<PALACE_DIR>/notes`)
@@ -183,25 +183,25 @@ stats block. A whole month or year is shown, so a positional day is discarded.
     --layout git|tab      year layout: GitHub-style grid or a month table
     -p, --plot            replace the heatmap with an ASCII line chart
 
-### plc fin
+### plc ledger
 
-Plain-text, double-entry finances kept in the same vault — one `+ledger.md`
+Plain-text, double-entry ledgers kept in the same vault — one `+ledger.md`
 file per day. Quick tour:
 
-    $ plc fin add 4.50 Blue Bottle -a cash -c coffee     # an expense
-    $ plc fin add 2400 pay -a bnp -c salary --income      # income
-    $ plc fin add 200 ATM -a bnp --to cash                # a transfer
-    $ plc fin report                                      # net, by account/category
-    $ plc fin bal                                         # net-worth snapshot
-    $ plc fin reg coffee                                  # register, filtered
+    $ plc ledger add 4.50 Blue Bottle -a cash -c coffee     # an expense
+    $ plc ledger add 2400 pay -a bnp -c salary --income      # income
+    $ plc ledger add 200 ATM -a bnp --to cash                # a transfer
+    $ plc ledger report                                      # net, by account/category
+    $ plc ledger bal                                         # net-worth snapshot
+    $ plc ledger reg coffee                                  # register, filtered
 
 `fin` has its own subcommands (`add`, `report`, `reg`, `balance`/`bal`, `check`,
 `fmt`, `stat`, `declare`, `doctor`, `last`, `undo`) and a full grammar for dates,
 transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
 the amount. You can declare a vocabulary of accounts (`--physical`) and
-categories (`--ephemeral`) with `plc fin declare` that `add` validates against,
-and reverse a mistake with `plc fin undo`. Settings live in `.plc/config`.
-**See [docs/fin.md](docs/fin.md) for the complete finance manual.**
+categories (`--ephemeral`) with `plc ledger declare` that `add` validates against,
+and reverse a mistake with `plc ledger undo`. Settings live in `.plc/config`.
+**See [docs/ledger.md](docs/ledger.md) for the complete ledger manual.**
 
 ---
 

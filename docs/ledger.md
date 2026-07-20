@@ -1,6 +1,6 @@
-# plc fin — plain-text finance
+# plc ledger — plain-text ledger
 
-`plc fin` is a plain-text finance tracker built on the same store as your notes
+`plc ledger` is a plain-text ledger tracker built on the same store as your notes
 — think of it as the _Debit & Credit_ app's simplicity with
 [Ledger](https://ledger-cli.org/)'s plain-text discipline, sharing one clock and
 one link graph with your prose. For the rest of `plc`'s commands, see the
@@ -8,9 +8,9 @@ one link graph with your prose. For the rest of `plc`'s commands, see the
 
 ---
 
-# 1 Fat-free finance
+# 1 Fat-free ledger
 
-`plc fin` keeps your money in the same place as your prose: one small `.md`
+`plc ledger` keeps your money in the same place as your prose: one small `.md`
 file per day, under the daily tree, marked by a `+ledger` filename postfix and
 tagged `[[ledger]]`. A _transaction_ is a single line beginning with `$`. There
 are no databases, no sync, no lock files — just text you can read, grep, and
@@ -44,16 +44,16 @@ Point `plc` at a vault and scaffold it (skip if you already have one):
     $ plc init
     init: ~/vault — 9 created, 0 already present (9 dirs)
 
-Record a few transactions. `plc fin add` formats the line, writes it into
+Record a few transactions. `plc ledger add` formats the line, writes it into
 today's ledger, and prints the file's path:
 
-    $ plc fin add 3000 opening balance -a bnp -c opening --income
+    $ plc ledger add 3000 opening balance -a bnp -c opening --income
     ~/vault/notes/management/daily/2026/07/2026-07-19+ledger.md
-    $ plc fin add 2400 July pay -a bnp -c salary --income
+    $ plc ledger add 2400 July pay -a bnp -c salary --income
     ~/vault/notes/management/daily/2026/07/2026-07-19+ledger.md
-    $ plc fin add 200 ATM -a bnp --to cash
+    $ plc ledger add 200 ATM -a bnp --to cash
     ~/vault/notes/management/daily/2026/07/2026-07-19+ledger.md
-    $ plc fin add 4.50 Blue Bottle -a cash -c coffee
+    $ plc ledger add 4.50 Blue Bottle -a cash -c coffee
     ~/vault/notes/management/daily/2026/07/2026-07-19+ledger.md
 
 That leaves one file on disk, seeded with a note header and holding four
@@ -74,9 +74,9 @@ transactions (the accounting on the head line, the memo indented below):
 
 ## 2.1 The balance / summary report
 
-    $ plc fin report
+    $ plc ledger report
 
-      Finance — 4 transaction(s) across 1 ledger file(s)
+      Ledger — 4 transaction(s) across 1 ledger file(s)
 
       EUR
         income   : 5400.00
@@ -101,10 +101,10 @@ account) are hidden from `by account`; categories always list in full.
 
 ## 2.2 The register report
 
-`plc fin reg` lists transactions in date order with a running net-worth total
+`plc ledger reg` lists transactions in date order with a running net-worth total
 (income `+`, expense `-`, transfers net to zero):
 
-    $ plc fin reg
+    $ plc ledger reg
 
       Register — 4 transaction(s)
 
@@ -113,16 +113,16 @@ account) are hidden from `by account`; categories always list in full.
       2026-07-19       200.00 EUR     +5400.00  @bnp > @cash  ATM
       2026-07-19        -4.50 EUR     +5395.50  @cash #coffee  Blue Bottle
 
-Add a search term to narrow it — `plc fin reg coffee` shows only transactions
+Add a search term to narrow it — `plc ledger reg coffee` shows only transactions
 touching `coffee`, with a running total of just those.
 
 ## 2.3 The balance snapshot
 
-`plc fin balance` (alias `bal`) is a compact "where do I stand" view — net
+`plc ledger balance` (alias `bal`) is a compact "where do I stand" view — net
 worth, income/expense/net, non-zero account balances, and the most recent
 transactions:
 
-    $ plc fin bal
+    $ plc ledger bal
 
       Balance — 4 transaction(s)
 
@@ -142,7 +142,7 @@ transactions:
 
 `-n N` sets how many recent transactions to show (default 5); it takes the same
 `PATTERN` / `--cleared` / date filters as `report` and `reg`, so
-`plc fin bal rent -n 3` shows your rent standing plus the last three rent moves.
+`plc ledger bal rent -n 3` shows your rent standing plus the last three rent moves.
 
 ---
 
@@ -160,12 +160,12 @@ Every field except the amount and one account is optional. In order:
 - **`$`** — a leading `$` (then a space) marks the line as a transaction; any
   other line is prose and is ignored.
 - **timestamp** — `YYYY-MM-DD HH:MM:SS ±ZZZZ`, the same format as the note
-  stamp line. `plc fin add` stamps _now_ by default; omit it and the
+  stamp line. `plc ledger add` stamps _now_ by default; omit it and the
   transaction inherits the ledger file's day.
 - **state** — `*` cleared or `!` pending (reconciliation); omitted = uncleared.
 - **amount** — a decimal. `-` is an outflow (expense), `+` an inflow (income);
   a transfer uses a bare magnitude. On the `add` command line the amount may be
-  an arithmetic expression — `plc fin add '3*4.50+1'` books 14.50 (§5.4).
+  an arithmetic expression — `plc ledger add '3*4.50+1'` books 14.50 (§5.4).
 - **currency** — an optional ISO code; defaults to `$PLC_CURRENCY`, else `EUR`.
   Reports subtotal per currency (there is no FX conversion).
 - **`@[[account]]`** — the account (required).
@@ -186,34 +186,34 @@ one side; `plc` supplies the other.
 
 An **expense** — money leaves an account, lands in a category:
 
-    $ plc fin add 4.50 Blue Bottle -a cash -c coffee
+    $ plc ledger add 4.50 Blue Bottle -a cash -c coffee
     #  → -4.50 EUR  @[[cash]] #[[coffee]]     (cash -4.50, coffee +4.50)
 
 **Income** — money comes from a source category into an account:
 
-    $ plc fin add 2400 July pay -a bnp -c salary --income
+    $ plc ledger add 2400 July pay -a bnp -c salary --income
     #  → +2400.00 EUR  @[[bnp]] #[[salary]]   (salary -2400 from outside, bnp +2400)
 
 A **transfer** — money moves between two of your own accounts (net worth
 unchanged):
 
-    $ plc fin add 200 ATM -a bnp --to cash
+    $ plc ledger add 200 ATM -a bnp --to cash
     #  → 200.00 EUR  @[[bnp]] > @[[cash]]     (bnp -200, cash +200)
 
 When you first start, seed each account's balance with an opening-balance
 income from an `opening` (equity) category — that is where your existing money
 "comes from":
 
-    $ plc fin add 3000 opening -a bnp -c opening --income
+    $ plc ledger add 3000 opening -a bnp -c opening --income
 
 ## 3.3 Back-dating and reconciliation
 
-`plc fin add` writes into the ledger for the transaction's own day (from
+`plc ledger add` writes into the ledger for the transaction's own day (from
 `--date`, else today) and stamps _now_ unless told otherwise. Override the
 instant with `--date` (a full timestamp, or a bare `YYYY-MM-DD` = local
 midnight), and mark reconciliation state with `--cleared` / `--pending`:
 
-    $ plc fin add 900 rent -a bnp -c rent --date 2026-07-01 --cleared
+    $ plc ledger add 900 rent -a bnp -c rent --date 2026-07-01 --cleared
     #  → $ 2026-07-01 00:00:00 +0200 * -900.00 EUR  @[[bnp]] #[[rent]]
 
 A back-dated entry lands in _its own_ day's file
@@ -222,7 +222,7 @@ file each transaction where it belongs.
 
 ---
 
-# 4 Structuring your finances
+# 4 Structuring your ledgers
 
 ## 4.1 Accounts vs. categories
 
@@ -236,16 +236,16 @@ flow. A debt you owe is just an `@` account with a negative balance.
 Accounts, categories, and tags nest with `/`, and reports roll children up into
 their parent:
 
-    $ plc fin add 60 -a bank/checking -c food/groceries
-    $ plc fin add 25 -a bank/checking -c food/dining
-    $ plc fin report
+    $ plc ledger add 60 -a bank/checking -c food/groceries
+    $ plc ledger add 25 -a bank/checking -c food/dining
+    $ plc ledger report
 
         by category
           food              +85.00
             dining          +25.00
             groceries       +60.00
 
-`--depth N` caps the tree; `plc fin report --depth 1` folds the children back
+`--depth N` caps the tree; `plc ledger report --depth 1` folds the children back
 into `food +85.00`.
 
 ## 4.3 Projects and events (`~`)
@@ -254,9 +254,9 @@ A `~` tag groups spending that cuts across accounts and categories — a trip, a
 renovation, a client. It is an attribute, not a money leg, so it never affects
 the balance. Add one or more with `-p` (repeatable):
 
-    $ plc fin add 80 ramen -a card -c food -p japan-trip/food
-    $ plc fin add 300 hotel -a card -c lodging -p japan-trip/lodging
-    $ plc fin report
+    $ plc ledger add 80 ramen -a card -c food -p japan-trip/food
+    $ plc ledger add 300 hotel -a card -c lodging -p japan-trip/lodging
+    $ plc ledger report
 
         by project
           japan-trip        +380.00
@@ -276,7 +276,7 @@ always drops to its own indented line below; a long memo wraps at 79 columns.
 The vault is reflowed to 79 columns, but `+ledger` files are excluded from
 reflow, so the accounting head can run long when it has to.
 
-    $ plc fin add 11 takos -a revolut -c food/out
+    $ plc ledger add 11 takos -a revolut -c food/out
 
     $ 2026-07-19 16:39:34 +0200 -11.00 EUR  @[[revolut]] #[[food/out]]
         takos
@@ -286,7 +286,7 @@ Tags stay up on the head with the rest of the accounting:
     $ 2026-07-19 18:20:00 +0200 -4.50 EUR  @[[cash]] #[[coffee]] ~[[japan-trip]]
         airport latte before the long flight home
 
-`plc fin fmt` re-renders every ledger file into this canonical layout — handy
+`plc ledger fmt` re-renders every ledger file into this canonical layout — handy
 after bulk edits or an import. It rewrites only files that change; `--check`
 reports what would change without touching anything.
 
@@ -295,7 +295,7 @@ reports what would change without touching anything.
 Split a single payment with `--split CAT=AMOUNT` (repeatable); the legs must
 sum to the total:
 
-    $ plc fin add 90 Costco -a card --split food=60 --split household=25 --split tax=5
+    $ plc ledger add 90 Costco -a card --split food=60 --split household=25 --split tax=5
 
     $ 2026-07-19 12:09:45 +0200 -90.00 EUR  @[[card]]
         #[[food]]  -60.00 EUR
@@ -311,22 +311,22 @@ still balances.
 Assert an account's balance right after a transaction to catch drift, with
 `--assert` (or a `= <balance>` on the line):
 
-    $ plc fin add 4.50 coffee -a cash -c coffee --assert 195.50
+    $ plc ledger add 4.50 coffee -a cash -c coffee --assert 195.50
     #  → $ … -4.50 EUR  @[[cash]] #[[coffee]] = 195.50 EUR
     #        coffee
 
 For a pure checkpoint that moves no money, add a zero-amount transaction — it
 contributes nothing to any balance but is still verified:
 
-    $ plc fin add 0 balance check -a cash --assert 195.50
+    $ plc ledger add 0 balance check -a cash --assert 195.50
 
-`plc fin check` replays every transaction in date order and verifies each
+`plc ledger check` replays every transaction in date order and verifies each
 assertion:
 
-    $ plc fin check
+    $ plc ledger check
       1 balance assertion(s) OK
 
-    $ plc fin check        # if the books have drifted
+    $ plc ledger check        # if the books have drifted
     fin: 1 check(s) failed:
       2026-07-19  @cash: expected +999.00 EUR, got +185.50
 
@@ -336,18 +336,18 @@ The `AMOUNT` argument (and each `--split` leg) may be an arithmetic expression
 — `+ - * / ( )` over decimals, rounded to the nearest cent — so you can total a
 receipt or split a bill inline:
 
-    $ plc fin add '3*4.50+1' lunch -a cash -c food       # → 14.50
-    $ plc fin add 90 shop -a card --split food=60 --split 'house=90-60'
+    $ plc ledger add '3*4.50+1' lunch -a cash -c food       # → 14.50
+    $ plc ledger add 90 shop -a card --split food=60 --split 'house=90-60'
 
 ---
 
 # 6 Reports
 
-    plc fin report  [PATTERN…]    summary: net, by account / category / project
-    plc fin reg     [PATTERN…]    chronological register + running total
-    plc fin balance [PATTERN…]    net worth, account balances, recent (alias bal)
-    plc fin check   [--strict]    verify balance assertions (and declarations)
-    plc fin fmt     [--check]     reformat every ledger file in place
+    plc ledger report  [PATTERN…]    summary: net, by account / category / project
+    plc ledger reg     [PATTERN…]    chronological register + running total
+    plc ledger balance [PATTERN…]    net worth, account balances, recent (alias bal)
+    plc ledger check   [--strict]    verify balance assertions (and declarations)
+    plc ledger fmt     [--check]     reformat every ledger file in place
 
 `PATTERN` keeps transactions whose account, category, tag, or memo contains it
 (case-insensitive; multiple patterns match if any does). `report`, `reg`, and
@@ -359,9 +359,9 @@ receipt or split a bill inline:
 
 For example, July's dining, cleared only:
 
-    $ plc fin report food/dining --month 2026-07 --cleared
+    $ plc ledger report food/dining --month 2026-07 --cleared
 
-`plc fin stat` brings the `plc stat` calendar heatmap / line-plot to daily
+`plc ledger stat` brings the `plc stat` calendar heatmap / line-plot to daily
 **spend** (see the README's `stat` section; `--of income|net` switches what it
 measures).
 
@@ -369,52 +369,52 @@ measures).
 
 # 7 A declared vocabulary (typo guard)
 
-Declare the accounts and categories you actually use, and `plc fin add` will
+Declare the accounts and categories you actually use, and `plc ledger add` will
 refuse an undeclared one — so `-c cofee` is caught instead of silently creating
 a bogus category. Accounts and categories are the same essence (named ledger
 buckets), so one command manages both — `--physical` for accounts (`@`),
 `--ephemeral` for categories (`#`). Declarations live in `.plc/config` (see §9):
 
-    plc fin declare                        list every declared account + category
-    plc fin declare cash bnp --physical    declare account(s)
-    plc fin declare coffee   --ephemeral   declare category(ies)
-    plc fin declare bnp --physical -r      remove
-    plc fin declare --import               seed from every name used in ledgers
+    plc ledger declare                        list every declared account + category
+    plc ledger declare cash bnp --physical    declare account(s)
+    plc ledger declare coffee   --ephemeral   declare category(ies)
+    plc ledger declare bnp --physical -r      remove
+    plc ledger declare --import               seed from every name used in ledgers
                                            (add --physical/--ephemeral for one kind)
 
 Once a set is non-empty it is enforced; an unknown name is rejected:
 
-    $ plc fin add 4.50 latte -a cash -c cofee
+    $ plc ledger add 4.50 latte -a cash -c cofee
     fin: undeclared name(s) — declare them or pass -n to add now:
-      #cofee  (plc fin declare cofee --ephemeral)
+      #cofee  (plc ledger declare cofee --ephemeral)
 
 Pass `-n/--new` to declare the name on the fly and add in one go. An empty set
 means "not enforced yet", so fresh vaults and bulk imports keep working; run
 `--import` once to adopt everything you already use.
 
-`plc fin check --strict` reports the same undeclared names across the whole
+`plc ledger check --strict` reports the same undeclared names across the whole
 journal at once (reading `.plc/config` plus any in-file `account NAME` /
 `category NAME` / `commodity CODE` directive lines):
 
-    $ plc fin check --strict
+    $ plc ledger check --strict
     fin: 2 check(s) failed:
       undeclared account: @card
       undeclared category: #food
 
-## 7.1 `plc fin doctor`
+## 7.1 `plc ledger doctor`
 
 `doctor` compares `.plc/config` against the names actually used in your ledgers
 and reports what's off, with a repair command for each finding:
 
-    $ plc fin doctor
+    $ plc ledger doctor
       ! 1 categories used but not declared:
-          #transport  (plc fin declare transport --ephemeral)
+          #transport  (plc ledger declare transport --ephemeral)
       ! 1 categories declared but never used (typo/stale?):
-          #rent  (plc fin declare rent --ephemeral -r)
+          #rent  (plc ledger declare rent --ephemeral -r)
       ! no default currency in .plc/config — ledgers use EUR
-      · accounts: guard off (12 used, none declared) — `plc fin declare --import --physical`
+      · accounts: guard off (12 used, none declared) — `plc ledger declare --import --physical`
 
-It also flags a legacy `.last-do` left at the vault root. `plc fin doctor --fix`
+It also flags a legacy `.last-do` left at the vault root. `plc ledger doctor --fix`
 applies the safe repairs — importing undeclared names into an already-active
 guard and migrating the pointer into `.plc/` — while leaving judgement calls
 (an unused declaration might be a typo *or* a real bucket you've yet to use) for
@@ -428,11 +428,11 @@ you to resolve with the printed command.
 rebuilt from the ledgers on every `add` / `last` / `undo` (self-creating, so it
 covers all history — imports and hand-edits included — and never goes stale).
 
-`plc fin last` shows the most recent transactions, newest first:
+`plc ledger last` shows the most recent transactions, newest first:
 
-    $ plc fin last -n 3         # the 3 most recent
+    $ plc ledger last -n 3         # the 3 most recent
 
-`plc fin undo` removes the most recent transaction from its ledger and refreshes
+`plc ledger undo` removes the most recent transaction from its ledger and refreshes
 the cache — it finds the exact recorded block in the file, and refuses if you
 have since edited it away rather than guess.
 
@@ -462,8 +462,8 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
 
 # 10 Command reference
 
-    plc fin                       seed/print today's ledger path (open it yourself)
-    plc fin add AMOUNT [MEMO…]    append a transaction (files it in its day)
+    plc ledger                       seed/print today's ledger path (open it yourself)
+    plc ledger add AMOUNT [MEMO…]    append a transaction (files it in its day)
       -a, --account ACCOUNT       the account (required)
       -c, --category CATEGORY     expense/income category
           --to ACCOUNT            transfer destination (instead of a category)
@@ -476,20 +476,20 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
           --cleared / --pending   reconciliation state
           --assert BALANCE        assert the account balance afterwards
       (AMOUNT may be an arithmetic expression — §5.4)
-    plc fin report  [PATTERN…]    summary report         (+ filters, --depth)
-    plc fin reg     [PATTERN…]    chronological register (+ filters)
-    plc fin balance [PATTERN…]    net-worth snapshot      (+ filters, -n N)
-    plc fin check   [--strict]    verify assertions (+ undeclared names)
-    plc fin fmt     [--check]     reformat every ledger file in place
-    plc fin stat    [PATTERN…]    spend calendar/plot/stats (see README)
-    plc fin declare [NAME…]       list/declare the vocabulary
+    plc ledger report  [PATTERN…]    summary report         (+ filters, --depth)
+    plc ledger reg     [PATTERN…]    chronological register (+ filters)
+    plc ledger balance [PATTERN…]    net-worth snapshot      (+ filters, -n N)
+    plc ledger check   [--strict]    verify assertions (+ undeclared names)
+    plc ledger fmt     [--check]     reformat every ledger file in place
+    plc ledger stat    [PATTERN…]    spend calendar/plot/stats (see README)
+    plc ledger declare [NAME…]       list/declare the vocabulary
       --physical                  operate on accounts (@)
       --ephemeral                 operate on categories (#)
       -r, --rm                    remove the named entries
           --import                seed from names already used in ledgers
-    plc fin doctor  [--fix]       check config vs ledgers; propose/apply repairs
-    plc fin last  [-n N]          the most recent transactions
-    plc fin undo                  remove the last added transaction
+    plc ledger doctor  [--fix]       check config vs ledgers; propose/apply repairs
+    plc ledger last  [-n N]          the most recent transactions
+    plc ledger undo                  remove the last added transaction
 
 ## Storage
 

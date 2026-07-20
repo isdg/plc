@@ -1,4 +1,4 @@
-//! Plain-text transaction parsing and formatting — the finance data contract.
+//! Plain-text transaction parsing and formatting — the ledger data contract.
 //!
 //! A ledger is an ordinary palace note (header + `[[ledger]]` tag) whose body
 //! carries transaction lines. A transaction line has the shape:
@@ -47,7 +47,7 @@ use crate::ascii_lower;
 /// [`format_entry`].
 const MAX_LINE: usize = 79;
 
-/// Normalize a finance name — an account (`@`), category (`#`), or tag (`~`):
+/// Normalize a ledger name — an account (`@`), category (`#`), or tag (`~`):
 /// drop any `|alias`/`#heading`/`^block` suffix, then ASCII-lowercase and trim,
 /// but **preserve `/`** so a nested name like `bank/checking` or
 /// `japan-trip/work` stays whole (for tree rollup). Differs from
@@ -71,14 +71,14 @@ pub fn default_currency() -> String {
 
 /// Parse a positive major-unit amount (e.g. `"4.50"`) into minor units (`450`).
 /// The magnitude only — direction is decided by the caller (expense/income/
-/// transfer). `None` if malformed. Used by `plc fin add` on its `AMOUNT` arg.
+/// transfer). `None` if malformed. Used by `plc ledger add` on its `AMOUNT` arg.
 pub fn amount_to_minor(s: &str) -> Option<i64> {
     parse_amount(s.trim()).map(|(_neg, minor)| minor)
 }
 
 /// Evaluate an amount *expression* — `+ - * / ( )` over decimal numbers — to
 /// minor units, rounded to the nearest cent (magnitude only, like
-/// [`amount_to_minor`], which it supersedes for `plc fin add`). So
+/// [`amount_to_minor`], which it supersedes for `plc ledger add`). So
 /// `"3*4.50+1"` → `1450`. `None` on malformed input or division by zero.
 pub fn eval_amount(s: &str) -> Option<i64> {
     let toks = tokenize(s)?;
@@ -253,7 +253,7 @@ pub struct Transaction {
     /// minor units, signed) immediately after this transaction; `None` if unasserted.
     pub assert: Option<i64>,
     /// The transaction's instant (`2026-07-19 11:28:22 +0200`); `None` means
-    /// "inherit the ledger file's day". `plc fin add` stamps this with now().
+    /// "inherit the ledger file's day". `plc ledger add` stamps this with now().
     pub date: Option<DateTime<FixedOffset>>,
     /// Reconciliation state (`*`/`!`/none).
     pub state: State,
@@ -816,10 +816,10 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
 /// `cap`. `path` is relative to `root`; `entry` is the canonical [`format_entry`]
 /// block as it appears in the file. Ordered by the transaction instant (bare-day
 /// entries first). Backs the always-current `.plc/last-transactions` cache and,
-/// through it, `plc fin last` and `undo`.
+/// through it, `plc ledger last` and `undo`.
 pub fn recent_entries(root: &Path, default_currency: &str, cap: usize) -> Result<Vec<(String, String)>, String> {
     if !root.is_dir() {
-        return Err(format!("fin: cannot read {}", root.display()));
+        return Err(format!("ledger: cannot read {}", root.display()));
     }
     let mut rows: Vec<(Option<DateTime<FixedOffset>>, String, String)> = Vec::new();
     for entry in WalkDir::new(root).into_iter().flatten() {
@@ -905,7 +905,7 @@ pub fn balance(
 /// `check`, report what *would* change without writing. Returns a summary.
 pub fn fmt(root: &Path, default_currency: &str, check: bool) -> Result<String, String> {
     if !root.is_dir() {
-        return Err(format!("fin: cannot read {}", root.display()));
+        return Err(format!("ledger: cannot read {}", root.display()));
     }
     let mut seen = 0usize;
     let mut changed: Vec<String> = Vec::new();
@@ -928,15 +928,15 @@ pub fn fmt(root: &Path, default_currency: &str, check: bool) -> Result<String, S
         if formatted != content {
             changed.push(path.display().to_string());
             if !check {
-                fs::write(path, &formatted).map_err(|e| format!("fin fmt: {}: {e}", path.display()))?;
+                fs::write(path, &formatted).map_err(|e| format!("ledger fmt: {}: {e}", path.display()))?;
             }
         }
     }
     if changed.is_empty() {
-        return Ok(format!("  fin fmt — {seen} ledger file(s) already formatted  OK"));
+        return Ok(format!("  ledger fmt — {seen} ledger file(s) already formatted  OK"));
     }
     let verb = if check { "would reformat" } else { "reformatted" };
-    let mut lines = vec![format!("  fin fmt — {verb} {}/{seen} ledger file(s)", changed.len())];
+    let mut lines = vec![format!("  ledger fmt — {verb} {}/{seen} ledger file(s)", changed.len())];
     lines.extend(changed.iter().take(20).map(|p| format!("    {p}")));
     if changed.len() > 20 {
         lines.push(format!("    … and {} more", changed.len() - 20));
@@ -1015,14 +1015,14 @@ pub fn check(
         }
     }
     if !fails.is_empty() {
-        let mut msg = vec![format!("fin: {} check(s) failed:", fails.len())];
+        let mut msg = vec![format!("ledger: {} check(s) failed:", fails.len())];
         msg.extend(fails);
         return Err(msg.join("\n"));
     }
     Ok(format!("  {checked} balance assertion(s) OK"))
 }
 
-/// Declared finance names, gathered from `account`/`category`/`commodity`
+/// Declared ledger names, gathered from `account`/`category`/`commodity`
 /// directive lines (column 0) in any ledger file.
 #[derive(Default)]
 struct Declarations {
@@ -1087,7 +1087,7 @@ fn undeclared(root: &Path, items: &[Dated], extra_accounts: &[String], extra_cat
 
 /// Every account and category name actually used across all ledgers, sorted and
 /// de-duplicated (accounts, categories). The `uncategorized` suspense bucket is
-/// excluded. Used by `plc fin acct/cat --import` to seed `.plc/config`.
+/// excluded. Used by `plc ledger acct/cat --import` to seed `.plc/config`.
 pub fn names(root: &Path, default_currency: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let (items, _) = collect(root, default_currency, &Filter::default())?;
     let txns: Vec<Transaction> = items.into_iter().map(|(_, t)| t).collect();
@@ -1100,7 +1100,7 @@ pub fn names(root: &Path, default_currency: &str) -> Result<(Vec<String>, Vec<St
 }
 
 /// Distinct currencies used across all ledgers, each with its transaction count,
-/// sorted by code. Lets `plc fin doctor` spot a missing / mismatched default.
+/// sorted by code. Lets `plc ledger doctor` spot a missing / mismatched default.
 pub fn currencies(root: &Path, default_currency: &str) -> Result<Vec<(String, usize)>, String> {
     let (items, _) = collect(root, default_currency, &Filter::default())?;
     let txns: Vec<Transaction> = items.into_iter().map(|(_, t)| t).collect();
@@ -1111,7 +1111,7 @@ pub fn currencies(root: &Path, default_currency: &str) -> Result<Vec<(String, us
 /// `filter`, paired with its effective date, plus the count of ledger files seen.
 fn collect(root: &Path, default_currency: &str, filter: &Filter) -> Result<(Vec<Dated>, usize), String> {
     if !root.is_dir() {
-        return Err(format!("fin: cannot read {}", root.display()));
+        return Err(format!("ledger: cannot read {}", root.display()));
     }
     let mut items: Vec<Dated> = Vec::new();
     let mut ledger_files = 0usize;
@@ -1207,7 +1207,7 @@ fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize, depth
     let mut lines: Vec<String> = Vec::new();
     lines.push(String::new());
     lines.push(format!(
-        "  Finance — {total} transaction(s) across {ledger_files} ledger file(s)"
+        "  Ledger — {total} transaction(s) across {ledger_files} ledger file(s)"
     ));
     if summary.is_empty() {
         lines.push(String::new());

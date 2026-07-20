@@ -154,7 +154,7 @@ fn body_with_tags(stamp: &str, tag: &str, extra: Option<&str>) -> String {
 /// The *first* entry is separated from the seeded header block by a blank line;
 /// every later entry follows consecutively (no blank between them), even after a
 /// multi-line block whose last line is an indented continuation. Unlike
-/// [`ensure_note`], this writes body *content* — used by `plc fin add` to record
+/// [`ensure_note`], this writes body *content* — used by `plc ledger add` to record
 /// a transaction in one shot rather than opening an editor.
 pub fn append_line(
     root: &Path,

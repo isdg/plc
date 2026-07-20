@@ -1,10 +1,10 @@
-//! Shared calendar-view renderers for `plc stat` and `plc fin stat`.
+//! Shared calendar-view renderers for `plc stat` and `plc ledger stat`.
 //!
 //! These lay out per-day values (`values[i]` = day `i + 1` for a month, or
 //! day-of-year for a year) as an ASCII heatmap or line chart. They are
 //! *value-agnostic*: the heatmap glyph comes from an injected `symbol` fn, the
 //! legend meanings from `legend`, and any numeric axis/summary label from a
-//! `fmt` closure — so `plc stat` passes byte formatters and `plc fin stat`
+//! `fmt` closure — so `plc stat` passes byte formatters and `plc ledger stat`
 //! passes money formatters, sharing one layout. Callers build the `values`
 //! (from file sizes, or from ledger spend) and append their own stats block.
 

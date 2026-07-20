@@ -1,4 +1,4 @@
-//! `plc fin` — plain-text finance tracking, kept beside your daily notes.
+//! `plc ledger` — plain-text ledger tracking, kept beside your daily notes.
 //!
 //! Transactions live in a per-day ledger file next to the daily note but marked
 //! by a `+ledger` filename postfix and tagged `[[ledger]]`:
@@ -7,7 +7,7 @@
 //! notes/management/daily/2026/07/2026-07-19+ledger.md
 //! ```
 //!
-//! `plc fin add` formats a transaction line and appends it to today's ledger in
+//! `plc ledger add` formats a transaction line and appends it to today's ledger in
 //! one shot (seeding the header first if the file is new). A transaction line is:
 //!
 //! ```text
@@ -16,7 +16,7 @@
 //!
 //! `-` is an expense (outflow), `+` income (inflow), and `> @[[dest]]` a transfer;
 //! accounts/categories stay `[[wikilinks]]` so the link/orphans engine still sees
-//! them. See `plc_core::finance` for the full grammar. Bare `plc fin` just seeds
+//! them. See `plc_core::ledger` for the full grammar. Bare `plc ledger` just seeds
 //! and prints today's ledger path so you can open it by hand.
 
 use std::fmt::Write as _;
@@ -24,7 +24,7 @@ use std::fmt::Write as _;
 use chrono::{DateTime, Datelike, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
 use clap::{Args, Subcommand};
 use plc_core::calendar::{self, MonthStats, YearStats};
-use plc_core::finance::{self, Filter, Kind, Measure, State, Transaction};
+use plc_core::ledger::{self, Filter, Kind, Measure, State, Transaction};
 
 use crate::cmd::calview;
 use crate::config::Palace;
@@ -73,7 +73,7 @@ impl Decl {
             Decl::Category => '#',
         }
     }
-    /// The `plc fin declare` flag that selects this kind.
+    /// The `plc ledger declare` flag that selects this kind.
     fn flag(self) -> &'static str {
         match self {
             Decl::Account => "--physical",
@@ -86,13 +86,13 @@ impl Decl {
 const MONEY_LEGEND: &str = "·  empty   ░ <5   ▒ <20   ▓ <50   █ ≥50";
 
 #[derive(Args)]
-pub struct FinArgs {
+pub struct LedgerArgs {
     #[command(subcommand)]
-    cmd: Option<FinCmd>,
+    cmd: Option<LedgerCmd>,
 }
 
 #[derive(Subcommand)]
-enum FinCmd {
+enum LedgerCmd {
     /// Append a transaction to today's ledger.
     Add(AddArgs),
     /// Summarize transactions across all ledgers (net, by category, by account).
@@ -105,7 +105,7 @@ enum FinCmd {
     /// Verify balance assertions (and, with --strict, undeclared names).
     Check(CheckArgs),
     /// Calendar heatmap / plot of daily spend, à la `plc stat`.
-    Stat(FinStatArgs),
+    Stat(LedgerStatArgs),
     /// Reformat every ledger file in place (canonical spacing / wrapping).
     Fmt(FmtArgs),
     /// Declare/list the known accounts (`--physical`) and categories
@@ -161,7 +161,7 @@ pub struct FmtArgs {
 }
 
 #[derive(Args)]
-pub struct FinStatArgs {
+pub struct LedgerStatArgs {
     /// Limit to transactions whose account/category/tag/memo contains a PATTERN.
     #[arg(value_name = "PATTERN")]
     patterns: Vec<String>,
@@ -284,41 +284,41 @@ pub struct AddArgs {
     assert: Option<String>,
 }
 
-pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
+pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
     match args.cmd {
         None => seed_today(palace),
-        Some(FinCmd::Add(add_args)) => add(palace, add_args),
-        Some(FinCmd::Report(report_args)) => report(palace, report_args),
-        Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
-        Some(FinCmd::Balance(balance_args)) => balance(palace, balance_args),
-        Some(FinCmd::Check(check_args)) => {
+        Some(LedgerCmd::Add(add_args)) => add(palace, add_args),
+        Some(LedgerCmd::Report(report_args)) => report(palace, report_args),
+        Some(LedgerCmd::Reg(report_args)) => reg(palace, report_args),
+        Some(LedgerCmd::Balance(balance_args)) => balance(palace, balance_args),
+        Some(LedgerCmd::Check(check_args)) => {
             let settings = Settings::load(palace.root());
             let cur = currency_from(&settings);
             let root = palace.root().join("notes/management/daily");
-            finance::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
+            ledger::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
         }
-        Some(FinCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
-        Some(FinCmd::Doctor(doctor_args)) => doctor(palace, doctor_args.fix),
-        Some(FinCmd::Last(last_args)) => last_log(palace, last_args),
-        Some(FinCmd::Undo) => undo(palace),
-        Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
-        Some(FinCmd::Fmt(fmt_args)) => {
+        Some(LedgerCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
+        Some(LedgerCmd::Doctor(doctor_args)) => doctor(palace, doctor_args.fix),
+        Some(LedgerCmd::Last(last_args)) => last_log(palace, last_args),
+        Some(LedgerCmd::Undo) => undo(palace),
+        Some(LedgerCmd::Stat(stat_args)) => stat(palace, stat_args),
+        Some(LedgerCmd::Fmt(fmt_args)) => {
             let cur = resolved_currency(palace);
             let root = palace.root().join("notes/management/daily");
-            finance::fmt(&root, &cur, fmt_args.check)
+            ledger::fmt(&root, &cur, fmt_args.check)
         }
     }
 }
 
-/// `plc fin stat`: `plc stat`'s calendar/plot/stats visuals over daily spend.
-fn stat(palace: &Palace, args: FinStatArgs) -> Result<String, String> {
+/// `plc ledger stat`: `plc stat`'s calendar/plot/stats visuals over daily spend.
+fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
     let today = Local::now().date_naive();
     let (y, m) = resolve_ym(&args, today)?;
     let measure = match args.of.as_str() {
         "expense" => Measure::Expense,
         "income" => Measure::Income,
         "net" => Measure::Net,
-        o => return Err(format!("fin stat: unknown --of: {o} (expected expense|income|net)")),
+        o => return Err(format!("ledger stat: unknown --of: {o} (expected expense|income|net)")),
     };
     let unit = match measure {
         Measure::Expense => "spend",
@@ -343,7 +343,7 @@ fn stat(palace: &Palace, args: FinStatArgs) -> Result<String, String> {
 
     match args.scope.as_str() {
         "month" => {
-            let vals = finance::daily_spend(&root, &cur, &filter, y, Some(m), measure)?;
+            let vals = ledger::daily_spend(&root, &cur, &filter, y, Some(m), measure)?;
             let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
             let st = calendar::month_stats(&vals, cutoff);
             let mut out = if args.plot {
@@ -355,7 +355,7 @@ fn stat(palace: &Palace, args: FinStatArgs) -> Result<String, String> {
             Ok(out)
         }
         "year" => {
-            let vals = finance::daily_spend(&root, &cur, &filter, y, None, measure)?;
+            let vals = ledger::daily_spend(&root, &cur, &filter, y, None, measure)?;
             let cutoff = (y == today.year()).then_some(today.ordinal());
             let st = calendar::year_stats(&vals, y, cutoff);
             let mut out = if args.plot {
@@ -364,33 +364,33 @@ fn stat(palace: &Palace, args: FinStatArgs) -> Result<String, String> {
                 match args.layout.as_str() {
                     "git" => calview::year_git(y, &vals, calendar::money_symbol, MONEY_LEGEND),
                     "tab" => calview::year_tab(y, &vals, today, calendar::money_symbol, MONEY_LEGEND, &money),
-                    o => return Err(format!("fin stat: unknown layout: {o} (expected git|tab)")),
+                    o => return Err(format!("ledger stat: unknown layout: {o} (expected git|tab)")),
                 }
             };
             push_year_spend(&mut out, &st, y, unit, &cur);
             Ok(out)
         }
-        o => Err(format!("fin stat: unknown type: {o} (expected month|year)")),
+        o => Err(format!("ledger stat: unknown type: {o} (expected month|year)")),
     }
 }
 
 /// Resolve `(year, month)` for `fin stat` from `-m/-y` (else today). Positional
 /// args are a pattern filter, not a date, so they play no part here.
-fn resolve_ym(args: &FinStatArgs, today: NaiveDate) -> Result<(i32, u32), String> {
+fn resolve_ym(args: &LedgerStatArgs, today: NaiveDate) -> Result<(i32, u32), String> {
     let m = match &args.month {
-        Some(s) => s.trim().parse::<u32>().map_err(|_| format!("fin stat: invalid month: {s}"))?,
+        Some(s) => s.trim().parse::<u32>().map_err(|_| format!("ledger stat: invalid month: {s}"))?,
         None => today.month(),
     };
     let y = match &args.year {
         Some(s) => {
             let t = s.trim();
-            let n: i32 = t.parse().map_err(|_| format!("fin stat: invalid year: {s}"))?;
+            let n: i32 = t.parse().map_err(|_| format!("ledger stat: invalid year: {s}"))?;
             if t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit()) { 2000 + n } else { n }
         }
         None => today.year(),
     };
     if !(1..=12).contains(&m) {
-        return Err(format!("fin stat: invalid month: {m}"));
+        return Err(format!("ledger stat: invalid month: {m}"));
     }
     Ok((y, m))
 }
@@ -433,26 +433,26 @@ fn push_year_spend(out: &mut String, st: &YearStats, y: i32, unit: &str, cur: &s
     }
 }
 
-/// `plc fin report`: aggregate the matching `+ledger` transactions.
+/// `plc ledger report`: aggregate the matching `+ledger` transactions.
 fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
     let root = palace.root().join("notes/management/daily");
-    finance::report(&root, &resolved_currency(palace), &filter)
+    ledger::report(&root, &resolved_currency(palace), &filter)
 }
 
-/// `plc fin reg`: chronological register of the matching transactions.
+/// `plc ledger reg`: chronological register of the matching transactions.
 fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
     let root = palace.root().join("notes/management/daily");
-    finance::register(&root, &resolved_currency(palace), &filter)
+    ledger::register(&root, &resolved_currency(palace), &filter)
 }
 
-/// `plc fin balance` (alias `bal`): short net-worth + account snapshot with the
+/// `plc ledger balance` (alias `bal`): short net-worth + account snapshot with the
 /// most recent transactions.
 fn balance(palace: &Palace, args: BalanceArgs) -> Result<String, String> {
     let filter = build_filter(&args.filter)?;
     let root = palace.root().join("notes/management/daily");
-    finance::balance(&root, &resolved_currency(palace), &filter, args.recent)
+    ledger::balance(&root, &resolved_currency(palace), &filter, args.recent)
 }
 
 /// Build a [`Filter`] from the shared report/register flags.
@@ -478,18 +478,18 @@ fn build_filter(args: &ReportArgs) -> Result<Filter, String> {
 fn date_range(args: &ReportArgs) -> Result<(Option<NaiveDate>, Option<NaiveDate>), String> {
     if let Some(m) = &args.month {
         let first = NaiveDate::parse_from_str(&format!("{}-01", m.trim()), "%Y-%m-%d")
-            .map_err(|_| format!("fin: invalid month (want YYYY-MM): {m}"))?;
+            .map_err(|_| format!("ledger: invalid month (want YYYY-MM): {m}"))?;
         let (y, mo) = (first.year(), first.month());
         let (ny, nm) = if mo == 12 { (y + 1, 1) } else { (y, mo + 1) };
         let last = NaiveDate::from_ymd_opt(ny, nm, 1)
             .and_then(|d| d.pred_opt())
-            .ok_or_else(|| format!("fin: invalid month: {m}"))?;
+            .ok_or_else(|| format!("ledger: invalid month: {m}"))?;
         return Ok((Some(first), Some(last)));
     }
     let parse = |o: &Option<String>| match o {
         Some(s) => NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
             .map(Some)
-            .map_err(|_| format!("fin: invalid date (want YYYY-MM-DD): {s}")),
+            .map_err(|_| format!("ledger: invalid date (want YYYY-MM-DD): {s}")),
         None => Ok(None),
     };
     Ok((parse(&args.since)?, parse(&args.until)?))
@@ -521,11 +521,11 @@ fn log_file(palace: &Palace) -> std::path::PathBuf {
 /// Rebuild `.plc/last-transactions` from the ledgers and return the records
 /// (oldest→newest). Always current and self-creating: this is the single point
 /// that keeps the cache in sync, called on every add / last / undo so the file
-/// never goes stale or missing. `finance::recent_entries` returns paths relative
+/// never goes stale or missing. `ledger::recent_entries` returns paths relative
 /// to the daily tree; we store them vault-relative.
 fn sync_log(palace: &Palace) -> Result<Vec<LogRecord>, String> {
     let daily = "notes/management/daily";
-    let entries = finance::recent_entries(&palace.root().join(daily), &resolved_currency(palace), LOG_CAP)?;
+    let entries = ledger::recent_entries(&palace.root().join(daily), &resolved_currency(palace), LOG_CAP)?;
     let records: Vec<LogRecord> = entries
         .into_iter()
         .map(|(rel, entry)| LogRecord { path: format!("{daily}/{rel}"), entry })
@@ -543,8 +543,8 @@ fn render_log(records: &[LogRecord]) -> String {
 }
 
 fn write_log(palace: &Palace, records: &[LogRecord]) -> Result<(), String> {
-    std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("fin: {e}"))?;
-    std::fs::write(log_file(palace), render_log(records)).map_err(|e| format!("fin: {e}"))
+    std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("ledger: {e}"))?;
+    std::fs::write(log_file(palace), render_log(records)).map_err(|e| format!("ledger: {e}"))
 }
 
 /// Remove the last occurrence of the `entry` block from `content` (plus one
@@ -559,7 +559,7 @@ fn remove_last_block(content: &str, entry: &str) -> Option<String> {
     Some(format!("{}\n", joined.trim_end()))
 }
 
-/// `plc fin last`: the most recent transactions, newest first, from the
+/// `plc ledger last`: the most recent transactions, newest first, from the
 /// always-current cache (rebuilt from the ledgers, so it covers all history).
 fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
     let records = sync_log(palace)?;
@@ -575,33 +575,33 @@ fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
     Ok(out.join("\n").trim_end().to_string())
 }
 
-/// `plc fin undo`: remove the most recent transaction from its ledger and refresh
+/// `plc ledger undo`: remove the most recent transaction from its ledger and refresh
 /// the cache. Refuses if the recorded block is no longer in the file (edited).
 fn undo(palace: &Palace) -> Result<String, String> {
     let records = sync_log(palace)?;
-    let last = records.last().ok_or_else(|| "fin undo: nothing to undo".to_string())?;
+    let last = records.last().ok_or_else(|| "ledger undo: nothing to undo".to_string())?;
     let file = palace.root().join(&last.path);
     let content = std::fs::read_to_string(&file)
-        .map_err(|e| format!("fin undo: cannot read {}: {e}", last.path))?;
+        .map_err(|e| format!("ledger undo: cannot read {}: {e}", last.path))?;
     let kept = remove_last_block(&content, &last.entry).ok_or_else(|| {
-        format!("fin undo: the entry is no longer in {} (edited since?) — not undoing", last.path)
+        format!("ledger undo: the entry is no longer in {} (edited since?) — not undoing", last.path)
     })?;
-    std::fs::write(&file, kept).map_err(|e| format!("fin undo: {e}"))?;
+    std::fs::write(&file, kept).map_err(|e| format!("ledger undo: {e}"))?;
     let removed = last.entry.clone();
     let path = last.path.clone();
     sync_log(palace)?; // refresh after the removal
     Ok(format!("undid (removed from {path}):\n{removed}"))
 }
 
-/// Bare `plc fin`: seed today's ledger (if new) and print its path.
+/// Bare `plc ledger`: seed today's ledger (if new) and print its path.
 fn seed_today(palace: &Palace) -> Result<String, String> {
     let (subdir, filename) = ledger_location(Local::now().date_naive());
     note::ensure_note(palace.root(), &subdir, &filename, "ledger", None, note::SIGNATURE)
         .map(|p| p.display().to_string())
-        .map_err(|e| format!("fin: {e}"))
+        .map_err(|e| format!("ledger: {e}"))
 }
 
-/// `plc fin add`: build the transaction and append it to its day's ledger — the
+/// `plc ledger add`: build the transaction and append it to its day's ledger — the
 /// transaction's own date (from `--date`, else today), so a back-dated entry
 /// lands in the correct `YYYY-MM-DD+ledger.md`, not today's.
 fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
@@ -615,10 +615,10 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
     guard_declared(palace, &mut settings, &txn, declare_new)?;
 
     let day = txn.date.map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
-    let entry = finance::format_entry(&txn);
+    let entry = ledger::format_entry(&txn);
     let (subdir, filename) = ledger_location(day);
     let path = note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
-        .map_err(|e| format!("fin: {e}"))?;
+        .map_err(|e| format!("ledger: {e}"))?;
     let _ = sync_log(palace); // keep the recent cache current (best-effort)
     Ok(path.display().to_string())
 }
@@ -664,9 +664,9 @@ fn guard_declared(
         }
         return settings.save(palace.root());
     }
-    let mut lines = vec!["fin: undeclared name(s) — declare them or pass -n to add now:".to_string()];
-    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc fin declare {a} --physical)")));
-    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc fin declare {c} --ephemeral)")));
+    let mut lines = vec!["ledger: undeclared name(s) — declare them or pass -n to add now:".to_string()];
+    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc ledger declare {a} --physical)")));
+    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc ledger declare {c} --ephemeral)")));
     Err(lines.join("\n"))
 }
 
@@ -687,7 +687,7 @@ fn declare_kind(args: &DeclareArgs) -> Option<Decl> {
     }
 }
 
-/// `plc fin declare`: one command for both accounts (`--physical`) and
+/// `plc ledger declare`: one command for both accounts (`--physical`) and
 /// categories (`--ephemeral`). Bare lists everything; NAME(s) add (or remove
 /// with `-r`); `--import` seeds from used names.
 fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
@@ -696,12 +696,12 @@ fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
 
     if !args.names.is_empty() {
         let kind = kind.ok_or_else(|| {
-            "fin declare: say which kind — --physical (account) or --ephemeral (category)".to_string()
+            "ledger declare: say which kind — --physical (account) or --ephemeral (category)".to_string()
         })?;
         let names: Vec<String> = args
             .names
             .iter()
-            .map(|n| clean_link(kind.label(), n).map(|n| finance::normalize_name(&n)))
+            .map(|n| clean_link(kind.label(), n).map(|n| ledger::normalize_name(&n)))
             .collect::<Result<_, _>>()?;
         let list = pick(&mut settings, kind);
         if args.rm {
@@ -716,7 +716,7 @@ fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
 
     if args.import {
         let root = palace.root().join("notes/management/daily");
-        let (used_accts, used_cats) = finance::names(&root, &currency_from(&settings))?;
+        let (used_accts, used_cats) = ledger::names(&root, &currency_from(&settings))?;
         let mut done = Vec::new();
         for k in kind.map_or(vec![Decl::Account, Decl::Category], |k| vec![k]) {
             let used = match k {
@@ -746,7 +746,7 @@ fn list_kind(settings: &Settings, kind: Decl) -> String {
     };
     let (plural, sigil, flag) = (kind.plural(), kind.sigil(), kind.flag());
     if list.is_empty() {
-        return format!("{plural}: (none — add with `plc fin declare NAME {flag}`)");
+        return format!("{plural}: (none — add with `plc ledger declare NAME {flag}`)");
     }
     let names: Vec<String> = list.iter().map(|n| format!("  {sigil}{n}")).collect();
     format!("{plural}:\n{}", names.join("\n"))
@@ -760,12 +760,12 @@ fn diff_names(used: &[String], declared: &[String]) -> (Vec<String>, Vec<String>
     (undeclared, unused)
 }
 
-/// `plc fin doctor`: compare `.plc/config` against the names actually used in the
+/// `plc ledger doctor`: compare `.plc/config` against the names actually used in the
 /// ledgers, report anything off, and propose (or, with `--fix`, apply) repairs.
 fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     let mut settings = Settings::load(palace.root());
     let root = palace.root().join("notes/management/daily");
-    let (used_accts, used_cats) = finance::names(&root, &currency_from(&settings))?;
+    let (used_accts, used_cats) = ledger::names(&root, &currency_from(&settings))?;
 
     let mut findings: Vec<String> = Vec::new();
     let mut fixable = 0usize; // problems `--fix` can repair
@@ -777,7 +777,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         if declared.is_empty() {
             if !used.is_empty() {
                 findings.push(format!(
-                    "  · {plural}: guard off ({} used, none declared) — `plc fin declare --import {flag}` to enable",
+                    "  · {plural}: guard off ({} used, none declared) — `plc ledger declare --import {flag}` to enable",
                     used.len()
                 ));
             }
@@ -787,7 +787,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         if !undeclared.is_empty() {
             fixable += undeclared.len();
             findings.push(format!("  ! {} {plural} used but not declared:", undeclared.len()));
-            findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc fin declare {n} {flag})")));
+            findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc ledger declare {n} {flag})")));
             if fix {
                 undeclared.iter().for_each(|n| declare(pick(&mut settings, kind), n));
                 fixed.push(format!("declared {} {plural}", undeclared.len()));
@@ -795,13 +795,13 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         }
         if !unused.is_empty() {
             findings.push(format!("  ! {} {plural} declared but never used (typo/stale?):", unused.len()));
-            findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc fin declare {n} {flag} -r)")));
+            findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc ledger declare {n} {flag} -r)")));
         }
     }
 
     // No default currency pinned in the config (relying on PLC_CURRENCY/EUR).
     if settings.currency.is_none() {
-        let dominant = finance::currencies(&root, &currency_from(&settings))?
+        let dominant = ledger::currencies(&root, &currency_from(&settings))?
             .into_iter()
             .max_by_key(|(_, n)| *n)
             .map(|(c, _)| c);
@@ -809,7 +809,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             Some(c) => {
                 fixable += 1;
                 findings.push(format!("  ! no default currency in .plc/config — ledgers use {c}"));
-                findings.push(format!("      set it: add `currency = {c}` (or `plc fin doctor --fix`)"));
+                findings.push(format!("      set it: add `currency = {c}` (or `plc ledger doctor --fix`)"));
                 if fix {
                     settings.currency = Some(c.clone());
                     fixed.push(format!("set currency = {c}"));
@@ -825,8 +825,8 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         fixable += 1;
         findings.push("  ! legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
         if fix {
-            std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("fin doctor: {e}"))?;
-            std::fs::rename(&legacy, palace.state_dir().join("last-do")).map_err(|e| format!("fin doctor: {e}"))?;
+            std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("ledger doctor: {e}"))?;
+            std::fs::rename(&legacy, palace.state_dir().join("last-do")).map_err(|e| format!("ledger doctor: {e}"))?;
             fixed.push("migrated .last-do → .plc/last-do".to_string());
         }
     }
@@ -845,7 +845,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             out.push("  nothing auto-fixable; the items above need a manual call".to_string());
         }
     } else if fixable > 0 {
-        out.push("  run `plc fin doctor --fix` to apply the safe repairs (import undeclared, set currency, migrate pointer)".to_string());
+        out.push("  run `plc ledger doctor --fix` to apply the safe repairs (import undeclared, set currency, migrate pointer)".to_string());
     }
     Ok(out.join("\n"))
 }
@@ -865,8 +865,8 @@ fn build_txn(
     now: DateTime<FixedOffset>,
     default_currency: &str,
 ) -> Result<Transaction, String> {
-    let amount = finance::eval_amount(&args.amount)
-        .ok_or_else(|| format!("fin: invalid amount: {}", args.amount))?;
+    let amount = ledger::eval_amount(&args.amount)
+        .ok_or_else(|| format!("ledger: invalid amount: {}", args.amount))?;
     let account = clean_link("account", &args.account)?;
     let currency = args
         .currency
@@ -889,7 +889,7 @@ fn build_txn(
         let sum: i64 = split.iter().map(|(_, a)| a).sum();
         if sum != amount {
             return Err(format!(
-                "fin: split legs sum to {sum} minor units, not the stated total {amount}"
+                "ledger: split legs sum to {sum} minor units, not the stated total {amount}"
             ));
         }
     }
@@ -898,7 +898,7 @@ fn build_txn(
     let projects = args
         .project
         .iter()
-        .map(|p| clean_link("project", p).map(|p| finance::normalize_name(&p)))
+        .map(|p| clean_link("project", p).map(|p| ledger::normalize_name(&p)))
         .collect::<Result<Vec<_>, _>>()?;
 
     let assert = match args.assert.as_deref() {
@@ -940,10 +940,10 @@ fn parse_splits(args: &[String]) -> Result<Vec<(String, i64)>, String> {
         .map(|s| {
             let (cat, amt) = s
                 .split_once('=')
-                .ok_or_else(|| format!("fin: --split wants CAT=AMOUNT, got: {s}"))?;
-            let cat = finance::normalize_name(&clean_link("split category", cat)?);
-            let amount = finance::eval_amount(amt)
-                .ok_or_else(|| format!("fin: invalid split amount: {amt}"))?;
+                .ok_or_else(|| format!("ledger: --split wants CAT=AMOUNT, got: {s}"))?;
+            let cat = ledger::normalize_name(&clean_link("split category", cat)?);
+            let amount = ledger::eval_amount(amt)
+                .ok_or_else(|| format!("ledger: invalid split amount: {amt}"))?;
             Ok((cat, amount))
         })
         .collect()
@@ -956,8 +956,8 @@ fn parse_balance(s: &str) -> Result<i64, String> {
         Some(r) => (true, r),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
     };
-    let minor = finance::amount_to_minor(mag)
-        .ok_or_else(|| format!("fin: invalid assert balance: {s}"))?;
+    let minor = ledger::amount_to_minor(mag)
+        .ok_or_else(|| format!("ledger: invalid assert balance: {s}"))?;
     Ok(if neg { -minor } else { minor })
 }
 
@@ -965,7 +965,7 @@ fn parse_balance(s: &str) -> Result<i64, String> {
 /// bare `YYYY-MM-DD` taken as that day at local midnight.
 fn parse_when(s: &str) -> Result<DateTime<FixedOffset>, String> {
     let s = s.trim();
-    if let Ok(dt) = DateTime::parse_from_str(s, finance::TIMESTAMP_FMT) {
+    if let Ok(dt) = DateTime::parse_from_str(s, ledger::TIMESTAMP_FMT) {
         return Ok(dt);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
@@ -975,7 +975,7 @@ fn parse_when(s: &str) -> Result<DateTime<FixedOffset>, String> {
             }
         }
     }
-    Err(format!("fin: invalid date (want YYYY-MM-DD or full timestamp): {s}"))
+    Err(format!("ledger: invalid date (want YYYY-MM-DD or full timestamp): {s}"))
 }
 
 /// Validate a value destined for a `[[wikilink]]`: non-blank and free of the
@@ -983,10 +983,10 @@ fn parse_when(s: &str) -> Result<DateTime<FixedOffset>, String> {
 fn clean_link(label: &str, raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(format!("fin: {label} must not be blank"));
+        return Err(format!("ledger: {label} must not be blank"));
     }
     if trimmed.contains(['[', ']', '\n']) {
-        return Err(format!("fin: {label} must not contain brackets or newlines: {trimmed}"));
+        return Err(format!("ledger: {label} must not contain brackets or newlines: {trimmed}"));
     }
     Ok(trimmed.to_string())
 }
@@ -1016,7 +1016,7 @@ mod tests {
 
     /// A fixed "now" so `build_txn`'s default stamp is deterministic in tests.
     fn now() -> DateTime<FixedOffset> {
-        DateTime::parse_from_str("2026-07-19 11:28:22 +0200", finance::TIMESTAMP_FMT).unwrap()
+        DateTime::parse_from_str("2026-07-19 11:28:22 +0200", ledger::TIMESTAMP_FMT).unwrap()
     }
 
     #[test]
@@ -1186,7 +1186,7 @@ mod tests {
         let mut a = add_args();
         a.memo = vec!["latte".into()];
         a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
-        let entry = finance::format_entry(&build_txn(a, now(), "EUR").unwrap());
+        let entry = ledger::format_entry(&build_txn(a, now(), "EUR").unwrap());
         assert!(entry.contains('\n'), "should wrap: {entry}");
         for line in entry.lines().skip(1) {
             assert!(line.chars().count() <= 79, "continuation over 79: {line}");
