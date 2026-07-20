@@ -29,6 +29,18 @@ use plc_core::finance::{self, Filter, Kind, Measure, State, Transaction};
 use crate::cmd::calview;
 use crate::config::Palace;
 use crate::note;
+use crate::settings::Settings;
+
+/// The vault's default currency: `$PLC_CURRENCY` if set, else the `.plc/config`
+/// `currency`, else `EUR`. (`fin add --cur` overrides this per transaction.)
+fn resolved_currency(palace: &Palace) -> String {
+    match std::env::var("PLC_CURRENCY") {
+        Ok(c) if !c.trim().is_empty() => c.trim().to_uppercase(),
+        _ => Settings::load(palace.root())
+            .currency
+            .unwrap_or_else(|| "EUR".to_string()),
+    }
+}
 
 /// Heatmap-glyph meanings for the money scale (fixed buckets, currency units).
 const MONEY_LEGEND: &str = "·  empty   ░ <5   ▒ <20   ▓ <50   █ ≥50";
@@ -193,13 +205,15 @@ pub fn run(palace: &Palace, args: FinArgs) -> Result<String, String> {
         Some(FinCmd::Reg(report_args)) => reg(palace, report_args),
         Some(FinCmd::Balance(balance_args)) => balance(palace, balance_args),
         Some(FinCmd::Check(check_args)) => {
+            let cur = resolved_currency(palace);
             let root = palace.root().join("notes/management/daily");
-            finance::check(&root, &finance::default_currency(), check_args.strict)
+            finance::check(&root, &cur, check_args.strict)
         }
         Some(FinCmd::Stat(stat_args)) => stat(palace, stat_args),
         Some(FinCmd::Fmt(fmt_args)) => {
+            let cur = resolved_currency(palace);
             let root = palace.root().join("notes/management/daily");
-            finance::fmt(&root, &finance::default_currency(), fmt_args.check)
+            finance::fmt(&root, &cur, fmt_args.check)
         }
     }
 }
@@ -231,7 +245,7 @@ fn stat(palace: &Palace, args: FinStatArgs) -> Result<String, String> {
         patterns: args.patterns.iter().map(|p| p.to_lowercase()).collect(),
         ..Filter::default()
     };
-    let cur = finance::default_currency();
+    let cur = resolved_currency(palace);
     let root = palace.root().join("notes/management/daily");
     let money = |minor| calendar::fmt_money(minor, &cur);
 
@@ -331,14 +345,14 @@ fn push_year_spend(out: &mut String, st: &YearStats, y: i32, unit: &str, cur: &s
 fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
     let root = palace.root().join("notes/management/daily");
-    finance::report(&root, &finance::default_currency(), &filter)
+    finance::report(&root, &resolved_currency(palace), &filter)
 }
 
 /// `plc fin reg`: chronological register of the matching transactions.
 fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
     let root = palace.root().join("notes/management/daily");
-    finance::register(&root, &finance::default_currency(), &filter)
+    finance::register(&root, &resolved_currency(palace), &filter)
 }
 
 /// `plc fin balance` (alias `bal`): short net-worth + account snapshot with the
@@ -346,7 +360,7 @@ fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
 fn balance(palace: &Palace, args: BalanceArgs) -> Result<String, String> {
     let filter = build_filter(&args.filter)?;
     let root = palace.root().join("notes/management/daily");
-    finance::balance(&root, &finance::default_currency(), &filter, args.recent)
+    finance::balance(&root, &resolved_currency(palace), &filter, args.recent)
 }
 
 /// Build a [`Filter`] from the shared report/register flags.
@@ -409,7 +423,8 @@ fn seed_today(palace: &Palace) -> Result<String, String> {
 /// transaction's own date (from `--date`, else today), so a back-dated entry
 /// lands in the correct `YYYY-MM-DD+ledger.md`, not today's.
 fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
-    let txn = build_txn(args, Local::now().fixed_offset())?;
+    let default_cur = resolved_currency(palace);
+    let txn = build_txn(args, Local::now().fixed_offset(), &default_cur)?;
     let day = txn.date.map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
     let entry = finance::format_entry(&txn);
     let (subdir, filename) = ledger_location(day);
@@ -420,7 +435,11 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
 
 /// Build a [`Transaction`] from `add` args. `now` is the default timestamp used
 /// when `--date` is absent (injected so tests are deterministic).
-fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, String> {
+fn build_txn(
+    args: AddArgs,
+    now: DateTime<FixedOffset>,
+    default_currency: &str,
+) -> Result<Transaction, String> {
     let amount = finance::amount_to_minor(&args.amount)
         .ok_or_else(|| format!("fin: invalid amount: {}", args.amount))?;
     let account = clean_link("account", &args.account)?;
@@ -428,7 +447,7 @@ fn build_txn(args: AddArgs, now: DateTime<FixedOffset>) -> Result<Transaction, S
         .currency
         .map(|c| c.trim().to_uppercase())
         .filter(|c| !c.is_empty())
-        .unwrap_or_else(finance::default_currency);
+        .unwrap_or_else(|| default_currency.to_string());
 
     let (kind, other) = match (args.to, args.category, args.income) {
         (Some(dest), _, _) => (Kind::Transfer, Some(clean_link("account", &dest)?)),
@@ -576,7 +595,7 @@ mod tests {
 
     #[test]
     fn maps_expense_args() {
-        let t = build_txn(add_args(), now()).unwrap();
+        let t = build_txn(add_args(), now(), "EUR").unwrap();
         assert_eq!(t.kind, Kind::Expense);
         assert_eq!((t.amount, t.account.as_str(), t.other.as_deref()), (450, "cash", Some("coffee")));
         assert_eq!(t.memo, "Blue Bottle");
@@ -590,7 +609,7 @@ mod tests {
         a.income = true;
         a.category = Some("salary".into());
         a.amount = "2400".into();
-        let t = build_txn(a, now()).unwrap();
+        let t = build_txn(a, now(), "EUR").unwrap();
         assert_eq!(t.kind, Kind::Income);
         assert_eq!(t.amount, 240000);
         assert_eq!(t.other.as_deref(), Some("salary"));
@@ -602,7 +621,7 @@ mod tests {
         a.category = None;
         a.to = Some("checking".into());
         a.amount = "200".into();
-        let t = build_txn(a, now()).unwrap();
+        let t = build_txn(a, now(), "EUR").unwrap();
         assert_eq!(t.kind, Kind::Transfer);
         assert_eq!((t.account.as_str(), t.other.as_deref()), ("cash", Some("checking")));
     }
@@ -611,7 +630,7 @@ mod tests {
     fn projects_normalized_slash_preserved() {
         let mut a = add_args();
         a.project = vec!["Japan-Trip/Work".into()];
-        assert_eq!(build_txn(a, now()).unwrap().projects, vec!["japan-trip/work"]);
+        assert_eq!(build_txn(a, now(), "EUR").unwrap().projects, vec!["japan-trip/work"]);
     }
 
     #[test]
@@ -619,7 +638,7 @@ mod tests {
         let mut a = add_args();
         a.date = Some("2026-07-15".into()); // date-only → that day at local midnight
         a.cleared = true;
-        let t = build_txn(a, now()).unwrap();
+        let t = build_txn(a, now(), "EUR").unwrap();
         assert_eq!(t.state, State::Cleared);
         assert_ne!(t.date, Some(now()));
         assert_eq!(t.date.unwrap().format("%Y-%m-%d").to_string(), "2026-07-15");
@@ -629,7 +648,7 @@ mod tests {
     fn rejects_bracket_in_account() {
         let mut a = add_args();
         a.account = "ca[sh".into();
-        assert!(build_txn(a, now()).is_err());
+        assert!(build_txn(a, now(), "EUR").is_err());
     }
 
     #[test]
@@ -639,7 +658,7 @@ mod tests {
         a.category = None;
         a.memo = vec!["Costco".into()];
         a.split = vec!["food=60".into(), "household=25".into(), "tax=5".into()];
-        let t = build_txn(a, now()).unwrap();
+        let t = build_txn(a, now(), "EUR").unwrap();
         assert_eq!(t.amount, 9000);
         assert_eq!(t.other, None);
         assert_eq!(t.split, vec![("food".into(), 6000), ("household".into(), 2500), ("tax".into(), 500)]);
@@ -649,21 +668,21 @@ mod tests {
         bad.amount = "90".into();
         bad.category = None;
         bad.split = vec!["food=60".into(), "tax=5".into()];
-        assert!(build_txn(bad, now()).is_err());
+        assert!(build_txn(bad, now(), "EUR").is_err());
     }
 
     #[test]
     fn assert_flag_parses_signed_balance() {
         let mut a = add_args();
         a.assert = Some("-12.00".into());
-        assert_eq!(build_txn(a, now()).unwrap().assert, Some(-1200));
+        assert_eq!(build_txn(a, now(), "EUR").unwrap().assert, Some(-1200));
     }
 
     #[test]
     fn rejects_invalid_date() {
         let mut a = add_args();
         a.date = Some("18/07/2026".into());
-        assert!(build_txn(a, now()).is_err());
+        assert!(build_txn(a, now(), "EUR").is_err());
     }
 
     #[test]
@@ -673,7 +692,7 @@ mod tests {
         let mut a = add_args();
         a.memo = vec!["latte".into()];
         a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
-        let entry = finance::format_entry(&build_txn(a, now()).unwrap());
+        let entry = finance::format_entry(&build_txn(a, now(), "EUR").unwrap());
         assert!(entry.contains('\n'), "should wrap: {entry}");
         for line in entry.lines().skip(1) {
             assert!(line.chars().count() <= 79, "continuation over 79: {line}");

@@ -8,6 +8,7 @@
 mod cmd;
 mod config;
 mod note;
+mod settings;
 
 use std::process::ExitCode;
 
