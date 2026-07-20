@@ -2,6 +2,7 @@
 //! its path; `main` prints it. Subcommands are added one per PR.
 
 pub mod calview;
+pub mod config;
 pub mod daily;
 pub mod do_notes;
 pub mod doctor;

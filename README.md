@@ -23,6 +23,7 @@ shared across every note type — including ledgers.
     plc stat       calendar heatmap + stats of daily-note activity
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
+    plc config     show/set the persistent vault location (~/.plcrc)
 
 ---
 
@@ -39,15 +40,22 @@ Build and install the binary, point it at a vault, and scaffold it:
 then validates it in stages (its parent must exist, the dir must exist, and it
 must contain `notes/`), with a pointed error at whichever stage fails.
 
-To avoid exporting the path from your shell every session, persist it once in
-`~/.plcrc` — a plain, `source`-able file:
+To avoid exporting the path from your shell every session, persist it once with
+`plc config`, which writes `~/.plcrc` (a plain `PALACE_DIR = …` line):
 
-    $ echo 'export PALACE_DIR="$HOME/vault"' > ~/.plcrc
+    $ plc config --set ~/vault      # writes ~/.plcrc
+    $ plc config                    # prints the resolved vault path
+    $ plc config --rc               # prints ~/.plcrc's own path
 
-`plc` reads that file directly (an explicit `$PALACE_DIR` in the environment
-still wins). `plc doctor` verifies the config exists and resolves, and
-`plc doctor --fix` writes `~/.plcrc` for you when the path is only in the
-environment.
+`plc` reads `~/.plcrc` directly, so nothing needs to be exported. An explicit
+`$PALACE_DIR` in the environment still wins (handy for tests or a second vault).
+Dotfiles that need the value in the environment can ask `plc` rather than
+hardcode it:
+
+    export PALACE_DIR="$(plc config)"
+
+`plc doctor` verifies the config exists and resolves, and `plc doctor --fix`
+persists an env-only path into `~/.plcrc`.
 
 ### Environment
 
@@ -228,6 +236,15 @@ pointers, broken links).
 
     $ plc doctor
     $ plc doctor --fix
+
+### plc config `[--set PATH | --rc]`
+
+Show or set the persistent vault location in `~/.plcrc`. Bare, it prints the
+resolved `PALACE_DIR` (for `export PALACE_DIR="$(plc config)"` in a dotfile);
+`--set PATH` writes it; `--rc` prints the config file's own path.
+
+    $ plc config --set ~/vault
+    $ plc config
 
 ---
 

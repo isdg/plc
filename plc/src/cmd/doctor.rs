@@ -5,8 +5,6 @@
 //! broken config. Today two sections: the `~/.plcrc` config, then the ledger
 //! `.plc/config`. Structured to grow (orphan nodes, stale pointers, links, …).
 
-use std::fs;
-
 use clap::Args;
 
 use crate::cmd::ledger;
@@ -52,8 +50,8 @@ fn config_section(fix: bool) -> String {
         (None, Some(env)) => {
             lines.push("  ! PALACE_DIR is set in the environment but not persisted to ~/.plcrc".to_string());
             if fix {
-                match persist_plcrc(env.trim()) {
-                    Ok(p) => lines.push(format!("      fixed: wrote export PALACE_DIR to {p}")),
+                match config::write_plcrc_palace_dir(env.trim()) {
+                    Ok(p) => lines.push(format!("      fixed: wrote export PALACE_DIR to {}", p.display())),
                     Err(e) => lines.push(format!("      could not write {rc_shown}: {e}")),
                 }
             } else {
@@ -62,7 +60,7 @@ fn config_section(fix: bool) -> String {
         }
         (None, None) => {
             lines.push("  ! PALACE_DIR is not set (environment or ~/.plcrc)".to_string());
-            lines.push(format!("      set it: echo 'export PALACE_DIR=\"/path/to/vault\"' >> {rc_shown}"));
+            lines.push("      set it: plc config --set /path/to/vault".to_string());
         }
     }
 
@@ -72,19 +70,4 @@ fn config_section(fix: bool) -> String {
         Err(e) => lines.push(format!("  ! {e}")),
     }
     lines.join("\n")
-}
-
-/// Write `export PALACE_DIR="<dir>"` into `~/.plcrc`, preserving any other lines.
-/// Returns the file path written.
-fn persist_plcrc(dir: &str) -> Result<String, String> {
-    let path = config::plcrc_path().ok_or_else(|| "$HOME is not set".to_string())?;
-    let existing = fs::read_to_string(&path).unwrap_or_default();
-    let mut kept: Vec<String> = existing
-        .lines()
-        .filter(|l| !l.trim().strip_prefix("export ").unwrap_or(l.trim()).starts_with("PALACE_DIR"))
-        .map(str::to_string)
-        .collect();
-    kept.push(format!("export PALACE_DIR=\"{dir}\""));
-    fs::write(&path, kept.join("\n") + "\n").map_err(|e| format!("{e}"))?;
-    Ok(path.display().to_string())
 }

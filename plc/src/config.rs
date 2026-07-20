@@ -24,9 +24,9 @@ pub fn read_plcrc_palace_dir() -> Option<String> {
     parse_plcrc(&fs::read_to_string(plcrc_path()?).ok()?)
 }
 
-/// Extract `PALACE_DIR` from `~/.plcrc` text. Tolerant of shell syntax so the
-/// file can also be `source`d: an optional `export ` prefix, `#` comments, blank
-/// lines, and surrounding quotes are all handled.
+/// Extract `PALACE_DIR` from `~/.plcrc` text. The file is `key = value` lines
+/// (like `.plc/config`); `#` comments, blank lines, surrounding quotes, and a
+/// tolerated leading `export ` are all handled.
 fn parse_plcrc(text: &str) -> Option<String> {
     for raw in text.lines() {
         let line = raw.trim();
@@ -55,6 +55,26 @@ pub fn palace_dir() -> Option<PathBuf> {
         .filter(|s| !s.trim().is_empty())
         .or_else(read_plcrc_palace_dir)?;
     Some(expand_tilde(&raw))
+}
+
+/// Persist `dir` as the vault path in `~/.plcrc` (`export PALACE_DIR="dir"`),
+/// replacing any existing `PALACE_DIR` line and preserving the rest. A leading
+/// `~` is expanded so the stored path is absolute (portable to other readers).
+/// Returns the file written.
+pub fn write_plcrc_palace_dir(dir: &str) -> Result<PathBuf, String> {
+    let path = plcrc_path().ok_or_else(|| "config: $HOME is not set".to_string())?;
+    let abs = expand_tilde(dir);
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let mut kept: Vec<String> = existing.lines().filter(|l| !is_palace_dir_line(l)).map(str::to_string).collect();
+    kept.push(format!("PALACE_DIR = {}", abs.display()));
+    fs::write(&path, kept.join("\n") + "\n").map_err(|e| format!("config: {e}"))?;
+    Ok(path)
+}
+
+/// Whether a `~/.plcrc` line sets `PALACE_DIR` (with or without `export`).
+fn is_palace_dir_line(line: &str) -> bool {
+    let t = line.trim().strip_prefix("export ").unwrap_or(line.trim());
+    t.split_once('=').is_some_and(|(k, _)| k.trim() == "PALACE_DIR")
 }
 
 /// Expand a leading `~` / `~/` to `$HOME`; otherwise the path as-is.
