@@ -832,7 +832,7 @@ fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     }
 
     if findings.is_empty() {
-        return Ok("\n  Doctor — all good  ✓".to_string());
+        return Ok("\n  Doctor — all good  OK".to_string());
     }
     let mut out = vec![String::new(), "  Doctor — .plc/config vs the ledgers".to_string(), String::new()];
     out.extend(findings);

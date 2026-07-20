@@ -19,7 +19,7 @@ edit by hand.
 Under the hood it is **double-entry**: money never appears or disappears, it
 only moves from one bucket to another, and every transaction sums to zero. You
 never have to write the second side — `plc` infers it — but the guarantee is
-always checked, so a report can tell you `book : 0.00 ✓`.
+always checked, so a report can tell you `book : 0.00 OK`.
 
 Three kinds of bucket:
 
@@ -82,7 +82,7 @@ transactions (the accounting on the head line, the memo indented below):
         income   : 5400.00
         expenses : 4.50
         net      : +5395.50
-        book     : 0.00  ✓
+        book     : 0.00  OK
 
         by account
           bnp               +5200.00
@@ -95,7 +95,7 @@ transactions (the accounting on the head line, the memo indented below):
 
 Physical accounts show what you hold (`bnp +5200.00`, `cash +195.50`). Income
 sources show negative — that is normal double-entry: `salary -2400` means
-€2400 was drawn _from_ your employer into your accounts. `book : 0.00 ✓`
+€2400 was drawn _from_ your employer into your accounts. `book : 0.00 OK`
 confirms every leg cancels. Accounts that net to zero (a settled or closed
 account) are hidden from `by account`; categories always list in full.
 
@@ -324,7 +324,7 @@ contributes nothing to any balance but is still verified:
 assertion:
 
     $ plc fin check
-      1 balance assertion(s) OK  ✓
+      1 balance assertion(s) OK
 
     $ plc fin check        # if the books have drifted
     fin: 1 check(s) failed:

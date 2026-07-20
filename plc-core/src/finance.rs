@@ -933,7 +933,7 @@ pub fn fmt(root: &Path, default_currency: &str, check: bool) -> Result<String, S
         }
     }
     if changed.is_empty() {
-        return Ok(format!("  fin fmt — {seen} ledger file(s) already formatted  ✓"));
+        return Ok(format!("  fin fmt — {seen} ledger file(s) already formatted  OK"));
     }
     let verb = if check { "would reformat" } else { "reformatted" };
     let mut lines = vec![format!("  fin fmt — {verb} {}/{seen} ledger file(s)", changed.len())];
@@ -1019,7 +1019,7 @@ pub fn check(
         msg.extend(fails);
         return Err(msg.join("\n"));
     }
-    Ok(format!("  {checked} balance assertion(s) OK  ✓"))
+    Ok(format!("  {checked} balance assertion(s) OK"))
 }
 
 /// Declared finance names, gathered from `account`/`category`/`commodity`
@@ -1222,9 +1222,9 @@ fn render(summary: &BTreeMap<String, CurrencyTotals>, ledger_files: usize, depth
         lines.push(format!("    net      : {}", format_signed(t.net())));
         let residual = t.residual();
         let book = if residual == 0 {
-            "0.00  ✓".to_string()
+            "0.00  OK".to_string()
         } else {
-            format!("{}  ✗ UNBALANCED", format_signed(residual))
+            format!("{}  !! UNBALANCED", format_signed(residual))
         };
         lines.push(format!("    book     : {book}"));
         // Accounts hide zero balances (a settled/closed account is just noise);
