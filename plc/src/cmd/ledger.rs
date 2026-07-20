@@ -32,7 +32,7 @@ use crate::note;
 use crate::settings::Settings;
 
 /// The vault's default currency: `$PLC_CURRENCY` if set, else the `.plc/config`
-/// `currency`, else `EUR`. (`fin add --cur` overrides this per transaction.)
+/// `currency`, else `EUR`. (`ledger add --cur` overrides this per transaction.)
 fn resolved_currency(palace: &Palace) -> String {
     currency_from(&Settings::load(palace.root()))
 }
@@ -244,9 +244,17 @@ pub struct AddArgs {
     /// Free-text payee/memo (all trailing words).
     #[arg(value_name = "MEMO")]
     memo: Vec<String>,
-    /// Account the money moves through (required).
+    /// Account the money moves through. Required unless `-T` supplies it.
     #[arg(short = 'a', long = "account", value_name = "ACCOUNT")]
-    account: String,
+    account: Option<String>,
+    /// Symbolic transaction shape, an alternative to `-a`/`-c`/`--to`/`-i`/
+    /// `--assert`: `"revolut -> food/out"` (expense), `"revolut -> cash"`
+    /// (transfer, when the target is an account), `"revolut <- salary"` (income),
+    /// `"revolut = 2300"` (assertion). Prefix a name with `@`/`#` to force
+    /// account/category; otherwise a name is an account if it's declared.
+    #[arg(short = 'T', long = "txn", value_name = "SPEC",
+          conflicts_with_all = ["account", "category", "to", "income", "assert", "split"])]
+    txn: Option<String>,
     /// Category for an expense or income.
     #[arg(short = 'c', long = "category", value_name = "CATEGORY")]
     category: Option<String>,
@@ -608,7 +616,7 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
     let mut settings = Settings::load(palace.root());
     let default_cur = currency_from(&settings);
     let declare_new = args.new;
-    let txn = build_txn(args, Local::now().fixed_offset(), &default_cur)?;
+    let txn = build_txn(args, Local::now().fixed_offset(), &default_cur, &settings.accounts)?;
 
     // Typo guard: reject an account/category not in a non-empty declared set,
     // unless `-n` declares it now. Empty sets → no check (fresh-vault default).
@@ -860,51 +868,64 @@ fn pick(settings: &mut Settings, kind: Decl) -> &mut Vec<String> {
 
 /// Build a [`Transaction`] from `add` args. `now` is the default timestamp used
 /// when `--date` is absent (injected so tests are deterministic).
+/// `declared_accounts` disambiguates a bare `-T` target (account vs category).
 fn build_txn(
     args: AddArgs,
     now: DateTime<FixedOffset>,
     default_currency: &str,
+    declared_accounts: &[String],
 ) -> Result<Transaction, String> {
     let amount = ledger::eval_amount(&args.amount)
         .ok_or_else(|| format!("ledger: invalid amount: {}", args.amount))?;
-    let account = clean_link("account", &args.account)?;
     let currency = args
         .currency
         .map(|c| c.trim().to_uppercase())
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| default_currency.to_string());
 
-    let (kind, other) = match (args.to, args.category, args.income) {
-        (Some(dest), _, _) => (Kind::Transfer, Some(clean_link("account", &dest)?)),
-        (None, cat, income) => {
-            let kind = if income { Kind::Income } else { Kind::Expense };
-            (kind, cat.map(|c| clean_link("category", &c)).transpose()?)
+    // The core shape (account / kind / category-or-dest / assertion) comes either
+    // from the symbolic `-T` spec or from the individual flags.
+    let mut split = Vec::new();
+    let (account, kind, other, assert) = if let Some(spec) = &args.txn {
+        let s = parse_txn_spec(spec, declared_accounts)?;
+        (s.account, s.kind, s.other, s.assert)
+    } else {
+        let account = args
+            .account
+            .as_deref()
+            .ok_or("ledger add: need an account — pass -a ACCOUNT or -T SPEC")?;
+        let account = clean_link("account", account)?;
+        let (kind, other) = match (args.to, args.category, args.income) {
+            (Some(dest), _, _) => (Kind::Transfer, Some(clean_link("account", &dest)?)),
+            (None, cat, income) => {
+                let kind = if income { Kind::Income } else { Kind::Expense };
+                (kind, cat.map(|c| clean_link("category", &c)).transpose()?)
+            }
+        };
+        // Split legs (if any) distribute `amount` across categories; they must
+        // sum to it, and the single `other` category is dropped.
+        split = parse_splits(&args.split)?;
+        if !split.is_empty() {
+            let sum: i64 = split.iter().map(|(_, a)| a).sum();
+            if sum != amount {
+                return Err(format!(
+                    "ledger: split legs sum to {sum} minor units, not the stated total {amount}"
+                ));
+            }
         }
+        let assert = match args.assert.as_deref() {
+            Some(s) => Some(parse_balance(s)?),
+            None => None,
+        };
+        let other = if split.is_empty() { other } else { None };
+        (account, kind, other, assert)
     };
-
-    // Split legs (if any) distribute `amount` across categories; they must sum
-    // to it, and the single `other` category is dropped.
-    let split = parse_splits(&args.split)?;
-    if !split.is_empty() {
-        let sum: i64 = split.iter().map(|(_, a)| a).sum();
-        if sum != amount {
-            return Err(format!(
-                "ledger: split legs sum to {sum} minor units, not the stated total {amount}"
-            ));
-        }
-    }
-    let other = if split.is_empty() { other } else { None };
 
     let projects = args
         .project
         .iter()
         .map(|p| clean_link("project", p).map(|p| ledger::normalize_name(&p)))
         .collect::<Result<Vec<_>, _>>()?;
-
-    let assert = match args.assert.as_deref() {
-        Some(s) => Some(parse_balance(s)?),
-        None => None,
-    };
 
     // Stamp the full instant by default (like a note); `--date` overrides.
     let date = Some(match args.date.as_deref() {
@@ -932,6 +953,66 @@ fn build_txn(
         split,
         memo: args.memo.join(" "),
     })
+}
+
+/// The core of a transaction parsed from a `-T` spec.
+struct TxnShape {
+    account: String,
+    kind: Kind,
+    other: Option<String>,
+    assert: Option<i64>,
+}
+
+/// Parse a symbolic `-T` spec into a transaction shape:
+///   `A -> B`  money leaves A → expense into category B, or transfer to account B
+///   `A <- B`  money enters A → income from category B, or transfer from account B
+///   `A = N`   assert A's balance is N (no flow)
+/// A target is an account when written `@name` (or bare and declared), a category
+/// when `#name` (or bare and not declared).
+fn parse_txn_spec(spec: &str, accounts: &[String]) -> Result<TxnShape, String> {
+    if let Some((l, r)) = spec.split_once("->") {
+        let (is_acct, name) = classify_target(r, accounts)?;
+        let kind = if is_acct { Kind::Transfer } else { Kind::Expense };
+        return Ok(TxnShape { account: spec_account(l)?, kind, other: Some(name), assert: None });
+    }
+    if let Some((l, r)) = spec.split_once("<-") {
+        let a = spec_account(l)?;
+        let (is_acct, name) = classify_target(r, accounts)?;
+        return Ok(if is_acct {
+            // transfer from account `name` into `a`
+            TxnShape { account: name, kind: Kind::Transfer, other: Some(a), assert: None }
+        } else {
+            // income into `a` from category `name`
+            TxnShape { account: a, kind: Kind::Income, other: Some(name), assert: None }
+        });
+    }
+    if let Some((l, r)) = spec.split_once('=') {
+        let assert = parse_balance(r.trim())?;
+        return Ok(TxnShape { account: spec_account(l)?, kind: Kind::Expense, other: None, assert: Some(assert) });
+    }
+    Err(format!("ledger add: -T wants `A -> B`, `A <- B`, or `A = N`; got: {spec}"))
+}
+
+/// The left-hand account of a `-T` spec: drop an optional `@`, validate, normalize.
+fn spec_account(s: &str) -> Result<String, String> {
+    let t = s.trim();
+    let t = t.strip_prefix('@').unwrap_or(t).trim();
+    Ok(ledger::normalize_name(&clean_link("account", t)?))
+}
+
+/// Classify a `-T` target as `(is_account, normalized_name)`: `@name` forces an
+/// account, `#name` a category, and a bare name is an account iff it is declared.
+fn classify_target(s: &str, accounts: &[String]) -> Result<(bool, String), String> {
+    let t = s.trim();
+    if let Some(x) = t.strip_prefix('@') {
+        return Ok((true, ledger::normalize_name(&clean_link("account", x)?)));
+    }
+    if let Some(x) = t.strip_prefix('#') {
+        return Ok((false, ledger::normalize_name(&clean_link("category", x)?)));
+    }
+    let name = ledger::normalize_name(&clean_link("name", t)?);
+    let is_acct = accounts.contains(&name);
+    Ok((is_acct, name))
 }
 
 /// Parse `--split CAT=AMOUNT` args into `(normalized category, minor units)`.
@@ -999,7 +1080,8 @@ mod tests {
         AddArgs {
             amount: "4.50".into(),
             memo: vec!["Blue".into(), "Bottle".into()],
-            account: "cash".into(),
+            account: Some("cash".into()),
+            txn: None,
             category: Some("coffee".into()),
             split: vec![],
             to: None,
@@ -1020,21 +1102,47 @@ mod tests {
     }
 
     #[test]
+    fn txn_spec_shapes() {
+        let accts = vec!["revolut".to_string(), "cash".to_string()];
+        let build = |spec: &str| {
+            let mut a = add_args();
+            (a.account, a.category, a.txn) = (None, None, Some(spec.to_string()));
+            build_txn(a, now(), "EUR", &accts).unwrap()
+        };
+        // income: revolut <- salary
+        let t = build("revolut <- salary");
+        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Income, "revolut", Some("salary")));
+        // expense: target is an undeclared category
+        let t = build("revolut -> food/out");
+        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Expense, "revolut", Some("food/out")));
+        // transfer: target is a declared account
+        let t = build("revolut -> cash");
+        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Transfer, "revolut", Some("cash")));
+        // `@` forces a transfer even when undeclared
+        let t = build("revolut -> @wallet");
+        assert_eq!(t.kind, Kind::Transfer);
+        assert_eq!(t.other.as_deref(), Some("wallet"));
+        // assertion: revolut = 2300
+        let t = build("revolut = 2300");
+        assert_eq!((t.account.as_str(), t.assert), ("revolut", Some(230000)));
+    }
+
+    #[test]
     fn used_names_by_kind() {
         // Expense: account + category.
-        let t = build_txn(add_args(), now(), "EUR").unwrap();
+        let t = build_txn(add_args(), now(), "EUR", &[]).unwrap();
         assert_eq!(used_names(&t), (vec!["cash".into()], vec!["coffee".into()]));
 
         // Transfer: two accounts, no category.
         let mut a = add_args();
         (a.to, a.category) = (Some("savings".into()), None);
-        let t = build_txn(a, now(), "EUR").unwrap();
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(used_names(&t), (vec!["cash".into(), "savings".into()], vec![]));
 
         // Split: account + each leg category.
         let mut a = add_args();
         (a.amount, a.category, a.split) = ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
-        let t = build_txn(a, now(), "EUR").unwrap();
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(used_names(&t), (vec!["cash".into()], vec!["food".into(), "tax".into()]));
     }
 
@@ -1089,7 +1197,7 @@ mod tests {
 
     #[test]
     fn maps_expense_args() {
-        let t = build_txn(add_args(), now(), "EUR").unwrap();
+        let t = build_txn(add_args(), now(), "EUR", &[]).unwrap();
         assert_eq!(t.kind, Kind::Expense);
         assert_eq!((t.amount, t.account.as_str(), t.other.as_deref()), (450, "cash", Some("coffee")));
         assert_eq!(t.memo, "Blue Bottle");
@@ -1103,7 +1211,7 @@ mod tests {
         a.income = true;
         a.category = Some("salary".into());
         a.amount = "2400".into();
-        let t = build_txn(a, now(), "EUR").unwrap();
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.kind, Kind::Income);
         assert_eq!(t.amount, 240000);
         assert_eq!(t.other.as_deref(), Some("salary"));
@@ -1115,7 +1223,7 @@ mod tests {
         a.category = None;
         a.to = Some("checking".into());
         a.amount = "200".into();
-        let t = build_txn(a, now(), "EUR").unwrap();
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.kind, Kind::Transfer);
         assert_eq!((t.account.as_str(), t.other.as_deref()), ("cash", Some("checking")));
     }
@@ -1124,7 +1232,7 @@ mod tests {
     fn projects_normalized_slash_preserved() {
         let mut a = add_args();
         a.project = vec!["Japan-Trip/Work".into()];
-        assert_eq!(build_txn(a, now(), "EUR").unwrap().projects, vec!["japan-trip/work"]);
+        assert_eq!(build_txn(a, now(), "EUR", &[]).unwrap().projects, vec!["japan-trip/work"]);
     }
 
     #[test]
@@ -1132,7 +1240,7 @@ mod tests {
         let mut a = add_args();
         a.date = Some("2026-07-15".into()); // date-only → that day at local midnight
         a.cleared = true;
-        let t = build_txn(a, now(), "EUR").unwrap();
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.state, State::Cleared);
         assert_ne!(t.date, Some(now()));
         assert_eq!(t.date.unwrap().format("%Y-%m-%d").to_string(), "2026-07-15");
@@ -1141,8 +1249,8 @@ mod tests {
     #[test]
     fn rejects_bracket_in_account() {
         let mut a = add_args();
-        a.account = "ca[sh".into();
-        assert!(build_txn(a, now(), "EUR").is_err());
+        a.account = Some("ca[sh".into());
+        assert!(build_txn(a, now(), "EUR", &[]).is_err());
     }
 
     #[test]
@@ -1152,7 +1260,7 @@ mod tests {
         a.category = None;
         a.memo = vec!["Costco".into()];
         a.split = vec!["food=60".into(), "household=25".into(), "tax=5".into()];
-        let t = build_txn(a, now(), "EUR").unwrap();
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.amount, 9000);
         assert_eq!(t.other, None);
         assert_eq!(t.split, vec![("food".into(), 6000), ("household".into(), 2500), ("tax".into(), 500)]);
@@ -1162,21 +1270,21 @@ mod tests {
         bad.amount = "90".into();
         bad.category = None;
         bad.split = vec!["food=60".into(), "tax=5".into()];
-        assert!(build_txn(bad, now(), "EUR").is_err());
+        assert!(build_txn(bad, now(), "EUR", &[]).is_err());
     }
 
     #[test]
     fn assert_flag_parses_signed_balance() {
         let mut a = add_args();
         a.assert = Some("-12.00".into());
-        assert_eq!(build_txn(a, now(), "EUR").unwrap().assert, Some(-1200));
+        assert_eq!(build_txn(a, now(), "EUR", &[]).unwrap().assert, Some(-1200));
     }
 
     #[test]
     fn rejects_invalid_date() {
         let mut a = add_args();
         a.date = Some("18/07/2026".into());
-        assert!(build_txn(a, now(), "EUR").is_err());
+        assert!(build_txn(a, now(), "EUR", &[]).is_err());
     }
 
     #[test]
@@ -1186,7 +1294,7 @@ mod tests {
         let mut a = add_args();
         a.memo = vec!["latte".into()];
         a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
-        let entry = ledger::format_entry(&build_txn(a, now(), "EUR").unwrap());
+        let entry = ledger::format_entry(&build_txn(a, now(), "EUR", &[]).unwrap());
         assert!(entry.contains('\n'), "should wrap: {entry}");
         for line in entry.lines().skip(1) {
             assert!(line.chars().count() <= 79, "continuation over 79: {line}");

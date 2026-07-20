@@ -220,6 +220,23 @@ A back-dated entry lands in _its own_ day's file
 (`.../2026/07/2026-07-01+ledger.md`), not today's — so bulk history imports
 file each transaction where it belongs.
 
+## 3.4 Symbolic shorthand (`-T`)
+
+Instead of `-a`/`-c`/`--to`/`--income`/`--assert`, you can draw the transaction
+with a single `-T SPEC`, where the arrow shows which way the money flows around
+the first account:
+
+    $ plc ledger add 5000 pay   -T "revolut <- salary"     # income  (from a category)
+    $ plc ledger add 11   lunch -T "revolut -> food/out"   # expense (into a category)
+    $ plc ledger add 200  atm   -T "revolut -> cash"       # transfer (to an account)
+    $ plc ledger add 0    check -T "revolut = 2300"        # balance assertion
+
+The right-hand side is treated as an **account** (so `->`/`<-` is a transfer)
+when it is a declared account or written `@name`; otherwise it is a **category**
+(an expense/income). Force either with an explicit `@`/`#` prefix. `-T` is just
+shorthand — the flag form (`-a revolut -c salary --income`) is equivalent, and
+the two styles can't be mixed on one command.
+
 ---
 
 # 4 Structuring your ledgers
@@ -464,7 +481,9 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
 
     plc ledger                       seed/print today's ledger path (open it yourself)
     plc ledger add AMOUNT [MEMO…]    append a transaction (files it in its day)
-      -a, --account ACCOUNT       the account (required)
+      -a, --account ACCOUNT       the account (required unless -T supplies it)
+      -T, --txn SPEC              symbolic shape: `A -> B` / `A <- B` / `A = N`
+                                  (replaces -a/-c/--to/-i/--assert; see §3.4)
       -c, --category CATEGORY     expense/income category
           --to ACCOUNT            transfer destination (instead of a category)
           --split CAT=AMOUNT      split across categories (repeatable; must sum)
