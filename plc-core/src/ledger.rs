@@ -346,24 +346,23 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 /// Render a split transaction as a block: a head line carrying the (signed)
-/// total on its `@account`, then one `#[[category]] ±amount` posting line per
-/// split leg (signed like the total), then wrapped tags and memo.
+/// total on its `@account` — with the `~` tags trailing the account, as in a
+/// simple entry — then one `#[[category]] ±amount` posting line per split leg
+/// (signed like the total), then the wrapped memo.
 fn format_split(t: &Transaction) -> String {
-    // Head: the total on the account, with no category/tags/memo/split.
+    // Head: the total on the account, tags trailing it; no category/split/memo.
     let head = Transaction {
         other: None,
         assert: None,
-        projects: Vec::new(),
         split: Vec::new(),
         memo: String::new(),
-        ..t.clone()
+        ..t.clone() // projects retained so `~` tags stay on the head line
     };
     let sign = if matches!(t.kind, Kind::Income) { "+" } else { "-" };
     let mut lines = vec![format_line(&head)];
     for (cat, amt) in &t.split {
         lines.push(format!("    #[[{cat}]]  {sign}{} {}", format_amount(*amt), t.currency));
     }
-    wrap_into(&mut lines, t.projects.iter().map(|p| format!("~[[{p}]]")));
     wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
     lines.join("\n")
 }
@@ -1940,6 +1939,35 @@ mod tests {
         assert_eq!(eur.categories["household"], 2500);
         assert_eq!(eur.accounts["card"], -9000);
         assert_eq!(eur.residual(), 0);
+    }
+
+    #[test]
+    fn split_keeps_tags_on_the_head_line() {
+        // A split with a `~` tag: the tag trails the account on the head line
+        // (not a separate continuation line), and the block round-trips.
+        let t = Transaction {
+            id: None,
+            amount: 9000,
+            currency: "EUR".into(),
+            kind: Kind::Expense,
+            account: "cash".into(),
+            other: None,
+            assert: None,
+            date: None,
+            state: State::Uncleared,
+            projects: vec!["japan-trip/work".into()],
+            split: vec![("food".into(), 6000), ("household".into(), 3000)],
+            memo: "Costco".into(),
+        };
+        let block = format_entry(&t);
+        assert_eq!(
+            block,
+            "$ -90.00 EUR  @[[cash]] ~[[japan-trip/work]]\n\
+             \x20   #[[food]]  -60.00 EUR\n\
+             \x20   #[[household]]  -30.00 EUR\n\
+             \x20   Costco"
+        );
+        assert_eq!(parse_entries(&block, EUR), vec![t]);
     }
 
     #[test]
