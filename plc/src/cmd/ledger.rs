@@ -971,7 +971,8 @@ fn build_txn(
         State::Uncleared
     };
 
-    Ok(Transaction {
+    let mut txn = Transaction {
+        id: None,
         amount,
         currency,
         kind,
@@ -983,7 +984,11 @@ fn build_txn(
         projects,
         split,
         memo: args.memo.join(" "),
-    })
+    };
+    // Seed the frozen content-hash id now, so every added transaction is written
+    // with a stable `^id` handle. `now` is injected, so this is deterministic.
+    txn.id = Some(ledger::txn_id(&txn));
+    Ok(txn)
 }
 
 /// The core of a transaction parsed from a `-T` spec.

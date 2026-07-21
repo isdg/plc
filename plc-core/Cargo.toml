@@ -8,4 +8,5 @@ path = "src/lib.rs"
 
 [dependencies]
 walkdir.workspace = true
+sha2.workspace = true
 chrono.workspace = true

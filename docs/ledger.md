@@ -150,15 +150,19 @@ transactions:
 
 ## 3.1 Anatomy of a transaction line
 
-    $ 2026-07-18 09:30:00 +0200 * -4.50 EUR  @[[cash]] #[[coffee]] = 195.50 EUR ~[[trip]]
-    │ └── timestamp ──────────┘ │ └amt┘ └cur┘ └─account─┘ └category┘ └─assertion─┘ └─tag─┘
-    └ marks the line a transaction   │
-                                     └ state: * cleared, ! pending
+    $ ^09c1bce0826d 2026-07-18 09:30:00 +0200 * -4.50 EUR  @[[cash]] #[[coffee]] = 195.50 EUR ~[[trip]]
+    │ └─── id ────┘ └── timestamp ──────────┘ │ └amt┘ └cur┘ └─account─┘ └category┘ └─assertion─┘ └─tag─┘
+    └ marks the line a transaction            │
+                                              └ state: * cleared, ! pending
 
 Every field except the amount and one account is optional. In order:
 
 - **`$`** — a leading `$` (then a space) marks the line as a transaction; any
   other line is prose and is ignored.
+- **`^id`** — a stable 12-hex short hash (git-commit style), a durable handle for
+  a single transaction. `plc ledger add` seeds it from the transaction's content
+  and then **freezes** it: editing the line later does not change the id. Legacy
+  lines have none until `plc doctor` backfills them. See §7.1.
 - **timestamp** — `YYYY-MM-DD HH:MM:SS ±ZZZZ`, the same format as the note
   stamp line. `plc ledger add` stamps _now_ by default; omit it and the
   transaction inherits the ledger file's day.

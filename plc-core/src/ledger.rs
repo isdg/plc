@@ -31,6 +31,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate};
+use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::calendar::last_day_of_month;
@@ -244,6 +245,12 @@ pub enum Kind {
 /// destination account (transfer); it is `None` for an uncategorized expense/income.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
+    /// A stable git-style short hash (12 hex chars), seeded from the
+    /// transaction's content at creation and then **frozen** — an immutable
+    /// handle for editing tooling, not a live checksum, so a later edit does
+    /// not change it. `None` on a legacy line without one (until `plc doctor`
+    /// backfills it). See [`txn_id`].
+    pub id: Option<String>,
     pub amount: i64,
     pub currency: String,
     pub kind: Kind,
@@ -271,6 +278,9 @@ pub struct Transaction {
 pub fn format_line(t: &Transaction) -> String {
     let signed = signed_amount(t);
     let mut line = String::from("$ ");
+    if let Some(id) = &t.id {
+        line.push_str(&format!("^{id} "));
+    }
     if let Some(ts) = t.date {
         line.push_str(&ts.format(TIMESTAMP_FMT).to_string());
         line.push(' ');
@@ -313,6 +323,26 @@ pub fn format_entry(t: &Transaction) -> String {
     let mut lines = vec![format_line(&head)];
     wrap_into(&mut lines, t.memo.split_whitespace().map(str::to_string));
     lines.join("\n")
+}
+
+/// Seed a transaction's stable id: the first 12 hex chars of the SHA-256 of its
+/// canonical [`format_entry`] block rendered **without** an id. Deterministic
+/// and content-addressed (git-style), but assigned once and then frozen onto the
+/// line — a later edit does not change the stored id. Because the canonical form
+/// includes the timestamp, transactions a second apart get distinct ids.
+pub fn txn_id(t: &Transaction) -> String {
+    let bare = Transaction { id: None, ..t.clone() };
+    let digest = Sha256::digest(format_entry(&bare).as_bytes());
+    to_hex(&digest[..6]) // 6 bytes → 12 hex chars
+}
+
+/// Lowercase-hex encoding of `bytes` (avoids pulling in the `hex` crate).
+fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
 }
 
 /// Render a split transaction as a block: a head line carrying the (signed)
@@ -368,6 +398,14 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
     // The `$` must be a standalone sigil, not the first char of some `$word`.
     if !rest.starts_with(|c: char| c.is_whitespace()) {
         return None;
+    }
+
+    // Optional leading `^<hex>` id (git-style short hash), before the timestamp.
+    // A legacy line without one parses to `id: None` (backfilled by `plc doctor`).
+    let mut id = None;
+    if let Some((hex, after)) = take_id(rest) {
+        id = Some(hex.to_string());
+        rest = after;
     }
 
     // Optional leading timestamp (`YYYY-MM-DD HH:MM:SS ±ZZZZ`) and reconciliation
@@ -435,7 +473,7 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
 
     let memo = rest.trim().to_string();
     let split = Vec::new(); // populated from `#[[cat]] amount` continuation lines
-    Some(Transaction { amount, currency, kind, account, other, assert, date, state, projects, split, memo })
+    Some(Transaction { id, amount, currency, kind, account, other, assert, date, state, projects, split, memo })
 }
 
 /// If `s` begins with a `~[[tag]]`, push its normalized tag onto `projects` and
@@ -533,6 +571,23 @@ fn take_timestamp(s: &str) -> Option<(DateTime<FixedOffset>, &str)> {
     let (z, rest) = next_token(r2)?;
     let dt = DateTime::parse_from_str(&format!("{d} {t} {z}"), TIMESTAMP_FMT).ok()?;
     Some((dt, rest))
+}
+
+/// If `s` begins with a `^<hex>` id token (a git-style short hash), consume it,
+/// returning the hex digits (without the `^`) and the remainder. `None` when
+/// there is no leading `^`, or the token after it is not all hex digits — so a
+/// stray `^` in prose is never mistaken for an id.
+fn take_id(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim_start();
+    if !s.starts_with('^') {
+        return None;
+    }
+    let (tok, rest) = next_token(s)?;
+    let hex = tok.strip_prefix('^')?;
+    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((hex, rest))
 }
 
 /// Split off the first whitespace-delimited token, returning it and the rest
@@ -1302,6 +1357,7 @@ mod tests {
 
     fn txn(amount: i64, currency: &str, kind: Kind, account: &str, other: Option<&str>) -> Transaction {
         Transaction {
+            id: None,
             amount,
             currency: currency.into(),
             kind,
@@ -1318,6 +1374,7 @@ mod tests {
 
     fn expense() -> Transaction {
         Transaction {
+            id: None,
             amount: 450,
             currency: "EUR".into(),
             kind: Kind::Expense,
@@ -1342,6 +1399,7 @@ mod tests {
     #[test]
     fn round_trip_income() {
         let t = Transaction {
+            id: None,
             amount: 240000,
             currency: "EUR".into(),
             kind: Kind::Income,
@@ -1361,6 +1419,7 @@ mod tests {
     #[test]
     fn round_trip_transfer() {
         let t = Transaction {
+            id: None,
             amount: 20000,
             currency: "EUR".into(),
             kind: Kind::Transfer,
@@ -1380,6 +1439,7 @@ mod tests {
     #[test]
     fn round_trip_no_category_no_memo() {
         let t = Transaction {
+            id: None,
             amount: 1000,
             currency: "EUR".into(),
             kind: Kind::Expense,
@@ -1489,6 +1549,7 @@ mod tests {
     #[test]
     fn round_trip_with_timestamp_and_state() {
         let t = Transaction {
+            id: None,
             amount: 450,
             currency: "EUR".into(),
             kind: Kind::Expense,
@@ -1506,6 +1567,44 @@ mod tests {
             "$ 2026-07-18 09:30:00 +0200 * -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle"
         );
         assert_eq!(parse_line(&format_line(&t), EUR).as_ref(), Some(&t));
+    }
+
+    #[test]
+    fn round_trip_with_id() {
+        // The `^id` leads the line, right after `$`, and round-trips intact.
+        let t = Transaction { id: Some("a1b2c3d4e5f6".into()), ..expense() };
+        assert_eq!(
+            format_line(&t),
+            "$ ^a1b2c3d4e5f6 -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle"
+        );
+        assert_eq!(parse_line(&format_line(&t), EUR).as_ref(), Some(&t));
+    }
+
+    #[test]
+    fn txn_id_is_deterministic_and_content_addressed() {
+        let t = expense();
+        let id = txn_id(&t);
+        assert_eq!(id.len(), 12);
+        assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(txn_id(&t), id); // stable across calls
+        // Seeding ignores any id already present (content-only).
+        let with = Transaction { id: Some("ffffffffffff".into()), ..t.clone() };
+        assert_eq!(txn_id(&with), id);
+        // A content change yields a different id.
+        let other = Transaction { amount: 999, ..t };
+        assert_ne!(txn_id(&other), id);
+    }
+
+    #[test]
+    fn legacy_line_has_no_id_and_reprints_identically() {
+        // A line without a `^id` parses to id: None and reprints byte-identically.
+        let t = parse_line("$ -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle", EUR).unwrap();
+        assert_eq!(t.id, None);
+        assert_eq!(format_line(&t), "$ -4.50 EUR  @[[cash]] #[[coffee]]  Blue Bottle");
+        // A stray caret in a memo is not mistaken for an id.
+        let t = parse_line("$ -4.50 @[[cash]] #[[coffee]]  cost ^ up", EUR).unwrap();
+        assert_eq!(t.id, None);
+        assert_eq!(t.memo, "cost ^ up");
     }
 
     #[test]
@@ -1586,6 +1685,24 @@ mod tests {
         assert!(again.contains("already formatted"), "not idempotent: {again}");
         assert_eq!(fs::read_to_string(&file).unwrap(), after);
 
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fmt_preserves_an_existing_id() {
+        // An entry that already carries a `^id` keeps it verbatim through fmt
+        // (fmt reformats but never re-seeds or drops the frozen handle).
+        let dir = ledger_dir(
+            "finfmtid",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^a1b2c3d4e5f6 -4.50 EUR   @[[cash]] #[[coffee]]   latte\n",
+        );
+        let file = dir.join("2026/07/2026-07-19+ledger.md");
+        fmt(&dir, EUR, false).unwrap();
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(after.contains("$ ^a1b2c3d4e5f6 "), "id dropped: {after}");
+        assert_eq!(parse_entries(&after, EUR)[0].id.as_deref(), Some("a1b2c3d4e5f6"));
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1709,6 +1826,7 @@ mod tests {
         // category, assertion) stays on the head — even past MAX_LINE — while
         // the tags and memo wrap onto continuation lines kept within MAX_LINE.
         let t = Transaction {
+            id: None,
             amount: 4250,
             currency: "EUR".into(),
             kind: Kind::Expense,
@@ -1838,6 +1956,7 @@ mod tests {
     #[test]
     fn round_trip_with_projects() {
         let t = Transaction {
+            id: None,
             amount: 8000,
             currency: "EUR".into(),
             kind: Kind::Expense,
@@ -1869,6 +1988,7 @@ mod tests {
     #[test]
     fn long_entry_wraps_to_block_and_round_trips() {
         let t = Transaction {
+            id: None,
             amount: 45,
             currency: "EUR".into(),
             kind: Kind::Expense,

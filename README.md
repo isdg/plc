@@ -220,6 +220,8 @@ transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
 the amount. You can declare a vocabulary of accounts (`--physical`) and
 categories (`--ephemeral`) with `plc ledger declare` that `add` validates against,
 and reverse a mistake with `plc ledger undo`. Settings live in `.plc/config`.
+Every added transaction carries a stable `^`-prefixed short hash (git-commit
+style) — a frozen handle for future edit/reorder tooling.
 **See [docs/ledger.md](docs/ledger.md) for the complete ledger manual.**
 
 ### plc doctor `[--fix]`
