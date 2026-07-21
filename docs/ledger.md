@@ -447,11 +447,20 @@ and reports what's off, with a repair command for each finding:
       ! no default currency in .plc/config — ledgers use EUR
       · accounts: guard off (12 used, none declared) — `plc ledger declare --import --physical`
 
-It also flags a legacy `.last-do` left at the vault root. `plc doctor --fix`
-applies the safe repairs — importing undeclared names into an already-active
-guard and migrating the pointer into `.plc/` — while leaving judgement calls
-(an unused declaration might be a typo *or* a real bucket you've yet to use) for
-you to resolve with the printed command.
+It also backfills any transaction still missing a stable `^id` (§3.1) — an entry
+imported or hand-written before ids existed — seeding a frozen git-style hash
+onto each, and flags a legacy `.last-do` left at the vault root:
+
+    $ plc doctor
+      ! 2 transaction(s) missing a stable id
+          assign them: plc doctor --fix (frozen git-style ^id)
+
+`plc doctor --fix` applies the safe repairs — importing undeclared names into an
+already-active guard, setting the default currency, assigning the missing ids,
+and migrating the pointer into `.plc/` — while leaving judgement calls (an unused
+declaration might be a typo *or* a real bucket you've yet to use, and two
+transactions sharing an id must be told apart by hand) for you to resolve with
+the printed command.
 
 ---
 

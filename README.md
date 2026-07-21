@@ -230,11 +230,11 @@ Check the vault's health and propose repairs. It runs even without a resolved
 vault, so it can diagnose the config itself: whether `PALACE_DIR` is set (env or
 `~/.plcrc`) and resolves to a real vault. It then audits the ledger
 `.plc/config` — accounts/categories used but not declared (or vice versa), a
-name declared as both `@` and `#`, a missing default currency, a legacy
-`.last-do` pointer — printing a fix command for each. `--fix` applies the safe
-ones (writing `~/.plcrc`, importing names, setting the currency, migrating the
-pointer). It's built to grow into a whole-vault checkup (orphans, stale
-pointers, broken links).
+name declared as both `@` and `#`, a missing default currency, transactions
+missing a stable `^id`, a legacy `.last-do` pointer — printing a fix command for
+each. `--fix` applies the safe ones (writing `~/.plcrc`, importing names, setting
+the currency, backfilling ids, migrating the pointer). It's built to grow into a
+whole-vault checkup (orphans, stale pointers, broken links).
 
     $ plc doctor
     $ plc doctor --fix

@@ -1018,6 +1018,84 @@ fn reformat_content(content: &str, default_currency: &str) -> String {
     format!("{header}\n\n{}\n", rendered.join("\n"))
 }
 
+/// Backfill a stable [`txn_id`] onto every transaction that lacks one across all
+/// `*+ledger.md` files under `root`, seeding it from content and re-rendering the
+/// file canonically (existing ids are preserved verbatim — never re-seeded). With
+/// `apply`, write the changed files; otherwise this is a dry run. Returns the
+/// number of ids assigned. Mirrors [`fmt`]; backs `plc doctor`'s id repair.
+pub fn backfill_ids(root: &Path, default_currency: &str, apply: bool) -> Result<usize, String> {
+    if !root.is_dir() {
+        return Err(format!("ledger: cannot read {}", root.display()));
+    }
+    let mut assigned = 0usize;
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("+ledger.md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let (new_content, count) = seed_missing_ids(&content, default_currency);
+        if count > 0 {
+            assigned += count;
+            if apply && new_content != content {
+                fs::write(path, &new_content)
+                    .map_err(|e| format!("ledger backfill: {}: {e}", path.display()))?;
+            }
+        }
+    }
+    Ok(assigned)
+}
+
+/// Rewrite one ledger file's text with a fresh id on each id-less transaction,
+/// returning `(new_text, ids_assigned)`. Like [`reformat_content`] but stamps a
+/// [`txn_id`] onto every entry whose `id` is `None` before re-rendering.
+fn seed_missing_ids(content: &str, default_currency: &str) -> (String, usize) {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some(first) = lines.iter().position(|l| parse_line(l, default_currency).is_some()) else {
+        return (content.to_string(), 0);
+    };
+    let mut end = first;
+    while end > 0 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    let header = lines[..end].join("\n");
+    let body = lines[first..].join("\n");
+    let mut assigned = 0usize;
+    let rendered: Vec<String> = parse_entries(&body, default_currency)
+        .into_iter()
+        .map(|mut t| {
+            if t.id.is_none() {
+                t.id = Some(txn_id(&t));
+                assigned += 1;
+            }
+            format_entry(&t)
+        })
+        .collect();
+    (format!("{header}\n\n{}\n", rendered.join("\n")), assigned)
+}
+
+/// Ids shared by more than one transaction across all ledgers (a handle should
+/// be unique). Sorted, de-duplicated. Empty when every id is distinct. Not
+/// auto-fixable — `plc doctor` reports these for a manual edit.
+pub fn duplicate_ids(root: &Path, default_currency: &str) -> Result<Vec<String>, String> {
+    let (items, _) = collect(root, default_currency, &Filter::default())?;
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, t) in &items {
+        if let Some(id) = &t.id {
+            *counts.entry(id.clone()).or_default() += 1;
+        }
+    }
+    Ok(counts.into_iter().filter(|(_, n)| *n > 1).map(|(id, _)| id).collect())
+}
+
 /// A transaction paired with its effective date (its own timestamp, or the
 /// ledger file's day when it carries none).
 type Dated = (Option<NaiveDate>, Transaction);
@@ -1703,6 +1781,51 @@ mod tests {
         let after = fs::read_to_string(&file).unwrap();
         assert!(after.contains("$ ^a1b2c3d4e5f6 "), "id dropped: {after}");
         assert_eq!(parse_entries(&after, EUR)[0].id.as_deref(), Some("a1b2c3d4e5f6"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn backfill_ids_assigns_missing_and_is_idempotent() {
+        // Two legacy (id-less) entries; one already carries an id and must be
+        // left untouched.
+        let dir = ledger_dir(
+            "finbackfill",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^deadbeef0001 -1.00 EUR  @[[cash]] #[[tea]]\n\
+             $ -4.50 EUR  @[[cash]] #[[coffee]]\n\
+             $ -9.00 EUR  @[[cash]] #[[lunch]]\n",
+        );
+        let file = dir.join("2026/07/2026-07-19+ledger.md");
+
+        // Dry run reports the two missing without writing (entries stay id-less).
+        assert_eq!(backfill_ids(&dir, EUR, false).unwrap(), 2);
+        let before = parse_entries(&fs::read_to_string(&file).unwrap(), EUR);
+        assert_eq!((before[1].id.as_deref(), before[2].id.as_deref()), (None, None));
+
+        // Apply assigns exactly the two missing; the pre-existing id survives.
+        assert_eq!(backfill_ids(&dir, EUR, true).unwrap(), 2);
+        let txns = parse_entries(&fs::read_to_string(&file).unwrap(), EUR);
+        assert_eq!(txns[0].id.as_deref(), Some("deadbeef0001"));
+        assert!(txns[1].id.as_deref().is_some_and(|id| id.len() == 12));
+        assert!(txns[2].id.as_deref().is_some_and(|id| id.len() == 12));
+
+        // Second apply is a no-op (nothing left missing).
+        assert_eq!(backfill_ids(&dir, EUR, true).unwrap(), 0);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn duplicate_ids_detects_a_clash() {
+        let dir = ledger_dir(
+            "findupids",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^cafef00d1234 -1.00 EUR  @[[cash]] #[[tea]]\n\
+             $ ^cafef00d1234 -2.00 EUR  @[[cash]] #[[coffee]]\n\
+             $ ^0000feedbead -3.00 EUR  @[[cash]] #[[lunch]]\n",
+        );
+        assert_eq!(duplicate_ids(&dir, EUR).unwrap(), vec!["cafef00d1234".to_string()]);
         fs::remove_dir_all(&dir).ok();
     }
 

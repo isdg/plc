@@ -845,6 +845,28 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         }
     }
 
+    // Transactions with no stable `^id` (pre-id ledgers). `--fix` backfills a
+    // frozen content-hash id onto each; the write happens inside `backfill_ids`.
+    let cur = currency_from(&settings);
+    let missing = ledger::backfill_ids(&root, &cur, fix)?;
+    if missing > 0 {
+        fixable += missing;
+        findings.push(format!("  ! {missing} transaction(s) missing a stable id"));
+        findings.push("      assign them: plc doctor --fix (frozen git-style ^id)".to_string());
+        if fix {
+            fixed.push(format!("assigned {missing} transaction id(s)"));
+        }
+    }
+
+    // Two transactions sharing an id — a handle should be unique (not auto-fixable;
+    // edit one so it re-seeds). Runs after any backfill above, so it also catches
+    // ids just assigned to genuinely identical entries.
+    let dups = ledger::duplicate_ids(&root, &cur)?;
+    if !dups.is_empty() {
+        findings.push(format!("  ! {} duplicate transaction id(s) — edit one so it re-seeds:", dups.len()));
+        findings.extend(dups.iter().map(|id| format!("      ^{id}")));
+    }
+
     // A pre-`.plc` do-pointer left at the vault root.
     let legacy = palace.root().join(".last-do");
     if legacy.is_file() {
