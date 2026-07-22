@@ -95,6 +95,9 @@ pub struct LedgerArgs {
 enum LedgerCmd {
     /// Append a transaction to today's ledger.
     Add(AddArgs),
+    /// Edit a transaction by its ^id (a unique prefix, git-style). Bare = print
+    /// its file path:line for an editor; with flags = apply the changes in place.
+    Edit(EditArgs),
     /// Summarize transactions across all ledgers (net, by category, by account).
     Report(ReportArgs),
     /// List matching transactions chronologically with a running total.
@@ -282,10 +285,71 @@ pub struct AddArgs {
     assert: Option<String>,
 }
 
+/// `plc ledger edit <ID>`: change one transaction, found by its `^id` (a unique
+/// prefix suffices). With no field flags it just prints the transaction's
+/// `path:line` (for an editor to open); any field flag applies the change in
+/// place, keeping the frozen id. A `--date` that lands on another day moves the
+/// entry to that day's ledger file.
+#[derive(Args)]
+pub struct EditArgs {
+    /// The transaction's `^id` — a unique prefix is enough (git-style).
+    #[arg(value_name = "ID")]
+    id: String,
+    /// New amount in the major unit (arithmetic allowed); keeps the direction.
+    #[arg(long = "amount", value_name = "AMOUNT")]
+    amount: Option<String>,
+    /// Replace the memo (empty string clears it).
+    #[arg(long = "memo", value_name = "MEMO")]
+    memo: Option<String>,
+    /// Change the account the money moves through.
+    #[arg(short = 'a', long = "account", value_name = "ACCOUNT")]
+    account: Option<String>,
+    /// Set the category (expense/income); clears any transfer/split.
+    #[arg(short = 'c', long = "category", value_name = "CATEGORY", conflicts_with = "to")]
+    category: Option<String>,
+    /// Make it a transfer to this account instead.
+    #[arg(long = "to", value_name = "ACCOUNT")]
+    to: Option<String>,
+    /// Flip the direction to income (inflow).
+    #[arg(short = 'i', long = "income", conflicts_with_all = ["expense", "to"])]
+    income: bool,
+    /// Flip the direction to expense (outflow).
+    #[arg(long = "expense", conflicts_with = "to")]
+    expense: bool,
+    /// Change the currency ISO code.
+    #[arg(long = "cur", value_name = "CUR")]
+    currency: Option<String>,
+    /// Replace the project tags (repeatable).
+    #[arg(short = 'p', long = "project", value_name = "PROJECT")]
+    project: Vec<String>,
+    /// Drop all project tags.
+    #[arg(long = "no-projects", conflicts_with = "project")]
+    no_projects: bool,
+    /// Change the date (YYYY-MM-DD or a full timestamp).
+    #[arg(short = 'd', long = "date", value_name = "DATE")]
+    date: Option<String>,
+    /// Mark cleared (`*`).
+    #[arg(long = "cleared", conflicts_with_all = ["pending", "uncleared"])]
+    cleared: bool,
+    /// Mark pending (`!`).
+    #[arg(long = "pending", conflicts_with = "uncleared")]
+    pending: bool,
+    /// Clear the reconciliation state (uncleared).
+    #[arg(long = "uncleared")]
+    uncleared: bool,
+    /// Set the balance assertion.
+    #[arg(long = "assert", value_name = "BALANCE", allow_hyphen_values = true, conflicts_with = "no_assert")]
+    assert: Option<String>,
+    /// Remove the balance assertion.
+    #[arg(long = "no-assert")]
+    no_assert: bool,
+}
+
 pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
     match args.cmd {
         None => seed_today(palace),
         Some(LedgerCmd::Add(add_args)) => add(palace, add_args),
+        Some(LedgerCmd::Edit(edit_args)) => edit(palace, edit_args),
         Some(LedgerCmd::Report(report_args)) => report(palace, report_args),
         Some(LedgerCmd::Reg(report_args)) => reg(palace, report_args),
         Some(LedgerCmd::Balance(balance_args)) => balance(palace, balance_args),
@@ -618,6 +682,173 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
         .map_err(|e| format!("ledger: {e}"))?;
     let _ = sync_log(palace); // keep the recent cache current (best-effort)
     Ok(path.display().to_string())
+}
+
+/// `plc ledger edit <ID>`: locate a transaction by its `^id` and either print its
+/// `path:line` (no flags — for an editor to open) or apply the field edits in
+/// place (keeping the frozen id). A day-changing `--date` moves the entry to the
+/// right day's ledger file.
+fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
+    let cur = currency_from(&Settings::load(palace.root()));
+    let root = palace.root().join("notes/management/daily");
+    let matches = ledger::find_by_id(&root, &cur, &args.id)?;
+    if matches.is_empty() {
+        return Err(format!("ledger edit: no transaction with id ^{}", args.id));
+    }
+    if matches.len() > 1 {
+        let mut lines = vec![format!("ledger edit: ambiguous id ^{} — matches {}:", args.id, matches.len())];
+        lines.extend(matches.iter().map(|(p, t)| format!("  ^{}  {p}", t.id.as_deref().unwrap_or("?"))));
+        return Err(lines.join("\n"));
+    }
+    let (relpath, old) = matches.into_iter().next().unwrap();
+    let full_id = old.id.clone().ok_or_else(|| "ledger edit: matched transaction has no id".to_string())?;
+    let oldpath = root.join(&relpath);
+
+    // No field flags → locate mode: print `path:line` for the shell to open.
+    if !has_edits(&args) {
+        let line = head_line_number(&oldpath, &full_id)?;
+        return Ok(format!("{}:{}", oldpath.display(), line));
+    }
+
+    let edited = apply_edits(old, &args)?;
+
+    // A `--date` onto a different day moves the entry to that day's ledger file.
+    let old_day = rel_file_day(&relpath);
+    let new_day = edited.date.map(|d| d.date_naive());
+    if let (Some(o), Some(n)) = (old_day, new_day) {
+        if o != n {
+            if !ledger::rewrite_txn(&oldpath, &cur, &full_id, None)? {
+                return Err(format!("ledger edit: id ^{full_id} vanished from {relpath}"));
+            }
+            let (subdir, filename) = ledger_location(n);
+            let entry = ledger::format_entry(&edited);
+            let path = note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
+                .map_err(|e| format!("ledger edit: {e}"))?;
+            let _ = sync_log(palace);
+            return Ok(path.display().to_string());
+        }
+    }
+
+    // In place: rewrite the entry in its current file.
+    if !ledger::rewrite_txn(&oldpath, &cur, &full_id, Some(&edited))? {
+        return Err(format!("ledger edit: id ^{full_id} vanished from {relpath}"));
+    }
+    let _ = sync_log(palace);
+    Ok(oldpath.display().to_string())
+}
+
+/// Whether any field-editing flag was passed (as opposed to a bare locate).
+fn has_edits(a: &EditArgs) -> bool {
+    a.amount.is_some()
+        || a.memo.is_some()
+        || a.account.is_some()
+        || a.category.is_some()
+        || a.to.is_some()
+        || a.income
+        || a.expense
+        || a.currency.is_some()
+        || !a.project.is_empty()
+        || a.no_projects
+        || a.date.is_some()
+        || a.cleared
+        || a.pending
+        || a.uncleared
+        || a.assert.is_some()
+        || a.no_assert
+}
+
+/// Apply the requested field edits to `t`, returning the edited transaction. The
+/// `^id` is left untouched (a frozen handle survives an edit).
+fn apply_edits(mut t: Transaction, a: &EditArgs) -> Result<Transaction, String> {
+    // A split's amount is the sum of its legs; changing it here would unbalance
+    // the book, so refuse (edit the legs in the file, or undo and re-add).
+    if !t.split.is_empty() && a.amount.is_some() {
+        return Err("ledger edit: cannot change a split's amount — edit its legs in the file, or undo + re-add".to_string());
+    }
+    if let Some(s) = &a.amount {
+        t.amount = ledger::eval_amount(s).ok_or_else(|| format!("ledger edit: invalid amount: {s}"))?;
+    }
+    if let Some(m) = &a.memo {
+        t.memo = m.trim().to_string();
+    }
+    if let Some(acc) = &a.account {
+        t.account = ledger::normalize_name(&clean_link("account", acc)?);
+    }
+    if let Some(c) = &a.currency {
+        let c = c.trim().to_uppercase();
+        if !c.is_empty() {
+            t.currency = c;
+        }
+    }
+    // Kind / counterpart: --to makes a transfer, --category an expense/income.
+    if let Some(dest) = &a.to {
+        t.kind = Kind::Transfer;
+        t.other = Some(ledger::normalize_name(&clean_link("account", dest)?));
+        t.split.clear();
+    } else if let Some(cat) = &a.category {
+        if matches!(t.kind, Kind::Transfer) {
+            t.kind = Kind::Expense; // a category can't hang off a transfer
+        }
+        t.other = Some(ledger::normalize_name(&clean_link("category", cat)?));
+        t.split.clear();
+    }
+    if a.income {
+        t.kind = Kind::Income;
+    } else if a.expense {
+        t.kind = Kind::Expense;
+    }
+    if a.no_projects {
+        t.projects.clear();
+    } else if !a.project.is_empty() {
+        t.projects = a
+            .project
+            .iter()
+            .map(|p| clean_link("project", p).map(|p| ledger::normalize_name(&p)))
+            .collect::<Result<Vec<_>, _>>()?;
+    }
+    if let Some(d) = &a.date {
+        t.date = Some(parse_when(d)?);
+    }
+    if a.cleared {
+        t.state = State::Cleared;
+    } else if a.pending {
+        t.state = State::Pending;
+    } else if a.uncleared {
+        t.state = State::Uncleared;
+    }
+    if a.no_assert {
+        t.assert = None;
+    } else if let Some(s) = &a.assert {
+        t.assert = Some(parse_balance(s)?);
+    }
+
+    // A transaction must move between distinct buckets (mirrors `build_txn`).
+    let clashes = t.other.as_deref() == Some(t.account.as_str()) || t.split.iter().any(|(c, _)| c == &t.account);
+    if clashes {
+        return Err(if matches!(t.kind, Kind::Transfer) {
+            format!("ledger edit: source and destination are the same account (@{})", t.account)
+        } else {
+            format!("ledger edit: @{0} and #{0} are the same name — use distinct names", t.account)
+        });
+    }
+    Ok(t)
+}
+
+/// The 1-based line number of the `$` head line carrying `^full_id` in `path`.
+fn head_line_number(path: &std::path::Path, full_id: &str) -> Result<usize, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
+    let needle = format!("^{full_id}");
+    content
+        .lines()
+        .position(|l| l.trim_start().starts_with('$') && l.contains(&needle))
+        .map(|i| i + 1)
+        .ok_or_else(|| format!("ledger edit: id ^{full_id} not found in {}", path.display()))
+}
+
+/// The day encoded in a ledger's `…/YYYY-MM-DD+ledger.md` relative path.
+fn rel_file_day(rel: &str) -> Option<NaiveDate> {
+    let base = rel.rsplit('/').next()?;
+    NaiveDate::parse_from_str(base.get(..10)?, "%Y-%m-%d").ok()
 }
 
 /// The account(s) and category(ies) a transaction actually uses.
@@ -1397,5 +1628,81 @@ mod tests {
         for line in entry.lines().skip(1) {
             assert!(line.chars().count() <= 79, "continuation over 79: {line}");
         }
+    }
+
+    /// A bare `EditArgs` (locate mode); tests flip individual fields on.
+    fn edit_args(id: &str) -> EditArgs {
+        EditArgs {
+            id: id.into(),
+            amount: None,
+            memo: None,
+            account: None,
+            category: None,
+            to: None,
+            income: false,
+            expense: false,
+            currency: None,
+            project: vec![],
+            no_projects: false,
+            date: None,
+            cleared: false,
+            pending: false,
+            uncleared: false,
+            assert: None,
+            no_assert: false,
+        }
+    }
+
+    #[test]
+    fn has_edits_distinguishes_locate_from_edit() {
+        assert!(!has_edits(&edit_args("abc"))); // bare → locate
+        let mut a = edit_args("abc");
+        a.cleared = true;
+        assert!(has_edits(&a));
+    }
+
+    #[test]
+    fn edit_changes_fields_and_freezes_id() {
+        let base = build_txn(add_args(), now(), "EUR", &[]).unwrap(); // expense @cash #coffee
+        let id = base.id.clone();
+        assert!(id.is_some(), "add stamps an id");
+        let mut a = edit_args("x");
+        a.amount = Some("12.50".into());
+        a.memo = Some("team lunch".into());
+        a.cleared = true;
+        let t = apply_edits(base, &a).unwrap();
+        assert_eq!((t.amount, t.memo.as_str(), t.state), (1250, "team lunch", State::Cleared));
+        assert_eq!(t.kind, Kind::Expense); // unchanged
+        assert_eq!(t.id, id); // the frozen handle survives the edit
+    }
+
+    #[test]
+    fn edit_switches_direction() {
+        let base = build_txn(add_args(), now(), "EUR", &[]).unwrap();
+        let mut a = edit_args("x");
+        a.to = Some("savings".into());
+        let t = apply_edits(base.clone(), &a).unwrap();
+        assert_eq!((t.kind, t.other.as_deref()), (Kind::Transfer, Some("savings")));
+
+        let mut a = edit_args("x");
+        a.income = true;
+        assert_eq!(apply_edits(base, &a).unwrap().kind, Kind::Income);
+    }
+
+    #[test]
+    fn edit_rejects_split_amount_and_same_name() {
+        // Changing a split's total would unbalance the legs.
+        let mut aa = add_args();
+        (aa.amount, aa.category, aa.split) = ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
+        let split = build_txn(aa, now(), "EUR", &[]).unwrap();
+        let mut a = edit_args("x");
+        a.amount = Some("100".into());
+        assert!(apply_edits(split, &a).is_err());
+
+        // @cash and #cash are the same name.
+        let base = build_txn(add_args(), now(), "EUR", &[]).unwrap();
+        let mut a = edit_args("x");
+        a.category = Some("cash".into());
+        assert!(apply_edits(base, &a).is_err());
     }
 }

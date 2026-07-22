@@ -464,15 +464,38 @@ the printed command.
 
 ---
 
-# 8 Recent activity and undo
+# 8 Recent activity, editing, and undo
 
 `.plc/last-transactions` is an always-current cache of your recent transactions,
-rebuilt from the ledgers on every `add` / `last` / `undo` (self-creating, so it
-covers all history — imports and hand-edits included — and never goes stale).
+rebuilt from the ledgers on every `add` / `edit` / `last` / `undo` (self-creating,
+so it covers all history — imports and hand-edits included — and never goes stale).
 
 `plc ledger last` shows the most recent transactions, newest first:
 
     $ plc ledger last -n 3         # the 3 most recent
+
+## 8.1 Editing a transaction by its id
+
+Every transaction carries a stable `^id` (§3.1). `plc ledger edit <ID>` targets one
+by that id — a **unique prefix is enough**, exactly like a git short hash. Its
+frozen id does **not** change when you edit it, so the handle stays valid.
+
+With no flags it just prints the transaction's `path:line`, so the shell wrapper
+can open it in `$EDITOR`:
+
+    $ plc ledger edit 85b4d8
+    …/2026/07/2026-07-20+ledger.md:7
+
+With field flags it rewrites the entry in place (same flags as `add`) and prints
+the file path:
+
+    $ plc ledger edit 85b4d8 --amount 12.50 --memo "team lunch" --cleared
+    $ plc ledger edit 85b4d8 --category food/out          # recategorize
+    $ plc ledger edit 85b4d8 --to savings                 # turn it into a transfer
+
+A `--date` that lands on a different day moves the entry into that day's ledger
+file. An ambiguous prefix (or an unknown id) is reported rather than guessed; a
+split's total can't be changed this way (edit its legs in the file instead).
 
 `plc ledger undo` removes the most recent transaction from its ledger and refreshes
 the cache — it finds the exact recorded block in the file, and refuses if you
@@ -520,6 +543,11 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
           --cleared / --pending   reconciliation state
           --assert BALANCE        assert the account balance afterwards
       (AMOUNT may be an arithmetic expression — §5.4)
+    plc ledger edit ID [flags]       edit a txn by its ^id (unique prefix; §8.1)
+      (no flags)                  print its path:line for an editor
+      --amount / --memo / -a / -c / --to / -i / --expense / --cur /
+      -p / --no-projects / -d / --cleared / --pending / --uncleared /
+      --assert / --no-assert      change that field in place (id stays frozen)
     plc ledger report  [PATTERN…]    summary report         (+ filters, --depth)
     plc ledger reg     [PATTERN…]    chronological register (+ filters)
     plc ledger balance [PATTERN…]    net-worth snapshot      (+ filters, -n N)

@@ -1095,6 +1095,87 @@ pub fn duplicate_ids(root: &Path, default_currency: &str) -> Result<Vec<String>,
     Ok(counts.into_iter().filter(|(_, n)| *n > 1).map(|(id, _)| id).collect())
 }
 
+/// Every transaction whose id begins with `prefix` (a git-style abbreviation),
+/// paired with its ledger file path relative to `root`. Empty when none match;
+/// more than one means the prefix is ambiguous (or a duplicate id). `prefix` is
+/// matched case-insensitively against the stored lowercase-hex id. Backs
+/// `plc ledger edit`'s id lookup.
+pub fn find_by_id(root: &Path, default_currency: &str, prefix: &str) -> Result<Vec<(String, Transaction)>, String> {
+    if !root.is_dir() {
+        return Err(format!("ledger: cannot read {}", root.display()));
+    }
+    let needle = ascii_lower(prefix);
+    let mut out = Vec::new();
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("+ledger.md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+        for t in parse_entries(&content, default_currency) {
+            if t.id.as_deref().is_some_and(|id| id.starts_with(&needle)) {
+                out.push((rel.clone(), t));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Rewrite the ledger file at `path`, replacing the transaction whose id equals
+/// `id` with `replacement` (or dropping it when `None`), then re-rendering the
+/// file canonically (header preserved, entry order kept). Returns `true` if the
+/// id was found. Re-parses first, so it is robust to non-canonical input like
+/// [`fmt`]. Backs `plc ledger edit`'s in-place rewrite.
+pub fn rewrite_txn(
+    path: &Path,
+    default_currency: &str,
+    id: &str,
+    replacement: Option<&Transaction>,
+) -> Result<bool, String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
+    let lines: Vec<&str> = content.lines().collect();
+    let Some(first) = lines.iter().position(|l| parse_line(l, default_currency).is_some()) else {
+        return Ok(false);
+    };
+    let mut end = first;
+    while end > 0 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    let header = lines[..end].join("\n");
+    let body = lines[first..].join("\n");
+    let mut found = false;
+    let mut rendered: Vec<String> = Vec::new();
+    for t in parse_entries(&body, default_currency) {
+        if t.id.as_deref() == Some(id) {
+            found = true;
+            if let Some(new) = replacement {
+                rendered.push(format_entry(new));
+            }
+        } else {
+            rendered.push(format_entry(&t));
+        }
+    }
+    if !found {
+        return Ok(false);
+    }
+    let new_content = if rendered.is_empty() {
+        format!("{header}\n")
+    } else {
+        format!("{header}\n\n{}\n", rendered.join("\n"))
+    };
+    fs::write(path, &new_content).map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
+    Ok(true)
+}
+
 /// A transaction paired with its effective date (its own timestamp, or the
 /// ledger file's day when it carries none).
 type Dated = (Option<NaiveDate>, Transaction);
@@ -1825,6 +1906,57 @@ mod tests {
              $ ^0000feedbead -3.00 EUR  @[[cash]] #[[lunch]]\n",
         );
         assert_eq!(duplicate_ids(&dir, EUR).unwrap(), vec!["cafef00d1234".to_string()]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn find_by_id_matches_unique_and_ambiguous_prefixes() {
+        let dir = ledger_dir(
+            "finfind",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^abc111000000 -1.00 EUR  @[[cash]] #[[tea]]\n\
+             $ ^abc222000000 -2.00 EUR  @[[cash]] #[[coffee]]\n\
+             $ ^def333000000 -3.00 EUR  @[[cash]] #[[lunch]]\n",
+        );
+        // A unique prefix resolves to exactly one; case-insensitive.
+        let one = find_by_id(&dir, EUR, "DEF").unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].1.other.as_deref(), Some("lunch"));
+        // An ambiguous prefix returns every match.
+        assert_eq!(find_by_id(&dir, EUR, "abc").unwrap().len(), 2);
+        // No match → empty.
+        assert!(find_by_id(&dir, EUR, "999").unwrap().is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rewrite_txn_replaces_and_drops_by_id() {
+        let dir = ledger_dir(
+            "finrewrite",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^aaa000000000 -1.00 EUR  @[[cash]] #[[tea]]\n\
+             $ ^bbb000000000 -2.00 EUR  @[[cash]] #[[coffee]]\n",
+        );
+        let file = dir.join("2026/07/2026-07-19+ledger.md");
+
+        // Replace: swap the coffee entry's amount/memo (keeping its id).
+        let mut edited = find_by_id(&dir, EUR, "bbb").unwrap().pop().unwrap().1;
+        edited.amount = 500;
+        edited.memo = "latte".into();
+        assert!(rewrite_txn(&file, EUR, "bbb000000000", Some(&edited)).unwrap());
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(after.contains("$ ^bbb000000000 -5.00 EUR  @[[cash]] #[[coffee]]\n    latte"), "{after}");
+        assert!(after.contains("^aaa000000000"), "sibling kept: {after}");
+
+        // Drop: remove the tea entry.
+        assert!(rewrite_txn(&file, EUR, "aaa000000000", None).unwrap());
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(!after.contains("^aaa000000000") && after.contains("^bbb000000000"), "{after}");
+
+        // Unknown id → not found, no change.
+        assert!(!rewrite_txn(&file, EUR, "ffffffffffff", None).unwrap());
         fs::remove_dir_all(&dir).ok();
     }
 
