@@ -118,6 +118,15 @@ enum LedgerCmd {
     Last(LastArgs),
     /// Remove the last added transaction from its ledger and the log.
     Undo,
+    /// Remove a transaction by its ^id (a unique prefix; the general form of undo).
+    Rm(RmArgs),
+}
+
+#[derive(Args)]
+pub struct RmArgs {
+    /// The transaction's `^id` — a unique prefix is enough (git-style).
+    #[arg(value_name = "ID")]
+    id: String,
 }
 
 #[derive(Args)]
@@ -362,6 +371,7 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
         Some(LedgerCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
         Some(LedgerCmd::Last(last_args)) => last_log(palace, last_args),
         Some(LedgerCmd::Undo) => undo(palace),
+        Some(LedgerCmd::Rm(rm_args)) => rm(palace, rm_args),
         Some(LedgerCmd::Stat(stat_args)) => stat(palace, stat_args),
         Some(LedgerCmd::Fmt(fmt_args)) => {
             let cur = resolved_currency(palace);
@@ -589,7 +599,7 @@ fn sync_log(palace: &Palace) -> Result<Vec<LogRecord>, String> {
     let entries = ledger::recent_entries(&palace.root().join(daily), &resolved_currency(palace), LOG_CAP)?;
     let records: Vec<LogRecord> = entries
         .into_iter()
-        .map(|(rel, entry)| LogRecord { path: format!("{daily}/{rel}"), entry })
+        .map(|(rel, t)| LogRecord { path: format!("{daily}/{rel}"), entry: ledger::format_entry(&t) })
         .collect();
     write_log(palace, &records)?;
     Ok(records)
@@ -608,18 +618,6 @@ fn write_log(palace: &Palace, records: &[LogRecord]) -> Result<(), String> {
     std::fs::write(log_file(palace), render_log(records)).map_err(|e| format!("ledger: {e}"))
 }
 
-/// Remove the last occurrence of the `entry` block from `content` (plus one
-/// adjacent newline), returning the cleaned file text. `None` if not found.
-fn remove_last_block(content: &str, entry: &str) -> Option<String> {
-    let idx = content.rfind(entry)?;
-    let mut end = idx + entry.len();
-    if content[end..].starts_with('\n') {
-        end += 1;
-    }
-    let joined = format!("{}{}", &content[..idx], &content[end..]);
-    Some(format!("{}\n", joined.trim_end()))
-}
-
 /// `plc ledger last`: the most recent transactions, newest first, from the
 /// always-current cache (rebuilt from the ledgers, so it covers all history).
 fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
@@ -636,22 +634,55 @@ fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
     Ok(out.join("\n").trim_end().to_string())
 }
 
-/// `plc ledger undo`: remove the most recent transaction from its ledger and refresh
-/// the cache. Refuses if the recorded block is no longer in the file (edited).
+/// `plc ledger undo`: remove the most recent transaction from its ledger and
+/// refresh the cache. Targets the newest entry by value via [`ledger::rewrite_txn`],
+/// so it survives a reformat (unlike a literal block match) and needs no id.
 fn undo(palace: &Palace) -> Result<String, String> {
-    let records = sync_log(palace)?;
-    let last = records.last().ok_or_else(|| "ledger undo: nothing to undo".to_string())?;
-    let file = palace.root().join(&last.path);
-    let content = std::fs::read_to_string(&file)
-        .map_err(|e| format!("ledger undo: cannot read {}: {e}", last.path))?;
-    let kept = remove_last_block(&content, &last.entry).ok_or_else(|| {
-        format!("ledger undo: the entry is no longer in {} (edited since?) — not undoing", last.path)
-    })?;
-    std::fs::write(&file, kept).map_err(|e| format!("ledger undo: {e}"))?;
-    let removed = last.entry.clone();
-    let path = last.path.clone();
-    sync_log(palace)?; // refresh after the removal
-    Ok(format!("undid (removed from {path}):\n{removed}"))
+    let daily = "notes/management/daily";
+    let root = palace.root().join(daily);
+    let cur = resolved_currency(palace);
+    let newest = ledger::recent_entries(&root, &cur, 1)?
+        .pop()
+        .ok_or_else(|| "ledger undo: nothing to undo".to_string())?;
+    let (rel, txn) = newest;
+    let removed = ledger::format_entry(&txn);
+    if !ledger::rewrite_txn(&root.join(&rel), &cur, ledger::Match::Value(&txn), None)? {
+        return Err(format!("ledger undo: could not find the entry in {daily}/{rel}"));
+    }
+    let _ = sync_log(palace); // refresh after the removal
+    Ok(format!("undid (removed from {daily}/{rel}):\n{removed}"))
+}
+
+/// `plc ledger rm <ID>`: delete the transaction with that `^id` (a unique prefix,
+/// git-style) from its ledger. The general form of `undo` — any transaction, not
+/// just the newest.
+fn rm(palace: &Palace, args: RmArgs) -> Result<String, String> {
+    let daily = "notes/management/daily";
+    let root = palace.root().join(daily);
+    let cur = currency_from(&Settings::load(palace.root()));
+    let (rel, txn) = resolve_one(&root, &cur, &args.id)?;
+    let full_id = txn.id.clone().ok_or_else(|| "ledger rm: matched transaction has no id".to_string())?;
+    let removed = ledger::format_entry(&txn);
+    if !ledger::rewrite_txn(&root.join(&rel), &cur, ledger::Match::Id(&full_id), None)? {
+        return Err(format!("ledger rm: id ^{full_id} vanished from {daily}/{rel}"));
+    }
+    let _ = sync_log(palace);
+    Ok(format!("removed (from {daily}/{rel}):\n{removed}"))
+}
+
+/// Resolve an id prefix to exactly one `(relpath, transaction)`, erroring on no
+/// match or an ambiguous one. Shared by `edit` and `rm`.
+fn resolve_one(root: &std::path::Path, cur: &str, prefix: &str) -> Result<(String, Transaction), String> {
+    let matches = ledger::find_by_id(root, cur, prefix)?;
+    if matches.is_empty() {
+        return Err(format!("ledger: no transaction with id ^{prefix}"));
+    }
+    if matches.len() > 1 {
+        let mut lines = vec![format!("ledger: ambiguous id ^{prefix} — matches {}:", matches.len())];
+        lines.extend(matches.iter().map(|(p, t)| format!("  ^{}  {p}", t.id.as_deref().unwrap_or("?"))));
+        return Err(lines.join("\n"));
+    }
+    Ok(matches.into_iter().next().unwrap())
 }
 
 /// Bare `plc ledger`: seed today's ledger (if new) and print its path.
@@ -691,16 +722,7 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
 fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
     let cur = currency_from(&Settings::load(palace.root()));
     let root = palace.root().join("notes/management/daily");
-    let matches = ledger::find_by_id(&root, &cur, &args.id)?;
-    if matches.is_empty() {
-        return Err(format!("ledger edit: no transaction with id ^{}", args.id));
-    }
-    if matches.len() > 1 {
-        let mut lines = vec![format!("ledger edit: ambiguous id ^{} — matches {}:", args.id, matches.len())];
-        lines.extend(matches.iter().map(|(p, t)| format!("  ^{}  {p}", t.id.as_deref().unwrap_or("?"))));
-        return Err(lines.join("\n"));
-    }
-    let (relpath, old) = matches.into_iter().next().unwrap();
+    let (relpath, old) = resolve_one(&root, &cur, &args.id)?;
     let full_id = old.id.clone().ok_or_else(|| "ledger edit: matched transaction has no id".to_string())?;
     let oldpath = root.join(&relpath);
 
@@ -717,7 +739,7 @@ fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
     let new_day = edited.date.map(|d| d.date_naive());
     if let (Some(o), Some(n)) = (old_day, new_day) {
         if o != n {
-            if !ledger::rewrite_txn(&oldpath, &cur, &full_id, None)? {
+            if !ledger::rewrite_txn(&oldpath, &cur, ledger::Match::Id(&full_id), None)? {
                 return Err(format!("ledger edit: id ^{full_id} vanished from {relpath}"));
             }
             let (subdir, filename) = ledger_location(n);
@@ -730,7 +752,7 @@ fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
     }
 
     // In place: rewrite the entry in its current file.
-    if !ledger::rewrite_txn(&oldpath, &cur, &full_id, Some(&edited))? {
+    if !ledger::rewrite_txn(&oldpath, &cur, ledger::Match::Id(&full_id), Some(&edited))? {
         return Err(format!("ledger edit: id ^{full_id} vanished from {relpath}"));
     }
     let _ = sync_log(palace);
@@ -1486,24 +1508,6 @@ mod tests {
             "==== a/b+ledger.md\n$ -4.50 EUR  @[[cash]] #[[coffee]]\n    coffee\n\
              ==== a/c+ledger.md\n$ -11.00 EUR  @[[revolut]] #[[food/out]]\n"
         );
-    }
-
-    #[test]
-    fn remove_last_block_strips_one_occurrence() {
-        let entry = "$ -11.00 EUR  @[[revolut]] #[[food/out]]\n    takos";
-        // Trailing block.
-        let content = "isg\n\n[[ledger]]\n\n\
-                       $ -4.50 EUR  @[[cash]] #[[coffee]]\n    coffee\n\
-                       $ -11.00 EUR  @[[revolut]] #[[food/out]]\n    takos\n";
-        let kept = remove_last_block(content, entry).unwrap();
-        assert!(kept.contains("coffee") && !kept.contains("takos"), "{kept}");
-        assert!(kept.ends_with('\n'));
-        // Mid-file block (a later, earlier-dated entry follows) is still removed.
-        let mid = format!("head\n\n{entry}\n$ -1.00 EUR  @[[cash]] #[[tea]]\n    tea\n");
-        let kept = remove_last_block(&mid, entry).unwrap();
-        assert!(!kept.contains("takos") && kept.contains("tea"), "{kept}");
-        // A stale entry is refused.
-        assert_eq!(remove_last_block(content, "$ -99.00 EUR  @[[x]] #[[y]]"), None);
     }
 
     #[test]

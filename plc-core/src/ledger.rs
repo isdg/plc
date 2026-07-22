@@ -866,16 +866,16 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
     Ok(lines.join("\n"))
 }
 
-/// Recent transactions as `(path, entry-block)` pairs, oldest→newest, capped at
-/// `cap`. `path` is relative to `root`; `entry` is the canonical [`format_entry`]
-/// block as it appears in the file. Ordered by the transaction instant (bare-day
-/// entries first). Backs the always-current `.plc/last-transactions` cache and,
-/// through it, `plc ledger last` and `undo`.
-pub fn recent_entries(root: &Path, default_currency: &str, cap: usize) -> Result<Vec<(String, String)>, String> {
+/// Recent transactions as `(path, transaction)` pairs, oldest→newest, capped at
+/// `cap`. `path` is relative to `root`. Ordered by the transaction instant
+/// (bare-day entries first). Backs the always-current `.plc/last-transactions`
+/// cache and, through it, `plc ledger last`, `undo`, and `rm`. The caller renders
+/// each with [`format_entry`] when it needs the on-disk block.
+pub fn recent_entries(root: &Path, default_currency: &str, cap: usize) -> Result<Vec<(String, Transaction)>, String> {
     if !root.is_dir() {
         return Err(format!("ledger: cannot read {}", root.display()));
     }
-    let mut rows: Vec<(Option<DateTime<FixedOffset>>, String, String)> = Vec::new();
+    let mut rows: Vec<(Option<DateTime<FixedOffset>>, String, Transaction)> = Vec::new();
     for entry in WalkDir::new(root).into_iter().flatten() {
         if !entry.file_type().is_file() {
             continue;
@@ -892,13 +892,13 @@ pub fn recent_entries(root: &Path, default_currency: &str, cap: usize) -> Result
         };
         let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
         for t in parse_entries(&content, default_currency) {
-            rows.push((t.date, rel.clone(), format_entry(&t)));
+            rows.push((t.date, rel.clone(), t));
         }
     }
     // Stable sort by instant keeps file/parse order within the same timestamp.
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     let start = rows.len().saturating_sub(cap);
-    Ok(rows[start..].iter().map(|(_, p, e)| (p.clone(), e.clone())).collect())
+    Ok(rows[start..].iter().map(|(_, p, t)| (p.clone(), t.clone())).collect())
 }
 
 /// A compact balance snapshot: per-currency net worth, income/expense/net, and
@@ -1130,18 +1130,38 @@ pub fn find_by_id(root: &Path, default_currency: &str, prefix: &str) -> Result<V
     Ok(out)
 }
 
-/// Rewrite the ledger file at `path`, replacing the transaction whose id equals
-/// `id` with `replacement` (or dropping it when `None`), then re-rendering the
-/// file canonically (header preserved, entry order kept). Returns `true` if the
-/// id was found. Re-parses first, so it is robust to non-canonical input like
-/// [`fmt`]. Backs `plc ledger edit`'s in-place rewrite.
+/// How [`rewrite_txn`] picks its target entry.
+pub enum Match<'a> {
+    /// The transaction whose stored id equals this (the exact 12-hex id).
+    Id(&'a str),
+    /// The first transaction equal by value — robust when a line has no id yet
+    /// (e.g. `undo` of a not-yet-backfilled entry). Compares parsed values, so
+    /// it survives reformatting/whitespace.
+    Value(&'a Transaction),
+}
+
+impl Match<'_> {
+    fn hits(&self, t: &Transaction) -> bool {
+        match self {
+            Match::Id(id) => t.id.as_deref() == Some(*id),
+            Match::Value(v) => t == *v,
+        }
+    }
+}
+
+/// Rewrite the ledger file at `path`, replacing the first transaction matching
+/// `target` with `replacement` (or dropping it when `None`), then re-rendering
+/// the file canonically (header preserved, entry order kept). Returns `true` if
+/// a match was found. Only the first match is touched, so a duplicate id/value
+/// leaves the rest intact. Re-parses first, so it is robust to non-canonical
+/// input like [`fmt`]. Backs `plc ledger edit`, `rm`, and `undo`.
 pub fn rewrite_txn(
     path: &Path,
     default_currency: &str,
-    id: &str,
+    target: Match,
     replacement: Option<&Transaction>,
 ) -> Result<bool, String> {
-    let content = fs::read_to_string(path).map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
+    let content = fs::read_to_string(path).map_err(|e| format!("ledger: {}: {e}", path.display()))?;
     let lines: Vec<&str> = content.lines().collect();
     let Some(first) = lines.iter().position(|l| parse_line(l, default_currency).is_some()) else {
         return Ok(false);
@@ -1155,7 +1175,7 @@ pub fn rewrite_txn(
     let mut found = false;
     let mut rendered: Vec<String> = Vec::new();
     for t in parse_entries(&body, default_currency) {
-        if t.id.as_deref() == Some(id) {
+        if !found && target.hits(&t) {
             found = true;
             if let Some(new) = replacement {
                 rendered.push(format_entry(new));
@@ -1172,7 +1192,7 @@ pub fn rewrite_txn(
     } else {
         format!("{header}\n\n{}\n", rendered.join("\n"))
     };
-    fs::write(path, &new_content).map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
+    fs::write(path, &new_content).map_err(|e| format!("ledger: {}: {e}", path.display()))?;
     Ok(true)
 }
 
@@ -1941,22 +1961,42 @@ mod tests {
         );
         let file = dir.join("2026/07/2026-07-19+ledger.md");
 
-        // Replace: swap the coffee entry's amount/memo (keeping its id).
+        // Replace by id: swap the coffee entry's amount/memo (keeping its id).
         let mut edited = find_by_id(&dir, EUR, "bbb").unwrap().pop().unwrap().1;
         edited.amount = 500;
         edited.memo = "latte".into();
-        assert!(rewrite_txn(&file, EUR, "bbb000000000", Some(&edited)).unwrap());
+        assert!(rewrite_txn(&file, EUR, Match::Id("bbb000000000"), Some(&edited)).unwrap());
         let after = fs::read_to_string(&file).unwrap();
         assert!(after.contains("$ ^bbb000000000 -5.00 EUR  @[[cash]] #[[coffee]]\n    latte"), "{after}");
         assert!(after.contains("^aaa000000000"), "sibling kept: {after}");
 
-        // Drop: remove the tea entry.
-        assert!(rewrite_txn(&file, EUR, "aaa000000000", None).unwrap());
+        // Drop by value: remove the tea entry (robust when matching without id).
+        let tea = find_by_id(&dir, EUR, "aaa").unwrap().pop().unwrap().1;
+        assert!(rewrite_txn(&file, EUR, Match::Value(&tea), None).unwrap());
         let after = fs::read_to_string(&file).unwrap();
         assert!(!after.contains("^aaa000000000") && after.contains("^bbb000000000"), "{after}");
 
         // Unknown id → not found, no change.
-        assert!(!rewrite_txn(&file, EUR, "ffffffffffff", None).unwrap());
+        assert!(!rewrite_txn(&file, EUR, Match::Id("ffffffffffff"), None).unwrap());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn recent_entries_returns_transactions_newest_last() {
+        let dir = ledger_dir(
+            "finrecent",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^aaa000000000 2026-07-19 08:00:00 +0200 -1.00 EUR  @[[cash]] #[[tea]]\n\
+             $ ^bbb000000000 2026-07-19 09:00:00 +0200 -2.00 EUR  @[[cash]] #[[coffee]]\n",
+        );
+        // Oldest→newest: the last is the most recent instant (what `undo` targets).
+        let recent = recent_entries(&dir, EUR, 10).unwrap();
+        assert_eq!(recent.last().unwrap().1.id.as_deref(), Some("bbb000000000"));
+        // The cap keeps only the newest.
+        let one = recent_entries(&dir, EUR, 1).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].1.other.as_deref(), Some("coffee"));
         fs::remove_dir_all(&dir).ok();
     }
 

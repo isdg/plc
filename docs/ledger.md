@@ -497,9 +497,17 @@ A `--date` that lands on a different day moves the entry into that day's ledger
 file. An ambiguous prefix (or an unknown id) is reported rather than guessed; a
 split's total can't be changed this way (edit its legs in the file instead).
 
-`plc ledger undo` removes the most recent transaction from its ledger and refreshes
-the cache — it finds the exact recorded block in the file, and refuses if you
-have since edited it away rather than guess.
+## 8.2 Deleting a transaction
+
+`plc ledger rm <ID>` deletes a transaction by its id (a unique prefix, git-style)
+— the general form of undo, for any transaction rather than only the newest:
+
+    $ plc ledger rm 85b4d8
+
+`plc ledger undo` removes the *most recent* transaction from its ledger and
+refreshes the cache. Both locate the entry by re-parsing the file (matching the
+id, or the newest transaction's value), so they still work after a `fmt` reflow
+or a hand-edit — no fragile exact-text match.
 
 ---
 
@@ -560,7 +568,8 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
       -r, --rm                    remove the named entries
           --import                seed from names already used in ledgers
     plc ledger last  [-n N]          the most recent transactions
-    plc ledger undo                  remove the last added transaction
+    plc ledger undo                  remove the most recent transaction
+    plc ledger rm ID                 remove a transaction by its ^id (§8.2)
 
     plc doctor        [--fix]        vault health check (top-level; §7.1)
 

@@ -214,8 +214,8 @@ file per day. Quick tour:
     $ plc ledger bal                                         # net-worth snapshot
     $ plc ledger reg coffee                                  # register, filtered
 
-`ledger` has its own subcommands (`add`, `edit`, `report`, `reg`, `balance`/`bal`,
-`check`, `fmt`, `stat`, `declare`, `last`, `undo`) and a full grammar for dates,
+`ledger` has its own subcommands (`add`, `edit`, `rm`, `report`, `reg`,
+`balance`/`bal`, `check`, `fmt`, `stat`, `declare`, `last`, `undo`) and a full grammar for dates,
 transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
 the amount. You can declare a vocabulary of accounts (`--physical`) and
 categories (`--ephemeral`) with `plc ledger declare` that `add` validates against,
