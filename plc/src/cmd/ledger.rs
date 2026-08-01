@@ -712,7 +712,12 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
     let path = note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
         .map_err(|e| format!("ledger: {e}"))?;
     let _ = sync_log(palace); // keep the recent cache current (best-effort)
-    Ok(path.display().to_string())
+    // The path (first token, for the shell) plus the new transaction's ^id, so
+    // it can be fed straight to `plc ledger edit`/`rm` without a lookup.
+    Ok(match &txn.id {
+        Some(id) => format!("{}  ^{id}", path.display()),
+        None => path.display().to_string(),
+    })
 }
 
 /// `plc ledger edit <ID>`: locate a transaction by its `^id` and either print its
