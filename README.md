@@ -215,11 +215,13 @@ file per day. Quick tour:
     $ plc ledger reg coffee                                  # register, filtered
 
 `ledger` has its own subcommands (`add`, `edit`, `rm`, `report`, `reg`,
-`balance`/`bal`, `check`, `fmt`, `stat`, `declare`, `last`, `undo`) and a full grammar for dates,
+`balance`/`bal`, `check`, `fmt`, `stat`, `account`/`acc`, `last`, `undo`) and a full grammar for dates,
 transfers, splits, tags, balance assertions, hierarchy, and inline arithmetic in
 the amount. You can declare a vocabulary of accounts (`--physical`) and
-categories (`--ephemeral`) with `plc ledger declare` that `add` validates against,
-and reverse a mistake with `plc ledger undo`. Settings live in `.plc/config`.
+categories (`--ephemeral`) with `plc ledger account -a NAME` that `add` validates
+against — and rename one across every ledger with `plc ledger account -r OLD NEW`
+(ids preserved) — and reverse a mistake with `plc ledger undo`. Settings live in
+`.plc/config`.
 Every added transaction carries a stable `^`-prefixed short hash (git-commit
 style); `plc ledger edit <id>` targets one by that hash (a unique prefix, like
 git) to change a field in place or print its `path:line` for your editor — the

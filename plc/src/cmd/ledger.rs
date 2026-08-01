@@ -45,7 +45,7 @@ fn currency_from(settings: &Settings) -> String {
     }
 }
 
-/// Which declared set `declare` operates on. Physical accounts and ephemeral
+/// Which declared set `account` operates on. Physical accounts and ephemeral
 /// categories are the same essence (named ledger buckets), so one command with
 /// a `--physical` / `--ephemeral` flag serves both.
 #[derive(Clone, Copy)]
@@ -73,7 +73,7 @@ impl Decl {
             Decl::Category => '#',
         }
     }
-    /// The `plc ledger declare` flag that selects this kind.
+    /// The `plc ledger account` flag that selects this kind.
     fn flag(self) -> &'static str {
         match self {
             Decl::Account => "--physical",
@@ -111,9 +111,10 @@ enum LedgerCmd {
     Stat(LedgerStatArgs),
     /// Reformat every ledger file in place (canonical spacing / wrapping).
     Fmt(FmtArgs),
-    /// Declare/list the known accounts (`--physical`) and categories
-    /// (`--ephemeral`). Bare = list both; NAME(s) add; `-r` remove; `--import`.
-    Declare(DeclareArgs),
+    /// Manage/list the known accounts (`--physical`) and categories
+    /// (`--ephemeral`). Bare = list both; `-a` add NAME(s); `-r` remove; `--import`.
+    #[command(alias = "acc")]
+    Account(AccountArgs),
     /// Show the most recently added transactions (recent-activity log).
     Last(LastArgs),
     /// Remove the last added transaction from its ledger and the log.
@@ -130,21 +131,27 @@ pub struct RmArgs {
 }
 
 #[derive(Args)]
-pub struct DeclareArgs {
-    /// Names to declare (or, with `-r`, remove). Omit to list.
+pub struct AccountArgs {
+    /// Names to add (with `-a`) or delete (with `-d`). Omit to list.
     #[arg(value_name = "NAME")]
     names: Vec<String>,
+    /// Add the named accounts/categories.
+    #[arg(short = 'a', long = "add", conflicts_with_all = ["delete", "rename"])]
+    add: bool,
+    /// Delete the named entries.
+    #[arg(short = 'd', long = "delete", conflicts_with = "rename")]
+    delete: bool,
+    /// Rename OLD to NEW across every ledger and the config (keeps each ^id).
+    #[arg(short = 'r', long = "rename", num_args = 2, value_names = ["OLD", "NEW"])]
+    rename: Vec<String>,
     /// Operate on physical accounts (`@`).
     #[arg(long = "physical", conflicts_with = "ephemeral")]
     physical: bool,
     /// Operate on ephemeral categories (`#`).
     #[arg(long = "ephemeral")]
     ephemeral: bool,
-    /// Remove the named entries instead of adding them.
-    #[arg(short = 'r', long = "rm")]
-    rm: bool,
     /// Seed the set from every name already used across the ledgers.
-    #[arg(long = "import", conflicts_with = "rm")]
+    #[arg(long = "import", conflicts_with_all = ["delete", "add", "rename"])]
     import: bool,
 }
 
@@ -368,7 +375,7 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
             let root = palace.root().join("notes/management/daily");
             ledger::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
         }
-        Some(LedgerCmd::Declare(declare_args)) => declare_cmd(palace, declare_args),
+        Some(LedgerCmd::Account(account_args)) => account_cmd(palace, account_args),
         Some(LedgerCmd::Last(last_args)) => last_log(palace, last_args),
         Some(LedgerCmd::Undo) => undo(palace),
         Some(LedgerCmd::Rm(rm_args)) => rm(palace, rm_args),
@@ -920,8 +927,8 @@ fn guard_declared(
         return settings.save(palace.root());
     }
     let mut lines = vec!["ledger: undeclared name(s) — declare them or pass -n to add now:".to_string()];
-    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc ledger declare {a} --physical)")));
-    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc ledger declare {c} --ephemeral)")));
+    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc ledger account -a {a} --physical)")));
+    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc ledger account -a {c} --ephemeral)")));
     Err(lines.join("\n"))
 }
 
@@ -934,7 +941,7 @@ fn declare(list: &mut Vec<String>, name: &str) {
 
 /// The kind selected by `--physical`/`--ephemeral`, or `None` when neither is
 /// given (bare list / import-both).
-fn declare_kind(args: &DeclareArgs) -> Option<Decl> {
+fn declare_kind(args: &AccountArgs) -> Option<Decl> {
     match (args.physical, args.ephemeral) {
         (true, _) => Some(Decl::Account),
         (_, true) => Some(Decl::Category),
@@ -942,24 +949,41 @@ fn declare_kind(args: &DeclareArgs) -> Option<Decl> {
     }
 }
 
-/// `plc ledger declare`: one command for both accounts (`--physical`) and
-/// categories (`--ephemeral`). Bare lists everything; NAME(s) add (or remove
-/// with `-r`); `--import` seeds from used names.
-fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
+/// `plc ledger account` (alias `acc`): one command for both accounts
+/// (`--physical`) and categories (`--ephemeral`). Bare lists everything; `-a`
+/// adds NAME(s), `-r` removes them; `--import` seeds from used names.
+fn account_cmd(palace: &Palace, args: AccountArgs) -> Result<String, String> {
     let mut settings = Settings::load(palace.root());
     let kind = declare_kind(&args);
 
-    if !args.names.is_empty() {
+    // Rename OLD → NEW across every ledger and the config.
+    if !args.rename.is_empty() {
         let kind = kind.ok_or_else(|| {
-            "ledger declare: say which kind — --physical (account) or --ephemeral (category)".to_string()
+            "ledger account: say which kind — --physical (account) or --ephemeral (category)".to_string()
         })?;
+        return apply_rename(palace, &mut settings, kind, &args.rename[0], &args.rename[1]);
+    }
+
+    // Names given but no action → tell the user which flag to use.
+    if !args.names.is_empty() && !args.add && !args.delete {
+        return Err("ledger account: use -a/--add to add or -d/--delete to remove the named entries".to_string());
+    }
+
+    if args.add || args.delete {
+        let kind = kind.ok_or_else(|| {
+            "ledger account: say which kind — --physical (account) or --ephemeral (category)".to_string()
+        })?;
+        if args.names.is_empty() {
+            let verb = if args.delete { "delete" } else { "add" };
+            return Err(format!("ledger account: no names given to {verb}"));
+        }
         let names: Vec<String> = args
             .names
             .iter()
             .map(|n| clean_link(kind.label(), n).map(|n| ledger::normalize_name(&n)))
             .collect::<Result<_, _>>()?;
-        // A name can't be both an account and a category.
-        if !args.rm {
+        // A name can't be both an account and a category (checked when adding).
+        if args.add {
             let other = match kind {
                 Decl::Account => &settings.categories,
                 Decl::Category => &settings.accounts,
@@ -971,19 +995,19 @@ fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
                     Decl::Category => "an account",
                 };
                 return Err(format!(
-                    "ledger declare: already declared as {other_kind}: {} — a name can't be both @ and #",
+                    "ledger account: already declared as {other_kind}: {} — a name can't be both @ and #",
                     clash.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
                 ));
             }
         }
         let list = pick(&mut settings, kind);
-        if args.rm {
+        if args.delete {
             list.retain(|n| !names.contains(n));
         } else {
             names.iter().for_each(|n| declare(list, n));
         }
         settings.save(palace.root())?;
-        let verb = if args.rm { "removed" } else { "declared" };
+        let verb = if args.delete { "deleted" } else { "added" };
         return Ok(format!("{verb} {} {}: {}", names.len(), kind.plural(), names.join(", ")));
     }
 
@@ -1011,6 +1035,48 @@ fn declare_cmd(palace: &Palace, args: DeclareArgs) -> Result<String, String> {
     })
 }
 
+/// Rename `old`→`new` (of `kind`) across every ledger *and* the declared config,
+/// keeping each transaction's frozen `^id`. Rejects a `new` already taken by the
+/// other kind, and a rename that touches nothing.
+fn apply_rename(palace: &Palace, settings: &mut Settings, kind: Decl, old: &str, new: &str) -> Result<String, String> {
+    let old = ledger::normalize_name(old);
+    let new = ledger::normalize_name(&clean_link(kind.label(), new)?);
+    let sigil = kind.sigil();
+    if old == new {
+        return Err(format!("ledger account: {sigil}{old} and {sigil}{new} are the same name"));
+    }
+    // A name can't be both an account and a category.
+    let other = match kind {
+        Decl::Account => &settings.categories,
+        Decl::Category => &settings.accounts,
+    };
+    if other.contains(&new) {
+        let other_kind = match kind {
+            Decl::Account => "a category",
+            Decl::Category => "an account",
+        };
+        return Err(format!("ledger account: {sigil}{new} is already {other_kind} — a name can't be both @ and #"));
+    }
+
+    let root = palace.root().join("notes/management/daily");
+    let cur = currency_from(settings);
+    let changed = ledger::rename_name(&root, &cur, matches!(kind, Decl::Account), &old, &new)?;
+
+    // Rename in the declared vocabulary too (if present).
+    let list = pick(settings, kind);
+    let declared = list.iter().any(|n| n == &old);
+    if declared {
+        list.retain(|n| n != &old);
+        declare(list, &new);
+    }
+    if changed == 0 && !declared {
+        return Err(format!("ledger account: nothing named {sigil}{old}"));
+    }
+    settings.save(palace.root())?;
+    let _ = sync_log(palace);
+    Ok(format!("renamed {sigil}{old} → {sigil}{new} ({changed} transaction(s))"))
+}
+
 /// Render one declared set as a titled block (or an empty-state hint).
 fn list_kind(settings: &Settings, kind: Decl) -> String {
     let list = match kind {
@@ -1019,7 +1085,7 @@ fn list_kind(settings: &Settings, kind: Decl) -> String {
     };
     let (plural, sigil, flag) = (kind.plural(), kind.sigil(), kind.flag());
     if list.is_empty() {
-        return format!("{plural}: (none — add with `plc ledger declare NAME {flag}`)");
+        return format!("{plural}: (none — add with `plc ledger account -a NAME {flag}`)");
     }
     let names: Vec<String> = list.iter().map(|n| format!("  {sigil}{n}")).collect();
     format!("{plural}:\n{}", names.join("\n"))
@@ -1051,7 +1117,7 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     if !both.is_empty() {
         findings.push(format!("  ! {} name(s) declared as both @ and #:", both.len()));
         findings.extend(both.iter().map(|n| {
-            format!("      {n}  (drop one: plc ledger declare {n} --physical -r | --ephemeral -r)")
+            format!("      {n}  (drop one: plc ledger account -d {n} --physical | --ephemeral)")
         }));
     }
 
@@ -1061,7 +1127,7 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         if declared.is_empty() {
             if !used.is_empty() {
                 findings.push(format!(
-                    "  · {plural}: guard off ({} used, none declared) — `plc ledger declare --import {flag}` to enable",
+                    "  · {plural}: guard off ({} used, none declared) — `plc ledger account --import {flag}` to enable",
                     used.len()
                 ));
             }
@@ -1071,7 +1137,7 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         if !undeclared.is_empty() {
             fixable += undeclared.len();
             findings.push(format!("  ! {} {plural} used but not declared:", undeclared.len()));
-            findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc ledger declare {n} {flag})")));
+            findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc ledger account -a {n} {flag})")));
             if fix {
                 undeclared.iter().for_each(|n| declare(pick(&mut settings, kind), n));
                 fixed.push(format!("declared {} {plural}", undeclared.len()));
@@ -1079,7 +1145,7 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         }
         if !unused.is_empty() {
             findings.push(format!("  ! {} {plural} declared but never used (typo/stale?):", unused.len()));
-            findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc ledger declare {n} {flag} -r)")));
+            findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc ledger account -d {n} {flag})")));
         }
     }
 

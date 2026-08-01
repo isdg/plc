@@ -400,27 +400,33 @@ measures).
 Declare the accounts and categories you actually use, and `plc ledger add` will
 refuse an undeclared one — so `-c cofee` is caught instead of silently creating
 a bogus category. Accounts and categories are the same essence (named ledger
-buckets), so one command manages both — `--physical` for accounts (`@`),
-`--ephemeral` for categories (`#`). Declarations live in `.plc/config` (see §9):
+buckets), so one command — `plc ledger account` (alias `acc`) — manages both:
+`--physical` for accounts (`@`), `--ephemeral` for categories (`#`). Declarations
+live in `.plc/config` (see §9):
 
-    plc ledger declare                        list every declared account + category
-    plc ledger declare cash bnp --physical    declare account(s)
-    plc ledger declare coffee   --ephemeral   declare category(ies)
-    plc ledger declare bnp --physical -r      remove
-    plc ledger declare --import               seed from every name used in ledgers
-                                           (add --physical/--ephemeral for one kind)
+    plc ledger account                          list every declared account + category
+    plc ledger account -a cash bnp --physical   add account(s)
+    plc ledger account -a coffee --ephemeral    add category(ies)
+    plc ledger account -d bnp --physical        delete
+    plc ledger account -r revolut rev --physical rename @revolut → @rev everywhere
+    plc ledger account --import                 seed from every name used in ledgers
+                                             (add --physical/--ephemeral for one kind)
+
+`-r/--rename OLD NEW` rewrites the name in **every transaction across all
+ledgers** and in the config, keeping each transaction's frozen `^id` (the id is
+a handle, not a checksum, so it survives the change).
 
 Once a set is non-empty it is enforced; an unknown name is rejected:
 
     $ plc ledger add 4.50 latte -a cash -c cofee
     ledger: undeclared name(s) — declare them or pass -n to add now:
-      #cofee  (plc ledger declare cofee --ephemeral)
+      #cofee  (plc ledger account -a cofee --ephemeral)
 
 Pass `-n/--new` to declare the name on the fly and add in one go. An empty set
 means "not enforced yet", so fresh vaults and bulk imports keep working; run
 `--import` once to adopt everything you already use.
 
-A name can't be declared as **both** an account and a category — `declare`
+A name can't be declared as **both** an account and a category — `account`
 rejects the second, and no single transaction may use the same name on both
 legs (`@revolut` with `#revolut`). `plc doctor` flags any pre-existing
 clash.
@@ -441,11 +447,11 @@ and reports what's off, with a repair command for each finding:
 
     $ plc doctor
       ! 1 categories used but not declared:
-          #transport  (plc ledger declare transport --ephemeral)
+          #transport  (plc ledger account -a transport --ephemeral)
       ! 1 categories declared but never used (typo/stale?):
-          #rent  (plc ledger declare rent --ephemeral -r)
+          #rent  (plc ledger account -d rent --ephemeral)
       ! no default currency in .plc/config — ledgers use EUR
-      · accounts: guard off (12 used, none declared) — `plc ledger declare --import --physical`
+      · accounts: guard off (12 used, none declared) — `plc ledger account --import --physical`
 
 It also backfills any transaction still missing a stable `^id` (§3.1) — an entry
 imported or hand-written before ids existed — seeding a frozen git-style hash
@@ -562,10 +568,12 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
     plc ledger check   [--strict]    verify assertions (+ undeclared names)
     plc ledger fmt     [--check]     reformat every ledger file in place
     plc ledger stat    [PATTERN…]    spend calendar/plot/stats (see README)
-    plc ledger declare [NAME…]       list/declare the vocabulary
+    plc ledger account [NAME…]       list/manage the vocabulary   (alias: acc)
+      -a, --add                   add the named entries
+      -d, --delete                delete the named entries
+      -r, --rename OLD NEW        rename across all ledgers + config (keeps ^ids)
       --physical                  operate on accounts (@)
       --ephemeral                 operate on categories (#)
-      -r, --rm                    remove the named entries
           --import                seed from names already used in ledgers
     plc ledger last  [-n N]          the most recent transactions
     plc ledger undo                  remove the most recent transaction

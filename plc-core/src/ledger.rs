@@ -1196,6 +1196,95 @@ pub fn rewrite_txn(
     Ok(true)
 }
 
+/// Rename an account (or category) `old`→`new` across every `*+ledger.md` file
+/// under `root`, rewriting each affected transaction and preserving its frozen
+/// id. `account` selects the role: `true` renames the account leg and any
+/// transfer destination; `false` renames the expense/income category and split
+/// legs. `old`/`new` are matched/emitted normalized. Only changed files are
+/// written (re-rendered canonically, like [`fmt`]). Returns the number of
+/// transactions changed. Backs `plc ledger account --rename`.
+pub fn rename_name(root: &Path, default_currency: &str, account: bool, old: &str, new: &str) -> Result<usize, String> {
+    if !root.is_dir() {
+        return Err(format!("ledger: cannot read {}", root.display()));
+    }
+    let mut changed = 0usize;
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("+ledger.md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let (new_content, n) = rename_in_content(&content, default_currency, account, old, new);
+        if n > 0 {
+            changed += n;
+            fs::write(path, &new_content).map_err(|e| format!("ledger rename: {}: {e}", path.display()))?;
+        }
+    }
+    Ok(changed)
+}
+
+/// Rewrite one ledger file's text, renaming `old`→`new` in the account or category
+/// role, returning `(new_text, transactions_changed)`. Each id is preserved.
+fn rename_in_content(content: &str, default_currency: &str, account: bool, old: &str, new: &str) -> (String, usize) {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some(first) = lines.iter().position(|l| parse_line(l, default_currency).is_some()) else {
+        return (content.to_string(), 0);
+    };
+    let mut end = first;
+    while end > 0 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    let header = lines[..end].join("\n");
+    let body = lines[first..].join("\n");
+    let mut changed = 0usize;
+    let rendered: Vec<String> = parse_entries(&body, default_currency)
+        .into_iter()
+        .map(|mut t| {
+            if rename_txn(&mut t, account, old, new) {
+                changed += 1;
+            }
+            format_entry(&t)
+        })
+        .collect();
+    (format!("{header}\n\n{}\n", rendered.join("\n")), changed)
+}
+
+/// Apply an account/category rename to one transaction in place; returns whether
+/// anything changed.
+fn rename_txn(t: &mut Transaction, account: bool, old: &str, new: &str) -> bool {
+    let mut hit = false;
+    if account {
+        if t.account == old {
+            t.account = new.to_string();
+            hit = true;
+        }
+        if matches!(t.kind, Kind::Transfer) && t.other.as_deref() == Some(old) {
+            t.other = Some(new.to_string());
+            hit = true;
+        }
+    } else {
+        if matches!(t.kind, Kind::Expense | Kind::Income) && t.other.as_deref() == Some(old) {
+            t.other = Some(new.to_string());
+            hit = true;
+        }
+        for leg in &mut t.split {
+            if leg.0 == old {
+                leg.0 = new.to_string();
+                hit = true;
+            }
+        }
+    }
+    hit
+}
+
 /// A transaction paired with its effective date (its own timestamp, or the
 /// ledger file's day when it carries none).
 type Dated = (Option<NaiveDate>, Transaction);
@@ -1997,6 +2086,48 @@ mod tests {
         let one = recent_entries(&dir, EUR, 1).unwrap();
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].1.other.as_deref(), Some("coffee"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_name_rewrites_account_leg_and_transfer_keeping_id() {
+        let dir = ledger_dir(
+            "finrenameacct",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^aaa000000000 -4.50 EUR  @[[revolut]] #[[coffee]]\n\
+             $ ^bbb000000000 200.00 EUR  @[[revolut]] > @[[cash]]\n\
+             $ ^ccc000000000 -9.00 EUR  @[[cash]] #[[coffee]]\n",
+        );
+        let file = dir.join("2026/07/2026-07-19+ledger.md");
+        // Renames the account leg AND the transfer source; leaves @cash alone.
+        assert_eq!(rename_name(&dir, EUR, true, "revolut", "rev").unwrap(), 2);
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(after.contains("^aaa000000000 -4.50 EUR  @[[rev]] #[[coffee]]"), "{after}");
+        assert!(after.contains("^bbb000000000 200.00 EUR  @[[rev]] > @[[cash]]"), "{after}");
+        assert!(!after.contains("revolut"), "old name gone: {after}");
+        assert!(after.contains("^ccc000000000 -9.00 EUR  @[[cash]]"), "unrelated txn kept: {after}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_name_rewrites_category_and_split_legs() {
+        let dir = ledger_dir(
+            "finrenamecat",
+            "2026-07-19+ledger.md",
+            "isg 2026-07-19 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^aaa000000000 -4.50 EUR  @[[cash]] #[[coffee]]\n\
+             $ ^bbb000000000 -90.00 EUR  @[[cash]]\n\
+             \x20   #[[coffee]]  -60.00 EUR\n\
+             \x20   #[[food]]  -30.00 EUR\n",
+        );
+        let file = dir.join("2026/07/2026-07-19+ledger.md");
+        // Renames the expense category AND the split leg; the account is not touched.
+        assert_eq!(rename_name(&dir, EUR, false, "coffee", "cafe").unwrap(), 2);
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(after.contains("#[[cafe]]"), "{after}");
+        assert!(!after.contains("coffee"), "old category gone: {after}");
+        assert!(after.contains("#[[food]]") && after.contains("@[[cash]]"), "others kept: {after}");
         fs::remove_dir_all(&dir).ok();
     }
 
