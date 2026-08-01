@@ -41,7 +41,10 @@ fn resolved_currency(palace: &Palace) -> String {
 fn currency_from(settings: &Settings) -> String {
     match std::env::var("PLC_CURRENCY") {
         Ok(c) if !c.trim().is_empty() => c.trim().to_uppercase(),
-        _ => settings.currency.clone().unwrap_or_else(|| "EUR".to_string()),
+        _ => settings
+            .currency
+            .clone()
+            .unwrap_or_else(|| "EUR".to_string()),
     }
 }
 
@@ -323,7 +326,12 @@ pub struct EditArgs {
     #[arg(short = 'a', long = "account", value_name = "ACCOUNT")]
     account: Option<String>,
     /// Set the category (expense/income); clears any transfer/split.
-    #[arg(short = 'c', long = "category", value_name = "CATEGORY", conflicts_with = "to")]
+    #[arg(
+        short = 'c',
+        long = "category",
+        value_name = "CATEGORY",
+        conflicts_with = "to"
+    )]
     category: Option<String>,
     /// Make it a transfer to this account instead.
     #[arg(long = "to", value_name = "ACCOUNT")]
@@ -356,7 +364,12 @@ pub struct EditArgs {
     #[arg(long = "uncleared")]
     uncleared: bool,
     /// Set the balance assertion.
-    #[arg(long = "assert", value_name = "BALANCE", allow_hyphen_values = true, conflicts_with = "no_assert")]
+    #[arg(
+        long = "assert",
+        value_name = "BALANCE",
+        allow_hyphen_values = true,
+        conflicts_with = "no_assert"
+    )]
     assert: Option<String>,
     /// Remove the balance assertion.
     #[arg(long = "no-assert")]
@@ -375,7 +388,13 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
             let settings = Settings::load(palace.root());
             let cur = currency_from(&settings);
             let root = palace.root().join("notes/management/daily");
-            ledger::check(&root, &cur, check_args.strict, &settings.accounts, &settings.categories)
+            ledger::check(
+                &root,
+                &cur,
+                check_args.strict,
+                &settings.accounts,
+                &settings.categories,
+            )
         }
         Some(LedgerCmd::Account(account_args)) => account_cmd(palace, account_args),
         Some(LedgerCmd::Last(last_args)) => last_log(palace, last_args),
@@ -398,7 +417,11 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
         "expense" => Measure::Expense,
         "income" => Measure::Income,
         "net" => Measure::Net,
-        o => return Err(format!("ledger stat: unknown --of: {o} (expected expense|income|net)")),
+        o => {
+            return Err(format!(
+                "ledger stat: unknown --of: {o} (expected expense|income|net)"
+            ))
+        }
     };
     let unit = match measure {
         Measure::Expense => "spend",
@@ -443,14 +466,27 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             } else {
                 match args.layout.as_str() {
                     "git" => calview::year_git(y, &vals, calendar::money_symbol, MONEY_LEGEND),
-                    "tab" => calview::year_tab(y, &vals, today, calendar::money_symbol, MONEY_LEGEND, &money),
-                    o => return Err(format!("ledger stat: unknown layout: {o} (expected git|tab)")),
+                    "tab" => calview::year_tab(
+                        y,
+                        &vals,
+                        today,
+                        calendar::money_symbol,
+                        MONEY_LEGEND,
+                        &money,
+                    ),
+                    o => {
+                        return Err(format!(
+                            "ledger stat: unknown layout: {o} (expected git|tab)"
+                        ))
+                    }
                 }
             };
             push_year_spend(&mut out, &st, y, unit, &cur);
             Ok(out)
         }
-        o => Err(format!("ledger stat: unknown type: {o} (expected month|year)")),
+        o => Err(format!(
+            "ledger stat: unknown type: {o} (expected month|year)"
+        )),
     }
 }
 
@@ -458,14 +494,23 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
 /// args are a pattern filter, not a date, so they play no part here.
 fn resolve_ym(args: &LedgerStatArgs, today: NaiveDate) -> Result<(i32, u32), String> {
     let m = match &args.month {
-        Some(s) => s.trim().parse::<u32>().map_err(|_| format!("ledger stat: invalid month: {s}"))?,
+        Some(s) => s
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| format!("ledger stat: invalid month: {s}"))?,
         None => today.month(),
     };
     let y = match &args.year {
         Some(s) => {
             let t = s.trim();
-            let n: i32 = t.parse().map_err(|_| format!("ledger stat: invalid year: {s}"))?;
-            if t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit()) { 2000 + n } else { n }
+            let n: i32 = t
+                .parse()
+                .map_err(|_| format!("ledger stat: invalid year: {s}"))?;
+            if t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit()) {
+                2000 + n
+            } else {
+                n
+            }
         }
         None => today.year(),
     };
@@ -478,8 +523,16 @@ fn resolve_ym(args: &LedgerStatArgs, today: NaiveDate) -> Result<(i32, u32), Str
 /// The month spend Stats block (money-formatted; reworded from `plc stat`).
 fn push_month_spend(out: &mut String, st: &MonthStats, y: i32, m: u32, unit: &str, cur: &str) {
     out.push_str("\n     ── Stats ─────────────────────────\n");
-    let _ = writeln!(out, "     Days w/ {unit:<6}: {} / {}   ({}%)", st.days_written, st.last_day, st.pct);
-    let _ = writeln!(out, "     Total        : {}", calendar::fmt_money(st.total, cur));
+    let _ = writeln!(
+        out,
+        "     Days w/ {unit:<6}: {} / {}   ({}%)",
+        st.days_written, st.last_day, st.pct
+    );
+    let _ = writeln!(
+        out,
+        "     Total        : {}",
+        calendar::fmt_money(st.total, cur)
+    );
     if st.days_written > 0 {
         let avg = st.total / st.days_written as u64;
         let _ = writeln!(out, "     Avg / day    : {}", calendar::fmt_money(avg, cur));
@@ -487,16 +540,32 @@ fn push_month_spend(out: &mut String, st: &MonthStats, y: i32, m: u32, unit: &st
     let _ = writeln!(out, "     Longest run  : {} days", st.longest_run);
     let _ = writeln!(out, "     Current run  : {} days", st.current_run);
     if st.best_day > 0 {
-        let mon = NaiveDate::from_ymd_opt(y, m, st.best_day).expect("best_day in-month").format("%b");
-        let _ = writeln!(out, "     Biggest day  : {} {}   ({})", mon, st.best_day, calendar::fmt_money(st.best_size, cur));
+        let mon = NaiveDate::from_ymd_opt(y, m, st.best_day)
+            .expect("best_day in-month")
+            .format("%b");
+        let _ = writeln!(
+            out,
+            "     Biggest day  : {} {}   ({})",
+            mon,
+            st.best_day,
+            calendar::fmt_money(st.best_size, cur)
+        );
     }
 }
 
 /// The year spend Stats block (money-formatted; reworded from `plc stat`).
 fn push_year_spend(out: &mut String, st: &YearStats, y: i32, unit: &str, cur: &str) {
     out.push_str("\n  ── Year stats ───────────────────────────\n");
-    let _ = writeln!(out, "  Days w/ {unit:<6}: {} / {}   ({}%)", st.days_written, st.total_days, st.pct);
-    let _ = writeln!(out, "  Total        : {}", calendar::fmt_money(st.total, cur));
+    let _ = writeln!(
+        out,
+        "  Days w/ {unit:<6}: {} / {}   ({}%)",
+        st.days_written, st.total_days, st.pct
+    );
+    let _ = writeln!(
+        out,
+        "  Total        : {}",
+        calendar::fmt_money(st.total, cur)
+    );
     if st.days_written > 0 {
         let avg = st.total / st.days_written as u64;
         let _ = writeln!(out, "  Avg / day    : {}", calendar::fmt_money(avg, cur));
@@ -504,12 +573,27 @@ fn push_year_spend(out: &mut String, st: &YearStats, y: i32, unit: &str, cur: &s
     let _ = writeln!(out, "  Longest run  : {} days", st.longest_run);
     let _ = writeln!(out, "  Current run  : {} days", st.current_run);
     if st.best_month > 0 {
-        let name = NaiveDate::from_ymd_opt(y, st.best_month, 1).unwrap().format("%B").to_string();
-        let _ = writeln!(out, "  Biggest month: {name:<9} ({})", calendar::fmt_money(st.best_month_total, cur));
+        let name = NaiveDate::from_ymd_opt(y, st.best_month, 1)
+            .unwrap()
+            .format("%B")
+            .to_string();
+        let _ = writeln!(
+            out,
+            "  Biggest month: {name:<9} ({})",
+            calendar::fmt_money(st.best_month_total, cur)
+        );
     }
     if st.best_day_month > 0 {
-        let mon = NaiveDate::from_ymd_opt(y, st.best_day_month, st.best_day_dom).unwrap().format("%b");
-        let _ = writeln!(out, "  Biggest day  : {} {}   ({})", mon, st.best_day_dom, calendar::fmt_money(st.best_size, cur));
+        let mon = NaiveDate::from_ymd_opt(y, st.best_day_month, st.best_day_dom)
+            .unwrap()
+            .format("%b");
+        let _ = writeln!(
+            out,
+            "  Biggest day  : {} {}   ({})",
+            mon,
+            st.best_day_dom,
+            calendar::fmt_money(st.best_size, cur)
+        );
     }
 }
 
@@ -578,8 +662,17 @@ fn date_range(args: &ReportArgs) -> Result<(Option<NaiveDate>, Option<NaiveDate>
 /// Ledger location `(subdir, filename)` for a given day under the daily tree.
 fn ledger_location(date: NaiveDate) -> (String, String) {
     (
-        format!("notes/management/daily/{:04}/{:02}", date.year(), date.month()),
-        format!("{:04}-{:02}-{:02}+ledger.md", date.year(), date.month(), date.day()),
+        format!(
+            "notes/management/daily/{:04}/{:02}",
+            date.year(),
+            date.month()
+        ),
+        format!(
+            "{:04}-{:02}-{:02}+ledger.md",
+            date.year(),
+            date.month(),
+            date.day()
+        ),
     )
 }
 
@@ -605,10 +698,17 @@ fn log_file(palace: &Palace) -> std::path::PathBuf {
 /// to the daily tree; we store them vault-relative.
 fn sync_log(palace: &Palace) -> Result<Vec<LogRecord>, String> {
     let daily = "notes/management/daily";
-    let entries = ledger::recent_entries(&palace.root().join(daily), &resolved_currency(palace), LOG_CAP)?;
+    let entries = ledger::recent_entries(
+        &palace.root().join(daily),
+        &resolved_currency(palace),
+        LOG_CAP,
+    )?;
     let records: Vec<LogRecord> = entries
         .into_iter()
-        .map(|(rel, t)| LogRecord { path: format!("{daily}/{rel}"), entry: ledger::format_entry(&t) })
+        .map(|(rel, t)| LogRecord {
+            path: format!("{daily}/{rel}"),
+            entry: ledger::format_entry(&t),
+        })
         .collect();
     write_log(palace, &records)?;
     Ok(records)
@@ -635,7 +735,11 @@ fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
         return Ok("\n  (no transactions found)".to_string());
     }
     let shown = args.recent.min(records.len());
-    let mut out = vec![String::new(), format!("  Recent — {shown} of {} transaction(s)", records.len()), String::new()];
+    let mut out = vec![
+        String::new(),
+        format!("  Recent — {shown} of {} transaction(s)", records.len()),
+        String::new(),
+    ];
     for r in records.iter().rev().take(args.recent) {
         out.extend(r.entry.lines().map(|l| format!("  {l}")));
         out.push(String::new());
@@ -656,7 +760,9 @@ fn undo(palace: &Palace) -> Result<String, String> {
     let (rel, txn) = newest;
     let removed = ledger::format_entry(&txn);
     if !ledger::rewrite_txn(&root.join(&rel), &cur, ledger::Match::Value(&txn), None)? {
-        return Err(format!("ledger undo: could not find the entry in {daily}/{rel}"));
+        return Err(format!(
+            "ledger undo: could not find the entry in {daily}/{rel}"
+        ));
     }
     let _ = sync_log(palace); // refresh after the removal
     Ok(format!("undid (removed from {daily}/{rel}):\n{removed}"))
@@ -670,10 +776,15 @@ fn rm(palace: &Palace, args: RmArgs) -> Result<String, String> {
     let root = palace.root().join(daily);
     let cur = currency_from(&Settings::load(palace.root()));
     let (rel, txn) = resolve_one(&root, &cur, &args.id)?;
-    let full_id = txn.id.clone().ok_or_else(|| "ledger rm: matched transaction has no id".to_string())?;
+    let full_id = txn
+        .id
+        .clone()
+        .ok_or_else(|| "ledger rm: matched transaction has no id".to_string())?;
     let removed = ledger::format_entry(&txn);
     if !ledger::rewrite_txn(&root.join(&rel), &cur, ledger::Match::Id(&full_id), None)? {
-        return Err(format!("ledger rm: id ^{full_id} vanished from {daily}/{rel}"));
+        return Err(format!(
+            "ledger rm: id ^{full_id} vanished from {daily}/{rel}"
+        ));
     }
     let _ = sync_log(palace);
     Ok(format!("removed (from {daily}/{rel}):\n{removed}"))
@@ -681,14 +792,25 @@ fn rm(palace: &Palace, args: RmArgs) -> Result<String, String> {
 
 /// Resolve an id prefix to exactly one `(relpath, transaction)`, erroring on no
 /// match or an ambiguous one. Shared by `edit` and `rm`.
-fn resolve_one(root: &std::path::Path, cur: &str, prefix: &str) -> Result<(String, Transaction), String> {
+fn resolve_one(
+    root: &std::path::Path,
+    cur: &str,
+    prefix: &str,
+) -> Result<(String, Transaction), String> {
     let matches = ledger::find_by_id(root, cur, prefix)?;
     if matches.is_empty() {
         return Err(format!("ledger: no transaction with id ^{prefix}"));
     }
     if matches.len() > 1 {
-        let mut lines = vec![format!("ledger: ambiguous id ^{prefix} — matches {}:", matches.len())];
-        lines.extend(matches.iter().map(|(p, t)| format!("  ^{}  {p}", t.id.as_deref().unwrap_or("?"))));
+        let mut lines = vec![format!(
+            "ledger: ambiguous id ^{prefix} — matches {}:",
+            matches.len()
+        )];
+        lines.extend(
+            matches
+                .iter()
+                .map(|(p, t)| format!("  ^{}  {p}", t.id.as_deref().unwrap_or("?"))),
+        );
         return Err(lines.join("\n"));
     }
     Ok(matches.into_iter().next().unwrap())
@@ -697,9 +819,16 @@ fn resolve_one(root: &std::path::Path, cur: &str, prefix: &str) -> Result<(Strin
 /// Bare `plc ledger`: seed today's ledger (if new) and print its path.
 fn seed_today(palace: &Palace) -> Result<String, String> {
     let (subdir, filename) = ledger_location(Local::now().date_naive());
-    note::ensure_note(palace.root(), &subdir, &filename, "ledger", None, note::SIGNATURE)
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("ledger: {e}"))
+    note::ensure_note(
+        palace.root(),
+        &subdir,
+        &filename,
+        "ledger",
+        None,
+        note::SIGNATURE,
+    )
+    .map(|p| p.display().to_string())
+    .map_err(|e| format!("ledger: {e}"))
 }
 
 /// `plc ledger add`: build the transaction and append it to its day's ledger — the
@@ -709,22 +838,29 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
     let mut settings = Settings::load(palace.root());
     let default_cur = currency_from(&settings);
     let declare_new = args.new;
-    let txn = build_txn(args, Local::now().fixed_offset(), &default_cur, &settings.accounts)?;
+    let txn = build_txn(
+        args,
+        Local::now().fixed_offset(),
+        &default_cur,
+        &settings.accounts,
+    )?;
 
     // Typo guard: reject an account/category not in a non-empty declared set,
     // unless `-n` declares it now. Empty sets → no check (fresh-vault default).
     guard_declared(palace, &mut settings, &txn, declare_new)?;
 
-    let day = txn.date.map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
+    let day = txn
+        .date
+        .map_or_else(|| Local::now().date_naive(), |d| d.date_naive());
     let entry = ledger::format_entry(&txn);
     let (subdir, filename) = ledger_location(day);
     let path = note::append_line(palace.root(), &subdir, &filename, "ledger", &entry)
         .map_err(|e| format!("ledger: {e}"))?;
     let _ = sync_log(palace); // keep the recent cache current (best-effort)
-    // The path (first token, for the shell) plus the new transaction's ^id, so
-    // it can be fed straight to `plc ledger edit`/`rm` without a lookup.
+                              // The path (first token, for the shell) plus the new transaction's ^id, so
+                              // it can be fed straight to `plc ledger edit`/`rm` without a lookup.
     Ok(match &txn.id {
-        Some(id) => format!("{}  ^{id}", path.display()),
+        Some(id) => format!("{} \n Transaction id: ^{id}", path.display()),
         None => path.display().to_string(),
     })
 }
@@ -737,7 +873,10 @@ fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
     let cur = currency_from(&Settings::load(palace.root()));
     let root = palace.root().join("notes/management/daily");
     let (relpath, old) = resolve_one(&root, &cur, &args.id)?;
-    let full_id = old.id.clone().ok_or_else(|| "ledger edit: matched transaction has no id".to_string())?;
+    let full_id = old
+        .id
+        .clone()
+        .ok_or_else(|| "ledger edit: matched transaction has no id".to_string())?;
     let oldpath = root.join(&relpath);
 
     // No field flags → locate mode: print `path:line` for the shell to open.
@@ -754,7 +893,9 @@ fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
     if let (Some(o), Some(n)) = (old_day, new_day) {
         if o != n {
             if !ledger::rewrite_txn(&oldpath, &cur, ledger::Match::Id(&full_id), None)? {
-                return Err(format!("ledger edit: id ^{full_id} vanished from {relpath}"));
+                return Err(format!(
+                    "ledger edit: id ^{full_id} vanished from {relpath}"
+                ));
             }
             let (subdir, filename) = ledger_location(n);
             let entry = ledger::format_entry(&edited);
@@ -767,7 +908,9 @@ fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
 
     // In place: rewrite the entry in its current file.
     if !ledger::rewrite_txn(&oldpath, &cur, ledger::Match::Id(&full_id), Some(&edited))? {
-        return Err(format!("ledger edit: id ^{full_id} vanished from {relpath}"));
+        return Err(format!(
+            "ledger edit: id ^{full_id} vanished from {relpath}"
+        ));
     }
     let _ = sync_log(palace);
     Ok(oldpath.display().to_string())
@@ -802,7 +945,8 @@ fn apply_edits(mut t: Transaction, a: &EditArgs) -> Result<Transaction, String> 
         return Err("ledger edit: cannot change a split's amount — edit its legs in the file, or undo + re-add".to_string());
     }
     if let Some(s) = &a.amount {
-        t.amount = ledger::eval_amount(s).ok_or_else(|| format!("ledger edit: invalid amount: {s}"))?;
+        t.amount =
+            ledger::eval_amount(s).ok_or_else(|| format!("ledger edit: invalid amount: {s}"))?;
     }
     if let Some(m) = &a.memo {
         t.memo = m.trim().to_string();
@@ -859,12 +1003,19 @@ fn apply_edits(mut t: Transaction, a: &EditArgs) -> Result<Transaction, String> 
     }
 
     // A transaction must move between distinct buckets (mirrors `build_txn`).
-    let clashes = t.other.as_deref() == Some(t.account.as_str()) || t.split.iter().any(|(c, _)| c == &t.account);
+    let clashes = t.other.as_deref() == Some(t.account.as_str())
+        || t.split.iter().any(|(c, _)| c == &t.account);
     if clashes {
         return Err(if matches!(t.kind, Kind::Transfer) {
-            format!("ledger edit: source and destination are the same account (@{})", t.account)
+            format!(
+                "ledger edit: source and destination are the same account (@{})",
+                t.account
+            )
         } else {
-            format!("ledger edit: @{0} and #{0} are the same name — use distinct names", t.account)
+            format!(
+                "ledger edit: @{0} and #{0} are the same name — use distinct names",
+                t.account
+            )
         });
     }
     Ok(t)
@@ -872,7 +1023,8 @@ fn apply_edits(mut t: Transaction, a: &EditArgs) -> Result<Transaction, String> 
 
 /// The 1-based line number of the `$` head line carrying `^full_id` in `path`.
 fn head_line_number(path: &std::path::Path, full_id: &str) -> Result<usize, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("ledger edit: {}: {e}", path.display()))?;
     let needle = format!("^{full_id}");
     content
         .lines()
@@ -912,7 +1064,10 @@ fn guard_declared(
         if declared.is_empty() {
             return Vec::new(); // no declarations yet → nothing to enforce
         }
-        used.iter().filter(|n| !declared.contains(n)).cloned().collect()
+        used.iter()
+            .filter(|n| !declared.contains(n))
+            .cloned()
+            .collect()
     };
     let bad_accts = missing(&accts, &settings.accounts);
     let bad_cats = missing(&cats, &settings.categories);
@@ -928,9 +1083,18 @@ fn guard_declared(
         }
         return settings.save(palace.root());
     }
-    let mut lines = vec!["ledger: undeclared name(s) — declare them or pass -n to add now:".to_string()];
-    lines.extend(bad_accts.iter().map(|a| format!("  @{a}  (plc ledger account -a {a} --physical)")));
-    lines.extend(bad_cats.iter().map(|c| format!("  #{c}  (plc ledger account -a {c} --ephemeral)")));
+    let mut lines =
+        vec!["ledger: undeclared name(s) — declare them or pass -n to add now:".to_string()];
+    lines.extend(
+        bad_accts
+            .iter()
+            .map(|a| format!("  @{a}  (plc ledger account -a {a} --physical)")),
+    );
+    lines.extend(
+        bad_cats
+            .iter()
+            .map(|c| format!("  #{c}  (plc ledger account -a {c} --ephemeral)")),
+    );
     Err(lines.join("\n"))
 }
 
@@ -961,19 +1125,30 @@ fn account_cmd(palace: &Palace, args: AccountArgs) -> Result<String, String> {
     // Rename OLD → NEW across every ledger and the config.
     if !args.rename.is_empty() {
         let kind = kind.ok_or_else(|| {
-            "ledger account: say which kind — --physical (account) or --ephemeral (category)".to_string()
+            "ledger account: say which kind — --physical (account) or --ephemeral (category)"
+                .to_string()
         })?;
-        return apply_rename(palace, &mut settings, kind, &args.rename[0], &args.rename[1]);
+        return apply_rename(
+            palace,
+            &mut settings,
+            kind,
+            &args.rename[0],
+            &args.rename[1],
+        );
     }
 
     // Names given but no action → tell the user which flag to use.
     if !args.names.is_empty() && !args.add && !args.delete {
-        return Err("ledger account: use -a/--add to add or -d/--delete to remove the named entries".to_string());
+        return Err(
+            "ledger account: use -a/--add to add or -d/--delete to remove the named entries"
+                .to_string(),
+        );
     }
 
     if args.add || args.delete {
         let kind = kind.ok_or_else(|| {
-            "ledger account: say which kind — --physical (account) or --ephemeral (category)".to_string()
+            "ledger account: say which kind — --physical (account) or --ephemeral (category)"
+                .to_string()
         })?;
         if args.names.is_empty() {
             let verb = if args.delete { "delete" } else { "add" };
@@ -1010,7 +1185,12 @@ fn account_cmd(palace: &Palace, args: AccountArgs) -> Result<String, String> {
         }
         settings.save(palace.root())?;
         let verb = if args.delete { "deleted" } else { "added" };
-        return Ok(format!("{verb} {} {}: {}", names.len(), kind.plural(), names.join(", ")));
+        return Ok(format!(
+            "{verb} {} {}: {}",
+            names.len(),
+            kind.plural(),
+            names.join(", ")
+        ));
     }
 
     if args.import {
@@ -1024,7 +1204,11 @@ fn account_cmd(palace: &Palace, args: AccountArgs) -> Result<String, String> {
             };
             let before = pick(&mut settings, k).len();
             used.iter().for_each(|n| declare(pick(&mut settings, k), n));
-            done.push(format!("{} {}", pick(&mut settings, k).len() - before, k.plural()));
+            done.push(format!(
+                "{} {}",
+                pick(&mut settings, k).len() - before,
+                k.plural()
+            ));
         }
         settings.save(palace.root())?;
         return Ok(format!("imported {} from ledgers", done.join(", ")));
@@ -1033,19 +1217,31 @@ fn account_cmd(palace: &Palace, args: AccountArgs) -> Result<String, String> {
     // Bare (or kind-filtered): list.
     Ok(match kind {
         Some(k) => list_kind(&settings, k),
-        None => format!("{}\n{}", list_kind(&settings, Decl::Account), list_kind(&settings, Decl::Category)),
+        None => format!(
+            "{}\n{}",
+            list_kind(&settings, Decl::Account),
+            list_kind(&settings, Decl::Category)
+        ),
     })
 }
 
 /// Rename `old`→`new` (of `kind`) across every ledger *and* the declared config,
 /// keeping each transaction's frozen `^id`. Rejects a `new` already taken by the
 /// other kind, and a rename that touches nothing.
-fn apply_rename(palace: &Palace, settings: &mut Settings, kind: Decl, old: &str, new: &str) -> Result<String, String> {
+fn apply_rename(
+    palace: &Palace,
+    settings: &mut Settings,
+    kind: Decl,
+    old: &str,
+    new: &str,
+) -> Result<String, String> {
     let old = ledger::normalize_name(old);
     let new = ledger::normalize_name(&clean_link(kind.label(), new)?);
     let sigil = kind.sigil();
     if old == new {
-        return Err(format!("ledger account: {sigil}{old} and {sigil}{new} are the same name"));
+        return Err(format!(
+            "ledger account: {sigil}{old} and {sigil}{new} are the same name"
+        ));
     }
     // A name can't be both an account and a category.
     let other = match kind {
@@ -1057,7 +1253,9 @@ fn apply_rename(palace: &Palace, settings: &mut Settings, kind: Decl, old: &str,
             Decl::Account => "a category",
             Decl::Category => "an account",
         };
-        return Err(format!("ledger account: {sigil}{new} is already {other_kind} — a name can't be both @ and #"));
+        return Err(format!(
+            "ledger account: {sigil}{new} is already {other_kind} — a name can't be both @ and #"
+        ));
     }
 
     let root = palace.root().join("notes/management/daily");
@@ -1076,7 +1274,9 @@ fn apply_rename(palace: &Palace, settings: &mut Settings, kind: Decl, old: &str,
     }
     settings.save(palace.root())?;
     let _ = sync_log(palace);
-    Ok(format!("renamed {sigil}{old} → {sigil}{new} ({changed} transaction(s))"))
+    Ok(format!(
+        "renamed {sigil}{old} → {sigil}{new} ({changed} transaction(s))"
+    ))
 }
 
 /// Render one declared set as a titled block (or an empty-state hint).
@@ -1096,8 +1296,16 @@ fn list_kind(settings: &Settings, kind: Decl) -> String {
 /// Split `used` names against a `declared` set: `(undeclared, unused)` —
 /// names used but never declared, and names declared but never used.
 fn diff_names(used: &[String], declared: &[String]) -> (Vec<String>, Vec<String>) {
-    let undeclared = used.iter().filter(|n| !declared.contains(n)).cloned().collect();
-    let unused = declared.iter().filter(|n| !used.contains(n)).cloned().collect();
+    let undeclared = used
+        .iter()
+        .filter(|n| !declared.contains(n))
+        .cloned()
+        .collect();
+    let unused = declared
+        .iter()
+        .filter(|n| !used.contains(n))
+        .cloned()
+        .collect();
     (undeclared, unused)
 }
 
@@ -1115,9 +1323,17 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
 
     // A name declared as both an account and a category (can't auto-fix — which
     // side is right is your call).
-    let both: Vec<String> = settings.accounts.iter().filter(|a| settings.categories.contains(*a)).cloned().collect();
+    let both: Vec<String> = settings
+        .accounts
+        .iter()
+        .filter(|a| settings.categories.contains(*a))
+        .cloned()
+        .collect();
     if !both.is_empty() {
-        findings.push(format!("  ! {} name(s) declared as both @ and #:", both.len()));
+        findings.push(format!(
+            "  ! {} name(s) declared as both @ and #:",
+            both.len()
+        ));
         findings.extend(both.iter().map(|n| {
             format!("      {n}  (drop one: plc ledger account -d {n} --physical | --ephemeral)")
         }));
@@ -1138,16 +1354,32 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         let (undeclared, unused) = diff_names(used, &declared);
         if !undeclared.is_empty() {
             fixable += undeclared.len();
-            findings.push(format!("  ! {} {plural} used but not declared:", undeclared.len()));
-            findings.extend(undeclared.iter().map(|n| format!("      {sigil}{n}  (plc ledger account -a {n} {flag})")));
+            findings.push(format!(
+                "  ! {} {plural} used but not declared:",
+                undeclared.len()
+            ));
+            findings.extend(
+                undeclared
+                    .iter()
+                    .map(|n| format!("      {sigil}{n}  (plc ledger account -a {n} {flag})")),
+            );
             if fix {
-                undeclared.iter().for_each(|n| declare(pick(&mut settings, kind), n));
+                undeclared
+                    .iter()
+                    .for_each(|n| declare(pick(&mut settings, kind), n));
                 fixed.push(format!("declared {} {plural}", undeclared.len()));
             }
         }
         if !unused.is_empty() {
-            findings.push(format!("  ! {} {plural} declared but never used (typo/stale?):", unused.len()));
-            findings.extend(unused.iter().map(|n| format!("      {sigil}{n}  (plc ledger account -d {n} {flag})")));
+            findings.push(format!(
+                "  ! {} {plural} declared but never used (typo/stale?):",
+                unused.len()
+            ));
+            findings.extend(
+                unused
+                    .iter()
+                    .map(|n| format!("      {sigil}{n}  (plc ledger account -d {n} {flag})")),
+            );
         }
     }
 
@@ -1160,14 +1392,19 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         match dominant {
             Some(c) => {
                 fixable += 1;
-                findings.push(format!("  ! no default currency in .plc/config — ledgers use {c}"));
-                findings.push(format!("      set it: add `currency = {c}` (or `plc doctor --fix`)"));
+                findings.push(format!(
+                    "  ! no default currency in .plc/config — ledgers use {c}"
+                ));
+                findings.push(format!(
+                    "      set it: add `currency = {c}` (or `plc doctor --fix`)"
+                ));
                 if fix {
                     settings.currency = Some(c.clone());
                     fixed.push(format!("set currency = {c}"));
                 }
             }
-            None => findings.push("  · no default currency in .plc/config (defaults to EUR)".to_string()),
+            None => findings
+                .push("  · no default currency in .plc/config (defaults to EUR)".to_string()),
         }
     }
 
@@ -1189,7 +1426,10 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     // ids just assigned to genuinely identical entries.
     let dups = ledger::duplicate_ids(&root, &cur)?;
     if !dups.is_empty() {
-        findings.push(format!("  ! {} duplicate transaction id(s) — edit one so it re-seeds:", dups.len()));
+        findings.push(format!(
+            "  ! {} duplicate transaction id(s) — edit one so it re-seeds:",
+            dups.len()
+        ));
         findings.extend(dups.iter().map(|id| format!("      ^{id}")));
     }
 
@@ -1197,7 +1437,10 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     // that `fmt` rewrites to the clean `@[[acct]] = X` checkpoint line.
     if !ledger::fmt(&root, &cur, true)?.contains("already formatted") {
         fixable += 1;
-        findings.push("  ! some ledgers aren't canonically formatted (e.g. old zero-amount assertions)".to_string());
+        findings.push(
+            "  ! some ledgers aren't canonically formatted (e.g. old zero-amount assertions)"
+                .to_string(),
+        );
         findings.push("      clean them: plc ledger fmt".to_string());
         if fix {
             ledger::fmt(&root, &cur, false)?;
@@ -1209,10 +1452,13 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     let legacy = palace.root().join(".last-do");
     if legacy.is_file() {
         fixable += 1;
-        findings.push("  ! legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
+        findings
+            .push("  ! legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
         if fix {
-            std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("ledger doctor: {e}"))?;
-            std::fs::rename(&legacy, palace.state_dir().join("last-do")).map_err(|e| format!("ledger doctor: {e}"))?;
+            std::fs::create_dir_all(palace.state_dir())
+                .map_err(|e| format!("ledger doctor: {e}"))?;
+            std::fs::rename(&legacy, palace.state_dir().join("last-do"))
+                .map_err(|e| format!("ledger doctor: {e}"))?;
             fixed.push("migrated .last-do → .plc/last-do".to_string());
         }
     }
@@ -1220,7 +1466,11 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     if findings.is_empty() {
         return Ok("\n  Doctor — all good  OK".to_string());
     }
-    let mut out = vec![String::new(), "  Doctor — .plc/config vs the ledgers".to_string(), String::new()];
+    let mut out = vec![
+        String::new(),
+        "  Doctor — .plc/config vs the ledgers".to_string(),
+        String::new(),
+    ];
     out.extend(findings);
     out.push(String::new());
     if fix {
@@ -1354,7 +1604,11 @@ fn build_txn(
     }
 
     // A `-T "acct = N"` assertion carries no transaction amount.
-    let amount = if matches!(kind, Kind::Assertion) { 0 } else { amount };
+    let amount = if matches!(kind, Kind::Assertion) {
+        0
+    } else {
+        amount
+    };
 
     let mut txn = Transaction {
         id: None,
@@ -1396,7 +1650,12 @@ struct TxnShape {
 fn parse_txn_spec(spec: &str, accounts: &[String]) -> Result<TxnShape, String> {
     if let Some((l, r)) = spec.split_once('=') {
         let assert = parse_balance(r.trim())?;
-        return Ok(TxnShape { account: spec_account(l)?, kind: Kind::Assertion, other: None, assert: Some(assert) });
+        return Ok(TxnShape {
+            account: spec_account(l)?,
+            kind: Kind::Assertion,
+            other: None,
+            assert: Some(assert),
+        });
     }
     // Reduce both arrows to a directed (src → dst) flow.
     let (src, dst) = if let Some((l, r)) = spec.split_once("->") {
@@ -1404,15 +1663,34 @@ fn parse_txn_spec(spec: &str, accounts: &[String]) -> Result<TxnShape, String> {
     } else if let Some((l, r)) = spec.split_once("<-") {
         (r, l)
     } else {
-        return Err(format!("ledger add: -T wants `A -> B`, `B <- A`, or `A = N`; got: {spec}"));
+        return Err(format!(
+            "ledger add: -T wants `A -> B`, `B <- A`, or `A = N`; got: {spec}"
+        ));
     };
     let (src_acct, src) = classify_target(src, accounts)?;
     let (dst_acct, dst) = classify_target(dst, accounts)?;
     match (src_acct, dst_acct) {
-        (true, true) => Ok(TxnShape { account: src, kind: Kind::Transfer, other: Some(dst), assert: None }),
-        (true, false) => Ok(TxnShape { account: src, kind: Kind::Expense, other: Some(dst), assert: None }),
-        (false, true) => Ok(TxnShape { account: dst, kind: Kind::Income, other: Some(src), assert: None }),
-        (false, false) => Err(format!("ledger add: -T needs an account (declared, or `@name`) in `{spec}`")),
+        (true, true) => Ok(TxnShape {
+            account: src,
+            kind: Kind::Transfer,
+            other: Some(dst),
+            assert: None,
+        }),
+        (true, false) => Ok(TxnShape {
+            account: src,
+            kind: Kind::Expense,
+            other: Some(dst),
+            assert: None,
+        }),
+        (false, true) => Ok(TxnShape {
+            account: dst,
+            kind: Kind::Income,
+            other: Some(src),
+            assert: None,
+        }),
+        (false, false) => Err(format!(
+            "ledger add: -T needs an account (declared, or `@name`) in `{spec}`"
+        )),
     }
 }
 
@@ -1479,7 +1757,9 @@ fn parse_when(s: &str) -> Result<DateTime<FixedOffset>, String> {
             }
         }
     }
-    Err(format!("ledger: invalid date (want YYYY-MM-DD or full timestamp): {s}"))
+    Err(format!(
+        "ledger: invalid date (want YYYY-MM-DD or full timestamp): {s}"
+    ))
 }
 
 /// Validate a value destined for a `[[wikilink]]`: non-blank and free of the
@@ -1490,7 +1770,9 @@ fn clean_link(label: &str, raw: &str) -> Result<String, String> {
         return Err(format!("ledger: {label} must not be blank"));
     }
     if trimmed.contains(['[', ']', '\n']) {
-        return Err(format!("ledger: {label} must not contain brackets or newlines: {trimmed}"));
+        return Err(format!(
+            "ledger: {label} must not contain brackets or newlines: {trimmed}"
+        ));
     }
     Ok(trimmed.to_string())
 }
@@ -1534,22 +1816,37 @@ mod tests {
         };
         // income: revolut <- salary
         let t = build("revolut <- salary");
-        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Income, "revolut", Some("salary")));
+        assert_eq!(
+            (t.kind, t.account.as_str(), t.other.as_deref()),
+            (Kind::Income, "revolut", Some("salary"))
+        );
         // expense: target is an undeclared category
         let t = build("revolut -> food/out");
-        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Expense, "revolut", Some("food/out")));
+        assert_eq!(
+            (t.kind, t.account.as_str(), t.other.as_deref()),
+            (Kind::Expense, "revolut", Some("food/out"))
+        );
         // transfer: target is a declared account
         let t = build("revolut -> cash");
-        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Transfer, "revolut", Some("cash")));
+        assert_eq!(
+            (t.kind, t.account.as_str(), t.other.as_deref()),
+            (Kind::Transfer, "revolut", Some("cash"))
+        );
         // `@` forces a transfer even when undeclared
         let t = build("revolut -> @wallet");
         assert_eq!(t.kind, Kind::Transfer);
         assert_eq!(t.other.as_deref(), Some("wallet"));
         // associative: the account may sit on either side of the arrow
         let t = build("taxi <- revolut"); // category <- account == revolut -> taxi
-        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Expense, "revolut", Some("taxi")));
+        assert_eq!(
+            (t.kind, t.account.as_str(), t.other.as_deref()),
+            (Kind::Expense, "revolut", Some("taxi"))
+        );
         let t = build("salary -> revolut"); // category -> account == revolut <- salary
-        assert_eq!((t.kind, t.account.as_str(), t.other.as_deref()), (Kind::Income, "revolut", Some("salary")));
+        assert_eq!(
+            (t.kind, t.account.as_str(), t.other.as_deref()),
+            (Kind::Income, "revolut", Some("salary"))
+        );
         // assertion: revolut = 2300
         let t = build("revolut = 2300");
         assert_eq!((t.account.as_str(), t.assert), ("revolut", Some(230000)));
@@ -1583,8 +1880,12 @@ mod tests {
         assert!(build_txn(a, now(), "EUR", &["revolut".to_string()]).is_err());
         // a split leg sharing the account name
         let mut a = add_args();
-        (a.account, a.category, a.amount, a.split) =
-            (Some("cash".into()), None, "10".into(), vec!["cash=10".into()]);
+        (a.account, a.category, a.amount, a.split) = (
+            Some("cash".into()),
+            None,
+            "10".into(),
+            vec!["cash=10".into()],
+        );
         assert!(build_txn(a, now(), "EUR", &[]).is_err());
     }
 
@@ -1598,20 +1899,33 @@ mod tests {
         let mut a = add_args();
         (a.to, a.category) = (Some("savings".into()), None);
         let t = build_txn(a, now(), "EUR", &[]).unwrap();
-        assert_eq!(used_names(&t), (vec!["cash".into(), "savings".into()], vec![]));
+        assert_eq!(
+            used_names(&t),
+            (vec!["cash".into(), "savings".into()], vec![])
+        );
 
         // Split: account + each leg category.
         let mut a = add_args();
-        (a.amount, a.category, a.split) = ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
+        (a.amount, a.category, a.split) =
+            ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
         let t = build_txn(a, now(), "EUR", &[]).unwrap();
-        assert_eq!(used_names(&t), (vec!["cash".into()], vec!["food".into(), "tax".into()]));
+        assert_eq!(
+            used_names(&t),
+            (vec!["cash".into()], vec!["food".into(), "tax".into()])
+        );
     }
 
     #[test]
     fn render_log_formats_records() {
         let recs = vec![
-            LogRecord { path: "a/b+ledger.md".into(), entry: "$ -4.50 EUR  @[[cash]] #[[coffee]]\n    coffee".into() },
-            LogRecord { path: "a/c+ledger.md".into(), entry: "$ -11.00 EUR  @[[revolut]] #[[food/out]]".into() },
+            LogRecord {
+                path: "a/b+ledger.md".into(),
+                entry: "$ -4.50 EUR  @[[cash]] #[[coffee]]\n    coffee".into(),
+            },
+            LogRecord {
+                path: "a/c+ledger.md".into(),
+                entry: "$ -11.00 EUR  @[[revolut]] #[[food/out]]".into(),
+            },
         ];
         assert_eq!(
             render_log(&recs),
@@ -1622,8 +1936,16 @@ mod tests {
 
     #[test]
     fn diff_names_splits_undeclared_and_unused() {
-        let used = vec!["cash".to_string(), "revolut".to_string(), "cofee".to_string()];
-        let declared = vec!["cash".to_string(), "revolut".to_string(), "rent".to_string()];
+        let used = vec![
+            "cash".to_string(),
+            "revolut".to_string(),
+            "cofee".to_string(),
+        ];
+        let declared = vec![
+            "cash".to_string(),
+            "revolut".to_string(),
+            "rent".to_string(),
+        ];
         let (undeclared, unused) = diff_names(&used, &declared);
         assert_eq!(undeclared, vec!["cofee".to_string()]); // used, not declared
         assert_eq!(unused, vec!["rent".to_string()]); // declared, not used
@@ -1642,7 +1964,10 @@ mod tests {
     fn maps_expense_args() {
         let t = build_txn(add_args(), now(), "EUR", &[]).unwrap();
         assert_eq!(t.kind, Kind::Expense);
-        assert_eq!((t.amount, t.account.as_str(), t.other.as_deref()), (450, "cash", Some("coffee")));
+        assert_eq!(
+            (t.amount, t.account.as_str(), t.other.as_deref()),
+            (450, "cash", Some("coffee"))
+        );
         assert_eq!(t.memo, "Blue Bottle");
         assert_eq!(t.date, Some(now())); // stamped by default
         assert_eq!(t.state, State::Uncleared);
@@ -1668,14 +1993,20 @@ mod tests {
         a.amount = "200".into();
         let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.kind, Kind::Transfer);
-        assert_eq!((t.account.as_str(), t.other.as_deref()), ("cash", Some("checking")));
+        assert_eq!(
+            (t.account.as_str(), t.other.as_deref()),
+            ("cash", Some("checking"))
+        );
     }
 
     #[test]
     fn projects_normalized_slash_preserved() {
         let mut a = add_args();
         a.project = vec!["Japan-Trip/Work".into()];
-        assert_eq!(build_txn(a, now(), "EUR", &[]).unwrap().projects, vec!["japan-trip/work"]);
+        assert_eq!(
+            build_txn(a, now(), "EUR", &[]).unwrap().projects,
+            vec!["japan-trip/work"]
+        );
     }
 
     #[test]
@@ -1706,7 +2037,14 @@ mod tests {
         let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.amount, 9000);
         assert_eq!(t.other, None);
-        assert_eq!(t.split, vec![("food".into(), 6000), ("household".into(), 2500), ("tax".into(), 500)]);
+        assert_eq!(
+            t.split,
+            vec![
+                ("food".into(), 6000),
+                ("household".into(), 2500),
+                ("tax".into(), 500)
+            ]
+        );
 
         // Legs that don't sum to the total are rejected.
         let mut bad = add_args();
@@ -1726,7 +2064,10 @@ mod tests {
         a.category = None;
         let t = build_txn(a, now(), "EUR", &[]).unwrap();
         assert_eq!(t.kind, Kind::Assertion);
-        assert_eq!((t.amount, t.assert, t.other.as_deref()), (0, Some(-1200), None));
+        assert_eq!(
+            (t.amount, t.assert, t.other.as_deref()),
+            (0, Some(-1200), None)
+        );
     }
 
     #[test]
@@ -1751,7 +2092,11 @@ mod tests {
         // accounting); every continuation line stays within the 79-col budget.
         let mut a = add_args();
         a.memo = vec!["latte".into()];
-        a.project = vec!["japan-trip/leisure".into(), "work".into(), "reimbursable".into()];
+        a.project = vec![
+            "japan-trip/leisure".into(),
+            "work".into(),
+            "reimbursable".into(),
+        ];
         let entry = ledger::format_entry(&build_txn(a, now(), "EUR", &[]).unwrap());
         assert!(entry.contains('\n'), "should wrap: {entry}");
         for line in entry.lines().skip(1) {
@@ -1800,7 +2145,10 @@ mod tests {
         a.memo = Some("team lunch".into());
         a.cleared = true;
         let t = apply_edits(base, &a).unwrap();
-        assert_eq!((t.amount, t.memo.as_str(), t.state), (1250, "team lunch", State::Cleared));
+        assert_eq!(
+            (t.amount, t.memo.as_str(), t.state),
+            (1250, "team lunch", State::Cleared)
+        );
         assert_eq!(t.kind, Kind::Expense); // unchanged
         assert_eq!(t.id, id); // the frozen handle survives the edit
     }
@@ -1811,7 +2159,10 @@ mod tests {
         let mut a = edit_args("x");
         a.to = Some("savings".into());
         let t = apply_edits(base.clone(), &a).unwrap();
-        assert_eq!((t.kind, t.other.as_deref()), (Kind::Transfer, Some("savings")));
+        assert_eq!(
+            (t.kind, t.other.as_deref()),
+            (Kind::Transfer, Some("savings"))
+        );
 
         let mut a = edit_args("x");
         a.income = true;
@@ -1822,7 +2173,8 @@ mod tests {
     fn edit_rejects_split_amount_and_same_name() {
         // Changing a split's total would unbalance the legs.
         let mut aa = add_args();
-        (aa.amount, aa.category, aa.split) = ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
+        (aa.amount, aa.category, aa.split) =
+            ("90".into(), None, vec!["food=60".into(), "tax=30".into()]);
         let split = build_txn(aa, now(), "EUR", &[]).unwrap();
         let mut a = edit_args("x");
         a.amount = Some("100".into());
