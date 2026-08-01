@@ -336,17 +336,27 @@ still balances.
 
 ## 5.3 Balance assertions
 
-Assert an account's balance right after a transaction to catch drift, with
-`--assert` (or a `= <balance>` on the line):
+A **balance assertion** is a checkpoint: it records what an account's balance
+*should* be at a point in time, so `check` can catch drift. It moves no money —
+no amount, no category — just the account and the asserted balance. Use the
+`--assert` flag, where the AMOUNT you pass is the balance:
 
-    $ plc ledger add 4.50 coffee -a cash -c coffee --assert 195.50
-    #  → $ … -4.50 EUR  @[[cash]] #[[coffee]] = 195.50 EUR
-    #        coffee
+    $ plc ledger add 212.94 balance check -a edenred --assert
+    #  → $ ^b20919fe513b 2026-08-01 21:15:24 +0200 @[[edenred]] = 212.94 EUR
+    #        balance check
 
-For a pure checkpoint that moves no money, add a zero-amount transaction — it
-contributes nothing to any balance but is still verified:
+The symbolic form works too: `plc ledger add 0 -T "edenred = 212.94"`. A checkpoint
+is excluded from every report/register total (it's a marker, not a flow), but
+`check` still verifies it.
 
-    $ plc ledger add 0 balance check -a cash --assert 195.50
+An assertion may also ride on a real transaction as a trailing `= <balance>`
+(asserting the account's balance right after it):
+
+    $ plc ledger add 4.50 coffee -a cash -c coffee   # then hand-add ` = 195.50 EUR`
+
+> Older ledgers asserted with a redundant zero-amount transaction
+> (`$ 0 EUR @[[acct]] = X`). `plc ledger fmt` (and `plc doctor --fix`) rewrite
+> those to the clean amount-less checkpoint line, keeping each `^id`.
 
 `plc ledger check` replays every transaction in date order and verifies each
 assertion:
@@ -555,7 +565,8 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
       -p, --project TAG           project/event tag, nested with `/` (repeatable)
       -d, --date WHEN             YYYY-MM-DD or a full timestamp (default: now)
           --cleared / --pending   reconciliation state
-          --assert BALANCE        assert the account balance afterwards
+          --assert                record a balance checkpoint: AMOUNT is the
+                                  asserted balance, account only (§5.3)
       (AMOUNT may be an arithmetic expression — §5.4)
     plc ledger edit ID [flags]       edit a txn by its ^id (unique prefix; §8.1)
       (no flags)                  print its path:line for an editor

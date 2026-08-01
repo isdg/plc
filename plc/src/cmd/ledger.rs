@@ -296,9 +296,11 @@ pub struct AddArgs {
     /// rejected by the typo guard (when a declared set exists).
     #[arg(short = 'n', long = "new")]
     new: bool,
-    /// Assert the account's balance after this transaction (for reconciliation).
-    #[arg(long = "assert", value_name = "BALANCE", allow_hyphen_values = true)]
-    assert: Option<String>,
+    /// Record a balance assertion (checkpoint) instead of a transaction: the
+    /// AMOUNT is the asserted balance of the account, with no category. Needs
+    /// only `-a ACCOUNT`.
+    #[arg(long = "assert", conflicts_with_all = ["category", "to", "income", "split", "txn"])]
+    assert: bool,
 }
 
 /// `plc ledger edit <ID>`: change one transaction, found by its `^id` (a unique
@@ -1191,6 +1193,18 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         findings.extend(dups.iter().map(|id| format!("      ^{id}")));
     }
 
+    // Ledgers not in canonical form — e.g. old redundant zero-amount assertions
+    // that `fmt` rewrites to the clean `@[[acct]] = X` checkpoint line.
+    if !ledger::fmt(&root, &cur, true)?.contains("already formatted") {
+        fixable += 1;
+        findings.push("  ! some ledgers aren't canonically formatted (e.g. old zero-amount assertions)".to_string());
+        findings.push("      clean them: plc ledger fmt".to_string());
+        if fix {
+            ledger::fmt(&root, &cur, false)?;
+            fixed.push("reformatted ledgers (plc ledger fmt)".to_string());
+        }
+    }
+
     // A pre-`.plc` do-pointer left at the vault root.
     let legacy = palace.root().join(".last-do");
     if legacy.is_file() {
@@ -1247,6 +1261,49 @@ fn build_txn(
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| default_currency.to_string());
 
+    let date = Some(match args.date.as_deref() {
+        Some(s) => parse_when(s)?,
+        None => now,
+    });
+    let state = if args.cleared {
+        State::Cleared
+    } else if args.pending {
+        State::Pending
+    } else {
+        State::Uncleared
+    };
+    let projects = args
+        .project
+        .iter()
+        .map(|p| clean_link("project", p).map(|p| ledger::normalize_name(&p)))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // A balance assertion (`--assert`): the AMOUNT is the asserted balance, and
+    // the result is an amount-less checkpoint on the account (no category).
+    if args.assert {
+        let account = args
+            .account
+            .as_deref()
+            .ok_or("ledger add: --assert needs an account — pass -a ACCOUNT")?;
+        let account = ledger::normalize_name(&clean_link("account", account)?);
+        let mut txn = Transaction {
+            id: None,
+            amount: 0,
+            currency,
+            kind: Kind::Assertion,
+            account,
+            other: None,
+            assert: Some(parse_balance(&args.amount)?),
+            date,
+            state,
+            projects,
+            split: Vec::new(),
+            memo: args.memo.join(" "),
+        };
+        txn.id = Some(ledger::txn_id(&txn));
+        return Ok(txn);
+    }
+
     // The core shape (account / kind / category-or-dest / assertion) comes either
     // from the symbolic `-T` spec or from the individual flags.
     let mut split = Vec::new();
@@ -1277,12 +1334,10 @@ fn build_txn(
                 ));
             }
         }
-        let assert = match args.assert.as_deref() {
-            Some(s) => Some(parse_balance(s)?),
-            None => None,
-        };
+        // A standalone assertion is created earlier (via `--assert`); a normal
+        // transaction carries no inline assertion.
         let other = if split.is_empty() { other } else { None };
-        (account, kind, other, assert)
+        (account, kind, other, None)
     };
 
     // A transaction must move between *different* buckets. The account can't also
@@ -1298,24 +1353,8 @@ fn build_txn(
         });
     }
 
-    let projects = args
-        .project
-        .iter()
-        .map(|p| clean_link("project", p).map(|p| ledger::normalize_name(&p)))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Stamp the full instant by default (like a note); `--date` overrides.
-    let date = Some(match args.date.as_deref() {
-        Some(s) => parse_when(s)?,
-        None => now,
-    });
-    let state = if args.cleared {
-        State::Cleared
-    } else if args.pending {
-        State::Pending
-    } else {
-        State::Uncleared
-    };
+    // A `-T "acct = N"` assertion carries no transaction amount.
+    let amount = if matches!(kind, Kind::Assertion) { 0 } else { amount };
 
     let mut txn = Transaction {
         id: None,
@@ -1357,7 +1396,7 @@ struct TxnShape {
 fn parse_txn_spec(spec: &str, accounts: &[String]) -> Result<TxnShape, String> {
     if let Some((l, r)) = spec.split_once('=') {
         let assert = parse_balance(r.trim())?;
-        return Ok(TxnShape { account: spec_account(l)?, kind: Kind::Expense, other: None, assert: Some(assert) });
+        return Ok(TxnShape { account: spec_account(l)?, kind: Kind::Assertion, other: None, assert: Some(assert) });
     }
     // Reduce both arrows to a directed (src → dst) flow.
     let (src, dst) = if let Some((l, r)) = spec.split_once("->") {
@@ -1476,7 +1515,7 @@ mod tests {
             cleared: false,
             pending: false,
             new: false,
-            assert: None,
+            assert: false,
         }
     }
 
@@ -1678,10 +1717,25 @@ mod tests {
     }
 
     #[test]
-    fn assert_flag_parses_signed_balance() {
+    fn assert_flag_builds_a_checkpoint_from_the_amount() {
+        // `--assert` turns the AMOUNT into the asserted balance: an amount-less,
+        // category-less checkpoint on the account.
         let mut a = add_args();
-        a.assert = Some("-12.00".into());
-        assert_eq!(build_txn(a, now(), "EUR", &[]).unwrap().assert, Some(-1200));
+        a.assert = true;
+        a.amount = "-12.00".into();
+        a.category = None;
+        let t = build_txn(a, now(), "EUR", &[]).unwrap();
+        assert_eq!(t.kind, Kind::Assertion);
+        assert_eq!((t.amount, t.assert, t.other.as_deref()), (0, Some(-1200), None));
+    }
+
+    #[test]
+    fn txn_spec_assertion_is_a_checkpoint() {
+        let mut a = add_args();
+        (a.account, a.category, a.txn) = (None, None, Some("revolut = 2300".into()));
+        let t = build_txn(a, now(), "EUR", &["revolut".to_string()]).unwrap();
+        assert_eq!(t.kind, Kind::Assertion);
+        assert_eq!((t.amount, t.assert), (0, Some(230000)));
     }
 
     #[test]

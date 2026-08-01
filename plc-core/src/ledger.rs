@@ -238,6 +238,9 @@ pub enum Kind {
     Income,
     /// Movement of `amount` from `account` to the destination account.
     Transfer,
+    /// A balance checkpoint: asserts `account`'s balance (held in `assert`) with
+    /// no money movement — no amount, no category. Rendered `@[[account]] = X CUR`.
+    Assertion,
 }
 
 /// One parsed transaction. `amount` is a non-negative magnitude in minor units;
@@ -290,11 +293,16 @@ pub fn format_line(t: &Transaction) -> String {
         State::Pending => line.push_str("! "),
         State::Uncleared => {}
     }
-    line.push_str(&format!("{signed} {}  @[[{}]]", t.currency, t.account));
-    match (t.kind, &t.other) {
-        (Kind::Transfer, Some(dest)) => line.push_str(&format!(" > @[[{dest}]]")),
-        (_, Some(cat)) => line.push_str(&format!(" #[[{cat}]]")),
-        (_, None) => {}
+    if matches!(t.kind, Kind::Assertion) {
+        // A pure checkpoint: just the account (no amount / category).
+        line.push_str(&format!("@[[{}]]", t.account));
+    } else {
+        line.push_str(&format!("{signed} {}  @[[{}]]", t.currency, t.account));
+        match (t.kind, &t.other) {
+            (Kind::Transfer, Some(dest)) => line.push_str(&format!(" > @[[{dest}]]")),
+            (_, Some(cat)) => line.push_str(&format!(" #[[{cat}]]")),
+            (_, None) => {}
+        }
     }
     if let Some(a) = t.assert {
         let sign = if a < 0 { "-" } else { "" };
@@ -423,6 +431,13 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
         }
     }
 
+    // Assertion-only line: `@[[account]] = <±balance> [CUR]` — no amount, no
+    // category. Recognized by the account coming right after the state (a normal
+    // line has an amount there first).
+    if rest.trim_start().starts_with("@[[") {
+        return parse_assertion(rest, default_currency, id, date, state);
+    }
+
     let (amount_tok, rest) = next_token(rest)?;
     let (neg, amount) = parse_amount(amount_tok)?;
 
@@ -473,6 +488,47 @@ pub fn parse_line(line: &str, default_currency: &str) -> Option<Transaction> {
     let memo = rest.trim().to_string();
     let split = Vec::new(); // populated from `#[[cat]] amount` continuation lines
     Some(Transaction { id, amount, currency, kind, account, other, assert, date, state, projects, split, memo })
+}
+
+/// Parse an assertion-only line body (already past `$`/id/timestamp/state):
+/// `@[[account]] = <±balance> [CUR]  [~tags] [memo]`. The `= balance` is
+/// mandatory — without it there is no assertion and the line is not a checkpoint.
+fn parse_assertion(
+    rest: &str,
+    default_currency: &str,
+    id: Option<String>,
+    date: Option<DateTime<FixedOffset>>,
+    state: State,
+) -> Option<Transaction> {
+    let (acct_raw, rest) = take_sigil_link(rest, '@')?;
+    let account = normalize_name(acct_raw);
+    let after_eq = rest.trim_start().strip_prefix('=')?;
+    let (bal_tok, after) = next_token(after_eq)?;
+    let (neg, mag) = parse_amount(bal_tok)?;
+    let assert = Some(if neg { -mag } else { mag });
+    let (currency, mut rest) = match next_token(after) {
+        Some((tok, r)) if is_currency_code(tok) => (tok.to_string(), r),
+        _ => (default_currency.to_string(), after),
+    };
+    let mut projects = Vec::new();
+    while let Some(after) = take_project(rest.trim_start(), &mut projects) {
+        rest = after;
+    }
+    let memo = rest.trim().to_string();
+    Some(Transaction {
+        id,
+        amount: 0,
+        currency,
+        kind: Kind::Assertion,
+        account,
+        other: None,
+        assert,
+        date,
+        state,
+        projects,
+        split: Vec::new(),
+        memo,
+    })
 }
 
 /// If `s` begins with a `~[[tag]]`, push its normalized tag onto `projects` and
@@ -546,6 +602,18 @@ pub fn parse_entries(content: &str, default_currency: &str) -> Vec<Transaction> 
             i += 1;
         }
         txn.memo = memo_parts.join(" ");
+        // A zero-amount entry that only carries an assertion (no category/split/
+        // transfer) is really a checkpoint — the old redundant `$ 0 … = X` form.
+        // Normalize it to `Kind::Assertion` so reports treat it as a checkpoint
+        // and `fmt` re-renders it as the clean amount-less line.
+        if txn.amount == 0
+            && txn.assert.is_some()
+            && txn.other.is_none()
+            && txn.split.is_empty()
+            && !matches!(txn.kind, Kind::Transfer | Kind::Assertion)
+        {
+            txn.kind = Kind::Assertion;
+        }
         out.push(txn);
     }
     out
@@ -649,12 +717,19 @@ fn signed_amount(t: &Transaction) -> String {
         Kind::Expense => format!("-{a}"),
         Kind::Income => format!("+{a}"),
         Kind::Transfer => a,
+        Kind::Assertion => String::new(), // no amount on the line
     }
 }
 
 /// A compact one-line description of the flow, e.g. `@cash #coffee` or
 /// `@checking > @cash`. Used by the register.
 fn describe(t: &Transaction) -> String {
+    if matches!(t.kind, Kind::Assertion) {
+        return match t.assert {
+            Some(a) => format!("@{} = {}", t.account, format_signed(a)),
+            None => format!("@{}", t.account),
+        };
+    }
     match (t.kind, &t.other) {
         (Kind::Transfer, Some(dest)) => format!("@{} > @{}", t.account, dest),
         (_, Some(other)) => format!("@{} #{}", t.account, other),
@@ -728,6 +803,10 @@ fn category_legs(t: &Transaction) -> Vec<(String, i64)> {
 pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
     let mut per: BTreeMap<String, CurrencyTotals> = BTreeMap::new();
     for t in txns {
+        // Assertions are checkpoints, not money movements — off every total.
+        if matches!(t.kind, Kind::Assertion) {
+            continue;
+        }
         let cur = per.entry(t.currency.clone()).or_default();
         cur.count += 1;
         match t.kind {
@@ -757,13 +836,14 @@ pub fn summarize(txns: &[Transaction]) -> BTreeMap<String, CurrencyTotals> {
                     *cur.accounts.entry(dest.clone()).or_default() += t.amount;
                 }
             }
+            Kind::Assertion => {} // skipped above; arm kept for exhaustiveness
         }
         // Attribute the spend to each tag (expense = cost `+`, income = `-`;
         // transfers move nothing in/out, so 0). Side-map only, off the book.
         let proj_delta = match t.kind {
             Kind::Expense => t.amount,
             Kind::Income => -t.amount,
-            Kind::Transfer => 0,
+            Kind::Transfer | Kind::Assertion => 0,
         };
         for p in &t.projects {
             *cur.projects.entry(p.clone()).or_default() += proj_delta;
@@ -849,7 +929,7 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
         let delta = match t.kind {
             Kind::Expense => -t.amount,
             Kind::Income => t.amount,
-            Kind::Transfer => 0,
+            Kind::Transfer | Kind::Assertion => 0,
         };
         let run = running.entry(t.currency.clone()).or_default();
         *run += delta;
@@ -1320,6 +1400,7 @@ pub fn check(
                     *bal.entry(key(dest)).or_default() += t.amount;
                 }
             }
+            Kind::Assertion => {} // no movement — just the check below
         }
         if let Some(expected) = t.assert {
             checked += 1;
@@ -2341,6 +2422,40 @@ mod tests {
             format_line(&t),
             "$ -4.50 EUR  @[[cash]] #[[coffee]] = 480.00 EUR  Blue Bottle"
         );
+    }
+
+    #[test]
+    fn round_trip_assertion_only_line() {
+        // An amount-less checkpoint: `@[[account]] = balance CUR`, memo below.
+        let t = parse_line("$ ^b20919fe513b 2026-08-01 21:15:24 +0200 @[[edenred]] = 212.94 EUR  balance check", EUR).unwrap();
+        assert_eq!(t.kind, Kind::Assertion);
+        assert_eq!((t.amount, t.assert, t.other.as_deref()), (0, Some(21294), None));
+        assert_eq!(t.memo, "balance check");
+        assert_eq!(
+            format_entry(&t),
+            "$ ^b20919fe513b 2026-08-01 21:15:24 +0200 @[[edenred]] = 212.94 EUR\n    balance check"
+        );
+    }
+
+    #[test]
+    fn redundant_zero_amount_assertion_normalizes_and_fmt_cleans_it() {
+        // The old redundant form (a 0-amount transaction carrying an assertion)
+        // parses as a checkpoint, and `fmt` rewrites it to the clean line.
+        let dir = ledger_dir(
+            "finassert0",
+            "2026-08-01+ledger.md",
+            "isg 2026-08-01 10:00:00 +0200\n\n[[ledger]]\n\n\
+             $ ^b20919fe513b 2026-08-01 21:15:24 +0200 +0.00 EUR @[[edenred]] = 212.94 EUR\n    balance check\n",
+        );
+        let file = dir.join("2026/07/2026-08-01+ledger.md");
+        let t = &parse_entries(&fs::read_to_string(&file).unwrap(), EUR)[0];
+        assert_eq!(t.kind, Kind::Assertion);
+        fmt(&dir, EUR, false).unwrap();
+        let after = fs::read_to_string(&file).unwrap();
+        assert!(after.contains("@[[edenred]] = 212.94 EUR\n    balance check"), "{after}");
+        assert!(!after.contains("0.00 EUR @[[edenred]]"), "zero amount dropped: {after}");
+        assert!(after.contains("^b20919fe513b"), "id preserved: {after}");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
