@@ -1,0 +1,92 @@
+Tue 19 Mar 2024 at 23:57:51
+
+[[README]]
+
+### NAME
+
+PALACE – A Isai Gordeev note-taking storage
+
+### SYNOPSIS
+
+The PALACE is a structured digital vault for notes, ideas, and
+project management. It supports time-linked notes, Zettelkasten
+methodology, and hierarchical organization.
+
+### DESCRIPTION
+
+PALACE is a personal storage system for taking, linking, and
+managing notes. Notes are structured with timestamps, tags, and
+unique links for efficient navigation and evolution tracking.
+
+### MOTIVATION
+
+To write and structure thoughts, ideas, and projects efficiently.
+
+### PHILOSOPHY
+
+Notes are organized into four main domains:
+
+- resources
+- projects
+- management
+- instances
+
+Core links denote the meaning of most notes and are placed in
+corresponding folders.
+
+### PRINCIPLES
+
+- Autonomous principle Each note must be clear and independent.
+  Enables future linkage.
+- Graph principle Each note should link to at least one other note.
+  Ensures a connected network.
+- Occam's razor principle Notes are kept simple while complete.
+- Deletion principle Notes are not deleted but can be updated with
+  new notes or revisions.
+- Simple principle Notes are primarily textual for minimalistic
+  consistency.
+- Absorbing principle Each note should be written and copied if the
+  idea is understood.
+
+### NOTE STRUCTURE
+
+   ```prefix```
+   isg 2026-06-05 10:46:12 +0200
+
+   ```content```
+
+   ```[[link 1]]```
+   ```[[link 2]]```
+
+### USAGE
+
+- Notes can be nested or listed, each with a unique link.
+- Weekly notes contain past reflections and near-week plans.
+- The vault directory contains only folders and [[PALACE]].
+- If a relevant folder does not exist, create one and link
+  appropriately.
+
+### ZETTELKASTEN METHOD
+
+- Quick note capture system.
+- Quick note access system.
+- Notes are independent by default but can be linked to daily notes.
+- Time-stamped modifications example:
+
+      ```
+      I love Tretyakov gallery 2022-07-22 22:23
+      I love very much Shishkin's bears 2026-06-05 10:44
+      ```
+
+### FILES AND LINKS
+
+- [[README]] – this file
+- [[LICENCE]] – access rights and licensing
+- [[MANIFEST]] – motivation and philosophy
+- [[STATE-OF-THE-ART]] – rules and principles
+- [[NAVIGATION]] – hierarchy of plans
+- [[START PAGE]] – starting point for using PALACE
+
+### AUTHOR
+
+Isai Gordeev © 2021

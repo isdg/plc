@@ -27,6 +27,26 @@ shared across every note type — including ledgers.
 
 ---
 
+## The method
+
+`plc`'s conventions aren't arbitrary. The stamp header, the `[[wikilink]]`
+graph, the four note domains, and the daily → weekly → do → seasons → longs
+horizons all come from PALACE, a plain-text note-taking method that predates
+the binary. Its notes are text you could keep by hand; `plc` only removes the
+typing.
+
+The method's own documents live in `docs/`, kept as they were written:
+
+    docs/README            the PALACE overview, man-page style
+    docs/MANIFEST          motivation, the four domains, the principles
+    docs/STATE-OF-THE-ART  rules, note structure, tags, Zettelkasten
+    docs/FORMAT            formatting conventions + hierarchy of plans
+    docs/NAVIGATION        the hierarchy of plans
+    docs/PALACE.md         the vault's core landing page
+    docs/START PAGE        the vault's start page
+
+---
+
 ## Setup
 
 Build and install the binary, point it at a vault, and scaffold it:
