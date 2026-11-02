@@ -4,7 +4,7 @@
 — think of it as the _Debit & Credit_ app's simplicity with
 [Ledger](https://ledger-cli.org/)'s plain-text discipline, sharing one clock and
 one link graph with your prose. For the rest of `plc`'s commands, see the
-[top-level README](../README.md).
+[top-level README](../README.txt).
 
 ---
 
