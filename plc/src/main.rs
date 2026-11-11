@@ -61,7 +61,7 @@ enum Cmd {
     Orphans(cmd::orphans::OrphansArgs),
     /// Check vault health and propose repairs (`--fix`).
     Doctor(cmd::doctor::DoctorArgs),
-    /// Show or set the persistent vault location (`~/.plcrc`).
+    /// Show the resolved vault location.
     Config(cmd::config::ConfigArgs),
     /// Scaffold the canonical vault directory tree.
     Init(cmd::init::InitArgs),
