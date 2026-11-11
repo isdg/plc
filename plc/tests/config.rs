@@ -3,6 +3,9 @@
 
 mod common;
 
+use std::fs;
+use std::os::unix::fs::symlink;
+
 use common::{display, fail, ok, Home, NO_VAULT};
 
 #[test]
@@ -59,6 +62,50 @@ fn plc_home_relocates_the_rc() {
 
     home.write("elsewhere/.plcrc", "vault = /relocated\n");
     assert_eq!(ok(&mut cmd), "/relocated");
+}
+
+const HINT: &str = "(rename its PALACE_DIR key to `vault`)";
+
+#[test]
+fn legacy_rc_moves_into_plc_home() {
+    let home = Home::new("adopt");
+    let legacy = "export PALACE_DIR=\"/v\"\n";
+    home.write(".plcrc", legacy);
+    let want = format!("config: {NO_VAULT} ~/.plc/.plcrc {HINT}");
+    assert_eq!(fail(&mut home.plc(&["config"])), want);
+    assert!(!home.path(".plcrc").exists());
+    let moved = fs::read_to_string(home.path(".plc/.plcrc")).unwrap();
+    assert_eq!(moved, legacy);
+}
+
+#[test]
+fn legacy_rc_never_replaces_one() {
+    let home = Home::new("no-adopt");
+    home.write(".plcrc", "PALACE_DIR = /old\n");
+    home.write(".plc/.plcrc", "vault = /new\n");
+    assert_eq!(ok(&mut home.plc(&["config"])), "/new");
+    assert!(home.path(".plcrc").exists());
+
+    let rc = home.path(".plc/.plcrc");
+    fs::remove_file(&rc).unwrap();
+    symlink(home.path("dotfiles/plcrc"), &rc).unwrap();
+    let want = format!("config: {NO_VAULT} ~/.plc/.plcrc");
+    assert_eq!(fail(&mut home.plc(&["config"])), want);
+    assert!(home.path(".plcrc").exists());
+    assert!(fs::symlink_metadata(&rc).unwrap().is_symlink());
+}
+
+#[test]
+fn legacy_rc_stays_under_plc_home() {
+    let home = Home::new("adopt-plc-home");
+    home.write(".plcrc", "PALACE_DIR = /old\n");
+    let mut cmd = home.plc(&["config"]);
+    cmd.env("PLC_HOME", home.path("elsewhere"));
+    let want = format!("config: {NO_VAULT} ~/elsewhere/.plcrc");
+    assert_eq!(fail(&mut cmd), want);
+    assert!(home.path(".plcrc").exists());
+    assert!(!home.path("elsewhere").exists());
+    assert!(!home.path(".plc").exists());
 }
 
 #[test]
