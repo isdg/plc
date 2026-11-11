@@ -5,6 +5,7 @@
 //! a palace that hasn't been decrypted yet.
 
 use std::env;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::rc::{self, expand_tilde, Rc};
@@ -79,10 +80,30 @@ impl Palace {
         &self.root
     }
 
-    /// The per-vault state/settings directory (`<root>/.plc`) — home to the
-    /// `plc ledger` config, pointer files, and logs. A pure path: callers
-    /// `create_dir_all` before writing into it.
-    pub fn state_dir(&self) -> PathBuf {
+    /// The vault's own plc directory, `<root>/.plc`: settings and pointers
+    /// that travel with the vault (`config`, `last-do`). A pure path:
+    /// callers `create_dir_all` before writing into it.
+    pub fn plc_dir(&self) -> PathBuf {
         self.root.join(".plc")
+    }
+
+    /// This machine's state for the vault, `<plc home>/<vault name>`, named
+    /// after the root's basename: caches rebuilt locally and never synced.
+    /// A pure path, like [`Palace::plc_dir`].
+    pub fn state_dir(&self) -> Result<PathBuf, String> {
+        let home = rc::home()?;
+        let root = std::path::absolute(&self.root);
+        let root = root.map_err(|e| format!("palace: {e}"))?;
+        // A dot name could collide with `.plcrc` or other plc files.
+        let usable = |n: &&OsStr| !n.as_encoded_bytes().starts_with(b".");
+        match root.file_name().filter(usable) {
+            Some(name) => Ok(home.join(name)),
+            None => Err(format!(
+                "palace: vault '{}' can't name a state dir in {}: \
+                 its name must not be empty or start with '.'",
+                root.display(),
+                rc::tilde(&home)
+            )),
+        }
     }
 }

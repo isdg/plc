@@ -24,7 +24,7 @@ use crate::config::Palace;
 use crate::note;
 
 const SUBDIR: &str = "notes/management/do";
-/// Pointer basename inside the `.plc` state dir.
+/// Pointer basename inside the vault's `.plc` dir.
 const POINTER: &str = "last-do";
 /// Pre-`.plc` pointer location, relative to the vault root — read as a fallback.
 const LEGACY_POINTER: &str = ".last-do";
@@ -45,7 +45,7 @@ pub struct DoArgs {
 pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
     let root = palace.root();
     let note_dir = root.join(SUBDIR);
-    let pointer = palace.state_dir().join(POINTER);
+    let pointer = palace.plc_dir().join(POINTER);
     let legacy = root.join(LEGACY_POINTER);
     fs::create_dir_all(&note_dir).map_err(|e| format!("do: {e}"))?;
 

@@ -30,7 +30,8 @@ pub fn run(args: DoctorArgs) -> Result<String, String> {
     Ok(out.join("\n"))
 }
 
-/// Check `.plcrc` (see [`rc`]), then that the vault resolves.
+/// Check `.plcrc` (see [`rc`]), then that the vault and its state dir
+/// resolve.
 fn config_section() -> String {
     let mut lines = vec![String::new()];
     match rc::path() {
@@ -46,7 +47,13 @@ fn config_section() -> String {
         }
     }
     match Palace::resolve() {
-        Ok(p) => lines.push(format!("  · vault OK → {}", p.root().display())),
+        Ok(p) => {
+            lines.push(format!("  · vault OK → {}", p.root().display()));
+            lines.push(match p.state_dir() {
+                Ok(dir) => format!("  · machine state → {}", rc::tilde(&dir)),
+                Err(e) => format!("  ! {e}"),
+            });
+        }
         Err(e) => lines.push(format!("  ! {e}")),
     }
     lines.join("\n")

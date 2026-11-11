@@ -948,7 +948,7 @@ pub fn register(root: &Path, default_currency: &str, filter: &Filter) -> Result<
 
 /// Recent transactions as `(path, transaction)` pairs, oldest→newest, capped at
 /// `cap`. `path` is relative to `root`. Ordered by the transaction instant
-/// (bare-day entries first). Backs the always-current `.plc/last-transactions`
+/// (bare-day entries first). Backs the always-current `last-transactions`
 /// cache and, through it, `plc ledger last`, `undo`, and `rm`. The caller renders
 /// each with [`format_entry`] when it needs the on-disk block.
 pub fn recent_entries(root: &Path, default_currency: &str, cap: usize) -> Result<Vec<(String, Transaction)>, String> {

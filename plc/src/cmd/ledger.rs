@@ -20,6 +20,7 @@
 //! and prints today's ledger path so you can open it by hand.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use chrono::{DateTime, Datelike, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
 use clap::{Args, Subcommand};
@@ -676,7 +677,7 @@ fn ledger_location(date: NaiveDate) -> (String, String) {
     )
 }
 
-/// Recent-transaction log file inside the `.plc` state dir.
+/// Recent-transaction log file inside the vault's machine state dir.
 const LOG: &str = "last-transactions";
 /// Cap the log at this many records so it can't grow without bound.
 const LOG_CAP: usize = 200;
@@ -687,15 +688,11 @@ struct LogRecord {
     entry: String,
 }
 
-fn log_file(palace: &Palace) -> std::path::PathBuf {
-    palace.state_dir().join(LOG)
-}
-
-/// Rebuild `.plc/last-transactions` from the ledgers and return the records
-/// (oldest→newest). Always current and self-creating: this is the single point
-/// that keeps the cache in sync, called on every add / last / undo so the file
-/// never goes stale or missing. `ledger::recent_entries` returns paths relative
-/// to the daily tree; we store them vault-relative.
+/// Rebuild the state dir's `last-transactions` from the ledgers and return
+/// the records (oldest→newest). Always current and self-creating: this is the
+/// single point that keeps the cache in sync, called on every add / last /
+/// undo so the file never goes stale or missing. `ledger::recent_entries`
+/// returns paths relative to the daily tree; we store them vault-relative.
 fn sync_log(palace: &Palace) -> Result<Vec<LogRecord>, String> {
     let daily = "notes/management/daily";
     let entries = ledger::recent_entries(
@@ -723,8 +720,26 @@ fn render_log(records: &[LogRecord]) -> String {
 }
 
 fn write_log(palace: &Palace, records: &[LogRecord]) -> Result<(), String> {
-    std::fs::create_dir_all(palace.state_dir()).map_err(|e| format!("ledger: {e}"))?;
-    std::fs::write(log_file(palace), render_log(records)).map_err(|e| format!("ledger: {e}"))
+    let err = |e: std::io::Error| format!("ledger: {e}");
+    let dir = palace.state_dir()?;
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let log = dir.join(LOG);
+    adopt_legacy_log(palace, &log)?;
+    std::fs::write(&log, render_log(records)).map_err(err)
+}
+
+/// Move the log older plc kept in the vault's `.plc` dir to `log`.
+fn adopt_legacy_log(palace: &Palace, log: &Path) -> Result<(), String> {
+    let legacy = palace.plc_dir().join(LOG);
+    if !legacy.is_file() {
+        return Ok(());
+    }
+    // Every sync rebuilds the log from the ledgers, so a vault copy that
+    // would be stale (one is already here) or can't move is just dropped.
+    if log.exists() || std::fs::rename(&legacy, log).is_err() {
+        std::fs::remove_file(&legacy).map_err(|e| format!("ledger: {e}"))?;
+    }
+    Ok(())
 }
 
 /// `plc ledger last`: the most recent transactions, newest first, from the
@@ -1455,10 +1470,10 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         findings
             .push("  ! legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
         if fix {
-            std::fs::create_dir_all(palace.state_dir())
-                .map_err(|e| format!("ledger doctor: {e}"))?;
-            std::fs::rename(&legacy, palace.state_dir().join("last-do"))
-                .map_err(|e| format!("ledger doctor: {e}"))?;
+            let err = |e: std::io::Error| format!("ledger doctor: {e}");
+            let dir = palace.plc_dir();
+            std::fs::create_dir_all(&dir).map_err(err)?;
+            std::fs::rename(&legacy, dir.join("last-do")).map_err(err)?;
             fixed.push("migrated .last-do → .plc/last-do".to_string());
         }
     }
