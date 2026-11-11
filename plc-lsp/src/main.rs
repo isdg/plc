@@ -1,13 +1,12 @@
 //! plc-lsp — LSP server for palace notes.
 //!
-//! Speaks LSP over stdin/stdout. Read-side features (definition,
-//! references, completion, hover) and write-side features (create,
-//! delete, link, rename via WorkspaceEdit) all flow through a single
-//! `Backend` that delegates graph logic to `plc-core`.
+//! Speaks LSP over stdin/stdout: go-to-definition, references and `[[`
+//! completion over the vault's `[[wikilinks]]`, with link semantics from
+//! `plc-core`.
 
-mod index;
-mod planner;
+mod pos;
 mod server;
+mod vault;
 
 use tower_lsp::{LspService, Server};
 
@@ -18,8 +17,7 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) =
-        LspService::new(|client| Backend::new(client));
+    let (service, socket) = LspService::new(Backend::new);
 
     Server::new(stdin, stdout, socket).serve(service).await;
 }
