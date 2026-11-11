@@ -13,7 +13,7 @@ use std::time::{Instant, UNIX_EPOCH};
 
 use walkdir::WalkDir;
 
-use crate::{ascii_lower, scan_content};
+use crate::{fold_name, scan_content};
 
 struct FileInfo {
     path: PathBuf,
@@ -59,7 +59,7 @@ pub fn report(
 
         let has_outbound = scan_content(&content, &mut targets);
         let base = &name[..name.len() - 3];
-        let base_lower = ascii_lower(base);
+        let base_lower = fold_name(base);
 
         let (size, mtime_secs) = if verbose {
             match entry.metadata() {

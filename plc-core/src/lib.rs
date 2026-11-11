@@ -10,6 +10,14 @@ pub mod vault;
 
 use std::collections::HashSet;
 
+use unicode_normalization::UnicodeNormalization;
+
+/// The key two note names are compared by: Unicode lowercase, then NFC, so
+/// `[[Дар]]` meets `дар.md` whether the file system stored it NFC or NFD.
+pub fn fold_name(s: &str) -> String {
+    s.to_lowercase().nfc().collect()
+}
+
 /// ASCII-lowercase a string. Non-ASCII bytes pass through unchanged,
 /// matching the byte-level behavior of the original zig implementation.
 pub fn ascii_lower(s: &str) -> String {
@@ -20,7 +28,8 @@ pub fn ascii_lower(s: &str) -> String {
     out
 }
 
-/// Reduce a wikilink inner payload to its bare basename, lowercased.
+/// Reduce a wikilink inner payload to its bare basename, folded by
+/// [`fold_name`].
 ///
 /// Handles every shape we see in palace notes:
 ///   `target`              -> "target"
@@ -36,7 +45,7 @@ pub fn normalize_target(inner: &str) -> String {
     if let Some(s) = seg.rfind('/') {
         seg = &seg[s + 1..];
     }
-    ascii_lower(seg.trim())
+    fold_name(seg.trim())
 }
 
 /// Scan markdown content for `[[...]]` outbound links. Each normalized
@@ -110,8 +119,16 @@ mod tests {
     }
 
     #[test]
-    fn normalize_preserves_non_ascii() {
-        assert_eq!(normalize_target("Привет"), "Привет");
+    fn normalize_folds_non_ascii_case() {
+        assert_eq!(normalize_target("Дар"), "дар");
+        assert_eq!(normalize_target("Братья Карамазовы"), "братья карамазовы");
+    }
+
+    #[test]
+    fn fold_name_unifies_nfc_and_nfd() {
+        let nfd = "И\u{306}ога"; // Й spelled as И + combining breve
+        assert_eq!(fold_name(nfd), "йога");
+        assert_eq!(fold_name(nfd), fold_name("Йога"));
     }
 
     #[test]

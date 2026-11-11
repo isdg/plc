@@ -10,3 +10,4 @@ path = "src/lib.rs"
 walkdir.workspace = true
 sha2.workspace = true
 chrono.workspace = true
+unicode-normalization.workspace = true
