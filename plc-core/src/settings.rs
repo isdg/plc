@@ -4,24 +4,26 @@
 //! the top, then `[categories]` / `[accounts]` sections with one normalized name
 //! per line. `#` starts a comment; blank lines are ignored.
 //!
-//!     # plc settings
-//!     currency = EUR
+//! ```text
+//! # plc settings
+//! currency = EUR
 //!
-//!     [categories]
-//!     food/groceries
-//!     rent
+//! [categories]
+//! food/groceries
+//! rent
 //!
-//!     [accounts]
-//!     revolut
-//!     cash
+//! [accounts]
+//! revolut
+//! cash
+//! ```
 //!
-//! Names are normalized with [`plc_core::ledger::normalize_name`], the same
+//! Names are normalized with [`crate::ledger::normalize_name`], the same
 //! rule the ledger uses, so declared names match how transactions store them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use plc_core::ledger::normalize_name;
+use crate::ledger::normalize_name;
 
 /// The parsed `.plc/config`. A missing file loads as [`Settings::default`].
 #[derive(Default, Debug, PartialEq, Eq)]

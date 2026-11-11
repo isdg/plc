@@ -6,13 +6,12 @@
 //! `$EDITOR` (and pipe list output through fzf where a picker is wanted).
 
 mod cmd;
-mod config;
 mod note;
-mod settings;
 
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use plc_core::{settings, vault as config};
 
 use config::Palace;
 

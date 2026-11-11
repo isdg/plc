@@ -5,6 +5,8 @@
 pub mod calendar;
 pub mod ledger;
 pub mod orphans;
+pub mod settings;
+pub mod vault;
 
 use std::collections::HashSet;
 
