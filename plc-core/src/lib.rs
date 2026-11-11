@@ -4,6 +4,7 @@
 
 pub mod calendar;
 pub mod ledger;
+pub mod notes;
 pub mod orphans;
 pub mod rc;
 pub mod settings;

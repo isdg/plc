@@ -3,15 +3,13 @@
 //! the server decides when to load, patch or rebuild it.
 
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::OsStr;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use plc_core::ledger::normalize_name;
 use plc_core::settings::{self, Declaration, Settings};
-use plc_core::{fold_name, links, normalize_target};
+use plc_core::{fold_name, links, normalize_target, notes};
 use tower_lsp::lsp_types::{Location, Position, Range, Url};
-use walkdir::WalkDir;
 
 use crate::pos::{Encoding, LineIndex};
 
@@ -45,14 +43,6 @@ pub enum Target<'a> {
     Missing,
 }
 
-fn hidden(name: &OsStr) -> bool {
-    name.to_str().is_some_and(|s| s.starts_with('.'))
-}
-
-fn stem(path: &Path) -> Option<&str> {
-    path.file_name()?.to_str()?.strip_suffix(".md")
-}
-
 impl Vault {
     /// Walk `root` for notes, skipping hidden directories, and read the
     /// ledger config. Unreadable or non-UTF-8 files are left out.
@@ -64,16 +54,9 @@ impl Vault {
             names: HashMap::new(),
             ledger: Vec::new(),
         };
-        let walk = WalkDir::new(root)
-            .into_iter()
-            .filter_entry(|e| e.depth() == 0 || !hidden(e.file_name()));
-        for entry in walk.flatten() {
-            let path = entry.path();
-            if !entry.file_type().is_file() || stem(path).is_none() {
-                continue;
-            }
-            if let Ok(text) = fs::read_to_string(path) {
-                vault.upsert(path, &text);
+        for path in notes::walk(root) {
+            if let Ok(text) = fs::read_to_string(&path) {
+                vault.upsert(&path, &text);
             }
         }
         vault.reload_ledger();
@@ -95,18 +78,11 @@ impl Vault {
     /// Whether `path` is a note this vault indexes: a `.md` file under the
     /// root, outside any hidden directory.
     pub fn is_note(&self, path: &Path) -> bool {
-        let Ok(rel) = path.strip_prefix(&self.root) else {
-            return false;
-        };
-        stem(path).is_some()
-            && rel.components().all(|c| match c {
-                Component::Normal(name) => !hidden(name),
-                _ => false,
-            })
+        notes::is_note(&self.root, path)
     }
 
     pub fn upsert(&mut self, path: &Path, text: &str) {
-        let Some(stem) = stem(path) else { return };
+        let Some(stem) = notes::stem(path) else { return };
         let idx = LineIndex::new(text, self.enc);
         let links = links(text)
             .map(|l| LinkRef {
