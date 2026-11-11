@@ -1,11 +1,7 @@
 //! `plc config` — show the resolved vault location.
 //!
-//! Bare, it prints the resolved `PALACE_DIR` so dotfiles can wire it up without
-//! hardcoding the path:
-//!
-//! ```sh
-//! export PALACE_DIR="$(plc config)"
-//! ```
+//! Prints `$PALACE_DIR` with a leading `~` expanded, for editors and scripts
+//! that need the absolute vault path.
 
 use crate::config;
 

@@ -24,7 +24,7 @@ are shared across every note type — including ledgers.
     plc stat       calendar heatmap + stats of daily-note activity
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
-    plc config     show/set the persistent vault location (~/.plcrc)
+    plc config     show the resolved vault location ($PALACE_DIR)
 
 
 -------------------------------------------------------------------------------
@@ -58,33 +58,27 @@ Build and install the binary, point it at a vault, and scaffold it:
     > plc init
     init: ~/vault — 9 created, 0 already present (9 dirs)
 
-plc resolves the vault path from $PALACE_DIR, falling back to ~/.plcrc, then
-validates it in stages (its parent must exist, the dir must exist, and it
-must contain notes/), with a pointed error at whichever stage fails.
+plc takes the vault path from $PALACE_DIR alone (a leading ~ is expanded),
+then validates it in stages (its parent must exist, the dir must exist, and
+it must contain notes/), with a pointed error at whichever stage fails.
 
-To avoid exporting the path from your shell every session, persist it once
-with plc config, which writes ~/.plcrc (a plain "PALACE_DIR = …" line):
+Set PALACE_DIR as a literal in your shell rc. plc never writes the path
+anywhere, so no process can redirect another's vault. Editors and scripts
+that need the absolute path can ask plc for it:
 
-    > plc config --set ~/vault      # writes ~/.plcrc
     > plc config                    # prints the resolved vault path
-    > plc config --rc               # prints ~/.plcrc's own path
 
-plc reads ~/.plcrc directly, so nothing needs to be exported. An explicit
-$PALACE_DIR in the environment still wins (handy for tests or a second
-vault). Dotfiles that need the value in the environment can ask plc rather
-than hardcode it:
+Earlier versions fell back to a "PALACE_DIR = …" line in ~/.plcrc, written
+by plc config --set. Both are gone: ~/.plcrc is no longer read, and when
+PALACE_DIR is unset, the error points out a leftover ~/.plcrc.
 
-    export PALACE_DIR="$(plc config)"
-
-plc doctor verifies the config exists and resolves, and plc doctor --fix
-persists an env-only path into ~/.plcrc.
+plc doctor verifies that PALACE_DIR is set and resolves to a vault.
 
 -------------------------------------------------------------------------------
 ENVIRONMENT
 -------------------------------------------------------------------------------
 
-    PALACE_DIR    the vault root — from the environment or ~/.plcrc
-                  (env wins)
+    PALACE_DIR    the vault root (required; the only source of the path)
     PLC_CURRENCY  default currency for plc ledger when a line omits one
                   (default: EUR)
 
@@ -306,14 +300,13 @@ Usage: plc doctor [--fix]
 
 Check the vault's health and propose repairs. It runs even without a
 resolved vault, so it can diagnose the config itself: whether PALACE_DIR is
-set (env or ~/.plcrc) and resolves to a real vault. It then audits the
-ledger .plc/config — accounts/categories used but not declared (or vice
-versa), a name declared as both @ and #, a missing default currency,
-transactions missing a stable ^id, a legacy .last-do pointer — printing a
-fix command for each. --fix applies the safe ones (writing ~/.plcrc,
-importing names, setting the currency, backfilling ids, migrating the
-pointer). It's built to grow into a whole-vault checkup (orphans, stale
-pointers, broken links).
+set and resolves to a real vault. It then audits the ledger .plc/config —
+accounts/categories used but not declared (or vice versa), a name declared
+as both @ and #, a missing default currency, transactions missing a stable
+^id, a legacy .last-do pointer — printing a fix command for each. --fix
+applies the safe ones (importing names, setting the currency, backfilling
+ids, migrating the pointer). It's built to grow into a whole-vault checkup
+(orphans, stale pointers, broken links).
 
     > plc doctor
     > plc doctor --fix
@@ -322,13 +315,11 @@ pointers, broken links).
 PLC CONFIG
 -------------------------------------------------------------------------------
 
-Usage: plc config [--set PATH | --rc]
+Usage: plc config
 
-Show or set the persistent vault location in ~/.plcrc. Bare, it prints the
-resolved PALACE_DIR (for export PALACE_DIR="$(plc config)" in a dotfile);
---set PATH writes it; --rc prints the config file's own path.
+Print the resolved vault location: $PALACE_DIR with a leading ~ expanded.
+It fails, saying how to set it, when PALACE_DIR is unset or empty.
 
-    > plc config --set ~/vault
     > plc config
 
 -------------------------------------------------------------------------------
@@ -354,9 +345,9 @@ LSP over stdio:
 
     > cargo install --path plc-lsp   # → ~/.cargo/bin/plc-lsp
 
-It finds the vault the way plc does (PALACE_DIR, then ~/.plcrc), falling
-back to the editor's workspace root, and indexes every .md note outside
-hidden directories.
+It finds the vault the way plc does (PALACE_DIR), falling back to the
+editor's workspace root, and indexes every .md note outside hidden
+directories.
 
     definition    on a [[link]]: the note it names; [[note#Heading]] and
                   [[note#^block]] land on that line, [[#Heading]] stays in
