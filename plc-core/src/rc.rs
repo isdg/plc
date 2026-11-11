@@ -44,6 +44,17 @@ pub fn legacy_path() -> Result<PathBuf, String> {
     Ok(user_home()?.join(RC))
 }
 
+/// A legacy `~/.plcrc` left in place because `.plcrc` already existed.
+/// Never one under `$PLC_HOME`, which does not adopt it.
+pub fn unmoved_legacy() -> Result<Option<PathBuf>, String> {
+    if plc_home_set() {
+        return Ok(None);
+    }
+    path()?;
+    let legacy = legacy_path()?;
+    Ok(legacy.exists().then_some(legacy))
+}
+
 fn plc_home_set() -> bool {
     env::var_os("PLC_HOME").is_some_and(|h| !h.is_empty())
 }

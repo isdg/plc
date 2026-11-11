@@ -33,10 +33,11 @@ impl Home {
         path
     }
 
-    /// A minimal valid vault at `rel`.
+    /// A minimal valid vault at `rel`, with an empty ledger tree.
     pub fn vault(&self, rel: &str) -> PathBuf {
         let root = self.path(rel);
-        fs::create_dir_all(root.join("notes")).unwrap();
+        let daily = root.join("notes/management/daily");
+        fs::create_dir_all(daily).unwrap();
         root
     }
 
