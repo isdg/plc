@@ -36,11 +36,67 @@ pub struct Settings {
     pub accounts: Vec<String>,
 }
 
-#[derive(Clone, Copy)]
-enum Section {
-    None,
-    Categories,
-    Accounts,
+/// The kind of ledger name a `.plc/config` line declares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Category,
+    Account,
+}
+
+/// A declared name, normalized, with its 0-based line in `.plc/config`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Declaration {
+    pub name: String,
+    pub kind: Kind,
+    pub line: usize,
+}
+
+enum Entry<'a> {
+    Currency(&'a str),
+    Name(Kind, &'a str),
+}
+
+/// Every meaningful line of a config text with its 0-based line number: the
+/// one walker [`Settings::parse`] and [`declarations`] share. An unknown
+/// `[section]` returns to top-level `key = value` parsing.
+fn entries(text: &str) -> impl Iterator<Item = (usize, Entry<'_>)> {
+    let mut section: Option<Kind> = None;
+    text.lines().enumerate().filter_map(move |(n, raw)| {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let header = line.strip_prefix('[').and_then(|l| l.strip_suffix(']'));
+        if let Some(inner) = header {
+            section = match inner.trim() {
+                "categories" => Some(Kind::Category),
+                "accounts" => Some(Kind::Account),
+                _ => None,
+            };
+            return None;
+        }
+        if let Some(kind) = section {
+            return Some((n, Entry::Name(kind, line)));
+        }
+        let (k, v) = line.split_once('=')?;
+        let v = v.trim();
+        (k.trim() == "currency" && !v.is_empty())
+            .then_some((n, Entry::Currency(v)))
+    })
+}
+
+/// The declared accounts and categories of a config text, in file order.
+/// Names that normalize to nothing are skipped.
+pub fn declarations(text: &str) -> Vec<Declaration> {
+    entries(text)
+        .filter_map(|(line, entry)| {
+            let Entry::Name(kind, raw) = entry else {
+                return None;
+            };
+            let name = normalize_name(raw);
+            (!name.is_empty()).then_some(Declaration { name, kind, line })
+        })
+        .collect()
 }
 
 impl Settings {
@@ -51,37 +107,23 @@ impl Settings {
 
     /// Load `<root>/.plc/config`, or defaults when it is absent/unreadable.
     pub fn load(root: &Path) -> Settings {
-        let Ok(text) = fs::read_to_string(Self::path(root)) else {
-            return Settings::default();
-        };
+        fs::read_to_string(Self::path(root))
+            .map(|text| Self::parse(&text))
+            .unwrap_or_default()
+    }
+
+    /// Parse a config text; unknown keys and sections are ignored.
+    pub fn parse(text: &str) -> Settings {
         let mut s = Settings::default();
-        let mut section = Section::None;
-        for raw in text.lines() {
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-                section = match inner.trim() {
-                    "categories" => Section::Categories,
-                    "accounts" => Section::Accounts,
-                    _ => Section::None,
-                };
-                continue;
-            }
-            match section {
-                Section::None => {
-                    if let Some((k, v)) = line.split_once('=') {
-                        if k.trim() == "currency" {
-                            let v = v.trim();
-                            if !v.is_empty() {
-                                s.currency = Some(v.to_uppercase());
-                            }
-                        }
-                    }
+        for (_, entry) in entries(text) {
+            match entry {
+                Entry::Currency(v) => s.currency = Some(v.to_uppercase()),
+                Entry::Name(Kind::Category, raw) => {
+                    insert_name(&mut s.categories, raw)
                 }
-                Section::Categories => insert_name(&mut s.categories, line),
-                Section::Accounts => insert_name(&mut s.accounts, line),
+                Entry::Name(Kind::Account, raw) => {
+                    insert_name(&mut s.accounts, raw)
+                }
             }
         }
         s
@@ -153,6 +195,30 @@ mod tests {
         assert_eq!(s.categories, vec!["food/groceries", "rent"]); // normalized
         assert_eq!(s.accounts, vec!["cash", "revolut"]); // sorted
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn declarations_carry_kind_and_line() {
+        let text = "currency = EUR\n\n[categories]\nFood/Groceries\n\
+                    # note\n[accounts]\nRevolut\n";
+        let got: Vec<_> = declarations(text)
+            .into_iter()
+            .map(|d| (d.name, d.kind, d.line))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("food/groceries".to_string(), Kind::Category, 3),
+                ("revolut".to_string(), Kind::Account, 6),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_section_returns_to_keys() {
+        let s = Settings::parse("[accounts]\ncash\n[x]\ncurrency = usd\n");
+        assert_eq!(s.currency.as_deref(), Some("USD"));
+        assert_eq!(s.accounts, vec!["cash"]);
     }
 
     #[test]
