@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{json, Value};
@@ -65,8 +65,23 @@ struct Lsp {
 
 impl Lsp {
     fn start(vault: &Vault, utf8: bool, watch: bool) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_plc-lsp"))
-            .env("PALACE_DIR", &vault.0)
+        let mut cmd = Self::command(&vault.0);
+        cmd.env("PALACE_DIR", &vault.0);
+        Self::spawn(cmd, utf8, watch)
+    }
+
+    /// The server with `home` as `$HOME`, cut off from the caller's
+    /// `PALACE_DIR` and `PLC_HOME`.
+    fn command(home: &Path) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_plc-lsp"));
+        cmd.env("HOME", home)
+            .env_remove("PALACE_DIR")
+            .env_remove("PLC_HOME");
+        cmd
+    }
+
+    fn spawn(mut cmd: Command, utf8: bool, watch: bool) -> Self {
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -226,6 +241,19 @@ fn definition_resolves_notes_anchors_and_ledger() {
     assert_eq!(targets(&gd("[[#Local")), [(a.clone(), 4)]);
     assert_eq!(gd("[[nope"), Value::Null);
     assert_eq!(lsp.at("textDocument/definition", &a, (0, 1)), Value::Null);
+}
+
+#[test]
+fn vault_from_plcrc_without_palace_dir() {
+    let vault = Vault::new("rc");
+    let home = Vault(vault.0.with_extension("home"));
+    let rc = format!("vault = {}\n", vault.0.display());
+    fs::create_dir_all(home.0.join(".plc")).unwrap();
+    fs::write(home.0.join(".plc/.plcrc"), rc).unwrap();
+    let mut lsp = Lsp::spawn(Lsp::command(&home.0), false, false);
+    let a = vault.uri("notes/a.md");
+    let gd = lsp.at("textDocument/definition", &a, inside(A, "[[Дар]]"));
+    assert_eq!(targets(&gd), [(vault.uri("notes/me/дар.md"), 0)]);
 }
 
 #[test]
