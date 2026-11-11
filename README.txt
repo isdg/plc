@@ -344,3 +344,32 @@ plc prints a path; your shell does the rest. The intended pattern (zsh):
 For an interactive login you might need to run (e.g.) a decrypt/mount step
 for the vault yourself before plc can see notes/ — plc will tell you which
 validation stage failed if the vault isn't ready.
+
+-------------------------------------------------------------------------------
+PLC-LSP
+-------------------------------------------------------------------------------
+
+A language server for the vault's markdown, a separate binary that speaks
+LSP over stdio:
+
+    > cargo install --path plc-lsp   # → ~/.cargo/bin/plc-lsp
+
+It finds the vault the way plc does (PALACE_DIR, then ~/.plcrc), falling
+back to the editor's workspace root, and indexes every .md note outside
+hidden directories.
+
+    definition    on a [[link]]: the note it names; [[note#Heading]] and
+                  [[note#^block]] land on that line, [[#Heading]] stays in
+                  the current note. A name with no note but declared in
+                  .plc/config ([[revolut]], [[food/groceries]]) lands on
+                  its declaration.
+    references    on a [[link]]: every link to the same target; anywhere
+                  else: the current note's backlinks.
+    completion    after [[: note names as spelled on disk, plus declared
+                  accounts and categories.
+
+A link names a note by its file name: the last path segment, without
+|alias, #heading or ^block, compared case-insensitively across Unicode and
+regardless of how the file system composed the name — the same rule plc
+orphans follows. The index tracks open buffers as you type and, when the
+editor supports file watching, files changed outside it.
