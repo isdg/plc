@@ -6,7 +6,7 @@
 //!   * `@notes/inbox` → the vault root
 //!   * any other path → used as-is if absolute, else relative to the cwd
 //!
-//! The default and `@` paths resolve `$PALACE_DIR`; a filesystem `-p` does not.
+//! The default and `@` paths resolve the vault; a filesystem `-p` does not.
 //!
 //! `-i/--inline TEXT` seeds the body inline (under the stamp, in place of the
 //! `[[shots]]` tag). `--no-header` drops the stamp; the two are independent, so
@@ -74,7 +74,7 @@ fn build_body(stamp: &str, inline: Option<&str>, header: bool) -> String {
 /// Resolve the directory the note lands in. No `-p` → the vault `daily` dir;
 /// an `@`-prefixed value → the vault root; anything else → the filesystem,
 /// relative to the cwd (or used as-is when absolute). Vault targets resolve
-/// `$PALACE_DIR` (and only then).
+/// the vault (and only then).
 fn target_dir(path: Option<&str>, daily: &str) -> Result<PathBuf, String> {
     match path {
         None => Ok(Palace::resolve()?.root().join(daily)),

@@ -153,7 +153,7 @@ fn validate_tag(tag: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(trimmed.to_string()))
 }
 
-/// Resolve the vault, then run `f` against it. Centralizes the `PALACE_DIR`
+/// Resolve the vault, then run `f` against it. Centralizes the vault
 /// validation shared by every note-creating command.
 fn with_palace<F>(f: F) -> Result<String, String>
 where

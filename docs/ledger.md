@@ -482,9 +482,10 @@ the printed command.
 
 # 8 Recent activity, editing, and undo
 
-`.plc/last-transactions` is an always-current cache of your recent transactions,
-rebuilt from the ledgers on every `add` / `edit` / `last` / `undo` (self-creating,
-so it covers all history — imports and hand-edits included — and never goes stale).
+`~/.plc/<vault>/last-transactions` is an always-current cache of your recent
+transactions, rebuilt from the ledgers on every `add` / `edit` / `last` /
+`undo` (self-creating, so it covers all history — imports and hand-edits
+included — and never goes stale). It is per machine, outside the vault.
 
 `plc ledger last` shows the most recent transactions, newest first:
 
@@ -600,10 +601,10 @@ Transactions live in one file per day under the daily tree:
 
 Each file is an ordinary note (stamped header + `[[ledger]]` tag) whose body is
 transaction lines. `plc` only ever appends; edit the files freely by hand.
-Settings and state (the config, the recent-transaction log) live under
-`<PALACE_DIR>/.plc/`.
+Settings live in the vault, at `<PALACE_DIR>/.plc/config`; this machine's
+recent-transaction log lives in `~/.plc/<vault>/`.
 
 ## Environment
 
-    PALACE_DIR    the vault root (required)
+    PALACE_DIR    the vault root (else `vault` in `~/.plc/.plcrc`)
     PLC_CURRENCY  default currency, overriding `.plc/config` (default: EUR)

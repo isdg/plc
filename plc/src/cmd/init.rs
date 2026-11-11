@@ -33,7 +33,7 @@ const DIRS: &[&str] = &[
 
 #[derive(Args)]
 pub struct InitArgs {
-    /// Target vault directory (default: $PALACE_DIR).
+    /// Target vault directory (default: the configured vault).
     #[arg(value_name = "DIR")]
     dir: Option<String>,
 }
