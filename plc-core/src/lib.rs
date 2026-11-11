@@ -9,6 +9,7 @@ pub mod settings;
 pub mod vault;
 
 use std::collections::HashSet;
+use std::ops::Range;
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -48,38 +49,68 @@ pub fn normalize_target(inner: &str) -> String {
     fold_name(seg.trim())
 }
 
-/// Scan markdown content for `[[...]]` outbound links. Each normalized
-/// target is inserted into `targets`. Returns true iff any well-formed
-/// `[[...]]` was seen.
+/// A `[[...]]` occurrence: `range` spans both bracket pairs, in bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Link<'a> {
+    pub range: Range<usize>,
+    pub inner: &'a str,
+}
+
+/// Iterate the `[[...]]` links of `content` in order.
 ///
 /// The scanner operates on bytes since `[` and `]` are ASCII and cannot
 /// appear inside a multi-byte UTF-8 sequence, so byte offsets are
 /// always char-boundary safe for slicing the string.
-pub fn scan_content(
-    content: &str,
-    targets: &mut HashSet<String>,
-) -> bool {
-    let bytes = content.as_bytes();
-    let mut has_outbound = false;
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'[' && bytes[i + 1] == b'[' {
+pub fn links(content: &str) -> Links<'_> {
+    Links { content, pos: 0 }
+}
+
+pub struct Links<'a> {
+    content: &'a str,
+    pos: usize,
+}
+
+impl<'a> Iterator for Links<'a> {
+    type Item = Link<'a>;
+
+    fn next(&mut self) -> Option<Link<'a>> {
+        let bytes = self.content.as_bytes();
+        let mut i = self.pos;
+        while i + 1 < bytes.len() {
+            if bytes[i] != b'[' || bytes[i + 1] != b'[' {
+                i += 1;
+                continue;
+            }
             let start = i + 2;
             let mut j = start;
             while j < bytes.len() && bytes[j] != b']' {
                 j += 1;
             }
             if j + 1 < bytes.len() && bytes[j + 1] == b']' {
-                has_outbound = true;
-                let inner = &content[start..j];
-                targets.insert(normalize_target(inner));
-                i = j + 2;
-            } else {
-                i = start;
+                self.pos = j + 2;
+                return Some(Link {
+                    range: i..j + 2,
+                    inner: &self.content[start..j],
+                });
             }
-        } else {
-            i += 1;
+            i = start;
         }
+        self.pos = bytes.len();
+        None
+    }
+}
+
+/// Scan markdown content for `[[...]]` outbound links. Each normalized
+/// target is inserted into `targets`. Returns true iff any well-formed
+/// `[[...]]` was seen.
+pub fn scan_content(
+    content: &str,
+    targets: &mut HashSet<String>,
+) -> bool {
+    let mut has_outbound = false;
+    for link in links(content) {
+        has_outbound = true;
+        targets.insert(normalize_target(link.inner));
     }
     has_outbound
 }
@@ -129,6 +160,23 @@ mod tests {
         let nfd = "И\u{306}ога"; // Й spelled as И + combining breve
         assert_eq!(fold_name(nfd), "йога");
         assert_eq!(fold_name(nfd), fold_name("Йога"));
+    }
+
+    #[test]
+    fn links_report_byte_ranges() {
+        let text = "дар [[Дар|x]] и [[b]]";
+        let got: Vec<_> = links(text).collect();
+        assert_eq!(got.len(), 2);
+        assert_eq!(&text[got[0].range.clone()], "[[Дар|x]]");
+        assert_eq!(got[0].inner, "Дар|x");
+        assert_eq!(&text[got[1].range.clone()], "[[b]]");
+    }
+
+    #[test]
+    fn links_skip_unclosed_and_continue() {
+        let got: Vec<_> = links("[[a] x [[b]]").map(|l| l.inner).collect();
+        assert_eq!(got, ["b"]);
+        assert_eq!(links("[[open").count(), 0);
     }
 
     #[test]
