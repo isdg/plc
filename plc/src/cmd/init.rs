@@ -39,7 +39,7 @@ pub struct InitArgs {
 }
 
 pub fn run(args: InitArgs) -> Result<String, String> {
-    let no_dir = |e: String| format!("init: no DIR given and {e}");
+    let no_dir = |e: String| format!("init: no DIR given; {e}");
     let root: PathBuf = match args.dir {
         Some(d) => PathBuf::from(d),
         None => config::palace_dir().map_err(no_dir)?,

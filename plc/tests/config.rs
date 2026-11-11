@@ -1,79 +1,72 @@
-//! End to end: the built `plc` binary resolves the vault from `$PALACE_DIR`
-//! alone, never from `~/.plcrc`.
+//! End to end: how the built `plc` finds the vault — `$PALACE_DIR`, else
+//! `vault` in `<plc home>/.plcrc`.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod common;
 
-fn home(tag: &str) -> PathBuf {
-    let name = format!("plc-config-{tag}-{}", std::process::id());
-    let dir = std::env::temp_dir().join(name);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+use common::{display, fail, ok, Home, NO_VAULT};
+
+#[test]
+fn palace_dir_with_tilde_expanded() {
+    let home = Home::new("env");
+    let out = ok(home.plc(&["config"]).env("PALACE_DIR", "~/vault"));
+    assert_eq!(out, display(&home.path("vault")));
 }
 
-fn plc(home: &Path, palace_dir: Option<&str>, args: &[&str]) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_plc"));
-    cmd.args(args).env("HOME", home).env_remove("PALACE_DIR");
-    if let Some(dir) = palace_dir {
-        cmd.env("PALACE_DIR", dir);
+#[test]
+fn env_beats_rc() {
+    let home = Home::new("env-rc");
+    home.write(".plc/.plcrc", "vault = /from/rc\n");
+    let out = ok(home.plc(&["config"]).env("PALACE_DIR", "/from/env"));
+    assert_eq!(out, "/from/env");
+}
+
+#[test]
+fn rc_when_env_unset_or_empty() {
+    let home = Home::new("rc");
+    let rc = "# defaults\n\nvault = ~/palace\nfuture = 1\n";
+    home.write(".plc/.plcrc", rc);
+    let want = display(&home.path("palace"));
+    assert_eq!(ok(&mut home.plc(&["config"])), want);
+    for empty in ["", "  "] {
+        let out = ok(home.plc(&["config"]).env("PALACE_DIR", empty));
+        assert_eq!(out, want);
     }
-    cmd.output().unwrap()
-}
-
-fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).into_owned()
-}
-
-const UNSET: &str = "config: PALACE_DIR is not set; \
-                     add `export PALACE_DIR=/path/to/vault` to your shell rc";
-
-#[test]
-fn prints_palace_dir_with_tilde_expanded() {
-    let home = home("env");
-    let out = plc(&home, Some("~/vault"), &["config"]);
-    assert!(out.status.success(), "{}", stderr(&out));
-    let printed = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(printed.trim_end(), home.join("vault").display().to_string());
-    fs::remove_dir_all(&home).ok();
 }
 
 #[test]
-fn unset_or_empty_is_an_error() {
-    let home = home("unset");
-    for palace_dir in [None, Some(""), Some("  ")] {
-        let out = plc(&home, palace_dir, &["config"]);
-        assert!(!out.status.success());
-        assert!(out.stdout.is_empty());
-        assert_eq!(stderr(&out).trim_end(), UNSET);
-    }
-    fs::remove_dir_all(&home).ok();
+fn neither_is_an_error() {
+    let home = Home::new("neither");
+    let want = format!("config: {NO_VAULT} ~/.plc/.plcrc");
+    assert_eq!(fail(&mut home.plc(&["config"])), want);
+    home.write(".plc/.plcrc", "# no vault here\nvault =\n");
+    assert_eq!(fail(&mut home.plc(&["config"])), want);
+
+    let want = format!("palace: {NO_VAULT} ~/.plc/.plcrc");
+    assert_eq!(fail(&mut home.plc(&["weekly"])), want);
+    let want = format!("init: no DIR given; {NO_VAULT} ~/.plc/.plcrc");
+    assert_eq!(fail(&mut home.plc(&["init"])), want);
 }
 
 #[test]
-fn plcrc_is_ignored_but_named() {
-    let home = home("plcrc");
-    let vault = home.join("vault");
-    fs::create_dir_all(vault.join("notes")).unwrap();
-    let rc = format!("PALACE_DIR = {}\n", vault.display());
-    fs::write(home.join(".plcrc"), rc).unwrap();
+fn plc_home_relocates_the_rc() {
+    let home = Home::new("plc-home");
+    home.write(".plc/.plcrc", "vault = /default\n");
+    let elsewhere = home.path("elsewhere");
+    let mut cmd = home.plc(&["config"]);
+    cmd.env("PLC_HOME", &elsewhere);
+    let want = format!("config: {NO_VAULT} ~/elsewhere/.plcrc");
+    assert_eq!(fail(&mut cmd), want);
 
-    let out = plc(&home, None, &["config"]);
-    assert!(!out.status.success());
-    assert!(out.stdout.is_empty());
-    let hinted = format!("{UNSET} (~/.plcrc is no longer read)");
-    assert_eq!(stderr(&out).trim_end(), hinted);
-    fs::remove_dir_all(&home).ok();
+    home.write("elsewhere/.plcrc", "vault = /relocated\n");
+    assert_eq!(ok(&mut cmd), "/relocated");
 }
 
 #[test]
 fn set_and_rc_flags_are_gone() {
-    let home = home("set");
+    let home = Home::new("set");
     for flag in ["--set", "--rc"] {
-        let out = plc(&home, None, &["config", flag, "/elsewhere"]);
-        assert!(!out.status.success());
+        fail(&mut home.plc(&["config", flag, "/elsewhere"]));
     }
-    assert!(!home.join(".plcrc").exists());
-    fs::remove_dir_all(&home).ok();
+    assert!(!home.path(".plcrc").exists());
+    assert!(!home.path(".plc").exists());
 }

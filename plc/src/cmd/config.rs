@@ -1,7 +1,7 @@
 //! `plc config` — show the resolved vault location.
 //!
-//! Prints `$PALACE_DIR` with a leading `~` expanded, for editors and scripts
-//! that need the absolute vault path.
+//! Prints the vault `$PALACE_DIR` or `.plcrc` names, with a leading `~`
+//! expanded, for editors and scripts that need the absolute vault path.
 
 use crate::config;
 

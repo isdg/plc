@@ -5,6 +5,7 @@
 pub mod calendar;
 pub mod ledger;
 pub mod orphans;
+pub mod rc;
 pub mod settings;
 pub mod vault;
 

@@ -296,7 +296,7 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _: InitializedParams) {
         if self.vault().await.is_none() {
-            let msg = "plc-lsp: no vault (PALACE_DIR or workspace)";
+            let msg = "plc-lsp: no vault (PALACE_DIR, .plcrc or workspace)";
             self.client.log_message(MessageType::WARNING, msg).await;
             return;
         }
