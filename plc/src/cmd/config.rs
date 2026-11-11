@@ -12,5 +12,5 @@ use crate::config;
 pub fn run() -> Result<String, String> {
     config::palace_dir()
         .map(|p| p.display().to_string())
-        .ok_or_else(|| "config: PALACE_DIR is not set (environment or ~/.plcrc)".to_string())
+        .map_err(|e| format!("config: {e}"))
 }

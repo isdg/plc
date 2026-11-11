@@ -266,6 +266,7 @@ impl LanguageServer for Backend {
             .and_then(|w| w.dynamic_registration)
             .unwrap_or(false);
         let root = palace_dir()
+            .ok()
             .filter(|d| d.is_dir())
             .or_else(|| workspace_root(&p))
             .map(|d| real(&d));
@@ -295,7 +296,7 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _: InitializedParams) {
         if self.vault().await.is_none() {
-            let msg = "plc-lsp: no vault (PALACE_DIR, ~/.plcrc or workspace)";
+            let msg = "plc-lsp: no vault (PALACE_DIR or workspace)";
             self.client.log_message(MessageType::WARNING, msg).await;
             return;
         }

@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 
+use crate::config;
+
 /// Canonical leaf directories of a palace vault. Parents are created implicitly
 /// by `create_dir_all`, so only the deepest path of each branch is listed.
 const DIRS: &[&str] = &[
@@ -37,10 +39,10 @@ pub struct InitArgs {
 }
 
 pub fn run(args: InitArgs) -> Result<String, String> {
+    let no_dir = |e: String| format!("init: no DIR given and {e}");
     let root: PathBuf = match args.dir {
         Some(d) => PathBuf::from(d),
-        None => crate::config::palace_dir()
-            .ok_or_else(|| "init: no target — pass a DIR or set PALACE_DIR (env or ~/.plcrc)".to_string())?,
+        None => config::palace_dir().map_err(no_dir)?,
     };
 
     let (created, existed) = scaffold(&root)?;
