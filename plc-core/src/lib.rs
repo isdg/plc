@@ -3,6 +3,7 @@
 //! plc LSP for go-to-definition and rename across [[links]].
 
 pub mod calendar;
+pub mod graph;
 pub mod ledger;
 pub mod notes;
 pub mod orphans;
