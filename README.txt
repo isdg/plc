@@ -21,6 +21,7 @@ are shared across every note type — including ledgers.
     plc murmur     free-form named notes
     plc isg        enumerated writing notes (isg0, isg1, …)
     plc orphans    list notes with no links in or out
+    plc graph      draw the notes and their links like git log --graph
     plc stat       calendar heatmap + stats of daily-note activity
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
@@ -349,6 +350,38 @@ plc prints a path; your shell does the rest. The intended pattern (zsh):
 For an interactive login you might need to run (e.g.) a decrypt/mount step
 for the vault yourself before plc can see notes/ — plc will tell you which
 validation stage failed if the vault isn't ready.
+
+-------------------------------------------------------------------------------
+PLC GRAPH
+-------------------------------------------------------------------------------
+
+plc graph draws the vault the way git log --graph draws history. Every
+note is a row, newest first by its stamp (else a date in its file name,
+else its mtime); a [[link]] to an older note is a parent edge, so a note
+linking several older notes is a merge. Notes with no parent are drawn o
+rather than *, so a root above an unrelated note never reads as linked.
+
+    > plc graph | less -S
+    *   2026-01-05  d2
+    |\
+    | | o 2026-01-04  lone (tag)
+    | * 2026-01-03  d1 (revolut)
+    |/
+    | o 2026-01-02  later
+    o 2026-01-01  daily ->1
+
+After the name come the link names that are no note (tags, accounts,
+dangling links) and ->N, the number of newer notes it links to: a link
+forward in time draws no line, as no commit points at a later one.
+
+    --linked   leave out notes no link joins to another note
+    --json     one object per line: "graph", and on a note's own row
+               "note" with its path, name, date, parents and children
+               (as row numbers), refs and forward count
+
+The lanes are git's (tests/graph_oracle.rs compares them with
+git log --graph --no-graph-indent); notes are read and linked the way
+plc-lsp reads them.
 
 -------------------------------------------------------------------------------
 PLC-LSP

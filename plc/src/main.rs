@@ -8,6 +8,7 @@
 mod cmd;
 mod note;
 
+use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -59,6 +60,9 @@ enum Cmd {
     Isg(cmd::isg::IsgArgs),
     /// List orphan notes (no outbound and no inbound links).
     Orphans(cmd::orphans::OrphansArgs),
+    /// Draw the notes and their links the way `git log --graph` draws
+    /// history.
+    Graph(cmd::graph::GraphArgs),
     /// Check vault health and propose repairs (`--fix`).
     Doctor(cmd::doctor::DoctorArgs),
     /// Show the resolved vault location.
@@ -100,6 +104,7 @@ fn main() -> ExitCode {
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),
         Cmd::Isg(args) => with_palace(|p| cmd::isg::run(p, args)),
         Cmd::Orphans(args) => cmd::orphans::run(args),
+        Cmd::Graph(args) => with_palace(|p| cmd::graph::run(p, args)),
         Cmd::Doctor(args) => cmd::doctor::run(args),
         Cmd::Config => cmd::config::run(),
         Cmd::Init(args) => cmd::init::run(args),
@@ -107,10 +112,17 @@ fn main() -> ExitCode {
 
     match result {
         Ok(out) => {
-            if !out.is_empty() {
-                println!("{out}");
+            if out.is_empty() {
+                return ExitCode::SUCCESS;
             }
-            ExitCode::SUCCESS
+            // A pager or `head` closing the pipe early is not a failure.
+            match writeln!(io::stdout().lock(), "{out}") {
+                Err(e) if e.kind() != io::ErrorKind::BrokenPipe => {
+                    eprintln!("plc: {e}");
+                    ExitCode::from(1)
+                }
+                _ => ExitCode::SUCCESS,
+            }
         }
         Err(e) => {
             eprintln!("{e}");

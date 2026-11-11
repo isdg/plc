@@ -662,6 +662,7 @@ dependencies = [
  "chrono",
  "clap",
  "plc-core",
+ "serde_json",
 ]
 
 [[package]]

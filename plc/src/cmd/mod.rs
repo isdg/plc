@@ -6,6 +6,7 @@ pub mod config;
 pub mod daily;
 pub mod do_notes;
 pub mod doctor;
+pub mod graph;
 pub mod ledger;
 pub mod init;
 pub mod isg;
