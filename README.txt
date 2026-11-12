@@ -25,7 +25,7 @@ are shared across every note type — including ledgers.
     plc stat       calendar heatmap + stats of daily-note activity
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
-    plc config     show the resolved vault location
+    plc config     show the resolved vault (or notes dir) location
 
 
 -------------------------------------------------------------------------------
@@ -67,6 +67,7 @@ must contain notes/), with a pointed error at whichever stage fails.
 Editors and scripts that need the absolute path can ask plc for it:
 
     > plc config                    # prints the resolved vault path
+    > cd "$(plc config notes)"      # where plc add puts notes
 
 ~/.plc is plc's home ($PLC_HOME relocates it). It holds:
 
@@ -75,9 +76,14 @@ Editors and scripts that need the absolute path can ask plc for it:
       <vault>/                # this machine's state for a vault, named
                               # after its root: last-transactions
 
-.plcrc is "key = value" lines with # comments; vault is the one key so
-far, and plc ignores (and plc doctor reports) any other. plc never writes
-.plcrc, so it can be a link into your dotfiles. What travels with a vault
+.plcrc is "key = value" lines with # comments. plc ignores (and plc doctor
+reports) any key but these:
+
+    vault = ~/vault           # the vault, unless $PALACE_DIR is set
+    notes = notes/inbox       # where plc add puts notes: under the vault
+                              # when relative (default: notes)
+
+plc never writes .plcrc, so it can be a link into your dotfiles. What travels with a vault
 stays inside it, in <vault>/.plc/ (see THE VAULT).
 
 Older plc kept a "PALACE_DIR = …" line in ~/.plcrc. Without $PLC_HOME,
@@ -334,12 +340,18 @@ ids, migrating the pointer). It's built to grow into a whole-vault checkup
 PLC CONFIG
 -------------------------------------------------------------------------------
 
-Usage: plc config
+Usage: plc config [vault|notes]
 
-Print the resolved vault location ($PALACE_DIR, else vault in .plcrc) with
-a leading ~ expanded. It fails, saying how to set one, when neither is.
+Print a resolved location with a leading ~ expanded, without validating
+the vault:
+
+    vault    (default) $PALACE_DIR, else vault in .plcrc. It fails, saying
+             how to set one, when neither is.
+    notes    the dir plc add writes to: notes in .plcrc, under the vault
+             unless absolute, else <vault>/notes
 
     > plc config
+    > cd "$(plc config notes)"
 
 -------------------------------------------------------------------------------
 HOW IT RUNS DAY TO DAY

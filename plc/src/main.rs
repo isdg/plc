@@ -65,8 +65,8 @@ enum Cmd {
     Graph(cmd::graph::GraphArgs),
     /// Check vault health and propose repairs (`--fix`).
     Doctor(cmd::doctor::DoctorArgs),
-    /// Show the resolved vault location.
-    Config,
+    /// Show a resolved location: the vault, or the notes dir.
+    Config(cmd::config::ConfigArgs),
     /// Scaffold the canonical vault directory tree.
     Init(cmd::init::InitArgs),
 }
@@ -106,7 +106,7 @@ fn main() -> ExitCode {
         Cmd::Orphans(args) => cmd::orphans::run(args),
         Cmd::Graph(args) => with_palace(|p| cmd::graph::run(p, args)),
         Cmd::Doctor(args) => cmd::doctor::run(args),
-        Cmd::Config => cmd::config::run(),
+        Cmd::Config(args) => cmd::config::run(args),
         Cmd::Init(args) => cmd::init::run(args),
     };
 

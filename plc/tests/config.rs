@@ -109,6 +109,14 @@ fn legacy_rc_stays_under_plc_home() {
 }
 
 #[test]
+fn vault_is_the_default_key() {
+    let home = Home::new("key");
+    home.write(".plc/.plcrc", "vault = /v\n");
+    assert_eq!(ok(&mut home.plc(&["config", "vault"])), "/v");
+    fail(&mut home.plc(&["config", "nope"]));
+}
+
+#[test]
 fn set_and_rc_flags_are_gone() {
     let home = Home::new("set");
     for flag in ["--set", "--rc"] {
