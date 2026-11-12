@@ -293,12 +293,18 @@ Render daily-note activity (by note byte-size) as a calendar heatmap, with
 a stats block. A whole month or year is shown, so a positional day is
 discarded. On a terminal each day is a block (▇) coloured grey to green,
 as GitHub draws contributions; piped, or with NO_COLOR set, the levels are
-shade glyphs (· ░ ▒ ▓ █) instead. plc ledger stat takes --color too.
+shade glyphs (· ░ ▒ ▓ █) instead. plc ledger stat takes --color and
+--layout too.
+
+Both scopes have two layouts. git draws a row per weekday and a column
+per week, as GitHub does; a month heads each week's column with its
+first day, so the Tuesday under 9 is the 10th. tab draws a row of days
+per month with the days written and total; a month gets a day axis.
 
     --type month|year     scope (default: month)
     -m, --month M         month 1-12 (default: current)
     -y, --year Y          year, 2- or 4-digit (default: current)
-    --layout git|tab      year layout: GitHub-style grid or a month table
+    --layout git|tab      GitHub-style grid (default) or rows of days
     -p, --plot            replace the heatmap with an ASCII line chart
     --color WHEN          coloured blocks: auto (on a terminal, the
                           default), always, or never

@@ -27,7 +27,7 @@ use clap::{Args, Subcommand};
 use plc_core::calendar::{self, MonthStats, YearStats};
 use plc_core::ledger::{self, Filter, Kind, Measure, State, Transaction};
 
-use crate::cmd::calview::{self, Cells, ColorArgs, Heat};
+use crate::cmd::calview::{self, Cells, ColorArgs, Heat, Layout};
 use crate::config::Palace;
 use crate::note;
 use crate::settings::Settings;
@@ -191,9 +191,14 @@ pub struct LedgerStatArgs {
     /// Year; 2-digit (25 → 2025) or 4-digit (defaults to the current year).
     #[arg(short = 'y', long = "year")]
     year: Option<String>,
-    /// Year layout, `year` scope only: `git` (GitHub-style) or `tab`.
-    #[arg(long = "layout", value_name = "LAYOUT", default_value = "git")]
-    layout: String,
+    /// Heatmap layout: `git` (GitHub-style) or `tab` (a row of days).
+    #[arg(
+        long,
+        value_enum,
+        value_name = "LAYOUT",
+        default_value_t = Layout::Git
+    )]
+    layout: Layout,
     /// Replace the heatmap with an ASCII line chart.
     #[arg(short = 'p', long = "plot")]
     plot: bool,
@@ -460,7 +465,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             let mut out = if args.plot {
                 calview::plot_month(y, m, &vals, unit, &money)
             } else {
-                calview::month_grid(y, m, &vals, &heat)
+                calview::month(y, m, &vals, args.layout, &heat, &money)
             };
             push_month_spend(&mut out, &st, y, m, unit, &cur);
             Ok(out)
@@ -472,15 +477,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             let mut out = if args.plot {
                 calview::plot_year(y, &vals, unit, &money)
             } else {
-                match args.layout.as_str() {
-                    "git" => calview::year_git(y, &vals, &heat),
-                    "tab" => calview::year_tab(y, &vals, today, &heat, &money),
-                    o => {
-                        return Err(format!(
-                            "ledger stat: unknown layout: {o} (expected git|tab)"
-                        ))
-                    }
-                }
+                calview::year(y, &vals, today, args.layout, &heat, &money)
             };
             push_year_spend(&mut out, &st, y, unit, &cur);
             Ok(out)
@@ -523,30 +520,31 @@ fn resolve_ym(args: &LedgerStatArgs, today: NaiveDate) -> Result<(i32, u32), Str
 
 /// The month spend Stats block (money-formatted; reworded from `plc stat`).
 fn push_month_spend(out: &mut String, st: &MonthStats, y: i32, m: u32, unit: &str, cur: &str) {
-    out.push_str("\n     ── Stats ─────────────────────────\n");
+    out.push_str("\n  ── Stats ─────────────────────────\n");
     let _ = writeln!(
         out,
-        "     Days w/ {unit:<6}: {} / {}   ({}%)",
+        "  Days w/ {unit:<6}: {} / {}   ({}%)",
         st.days_written, st.last_day, st.pct
     );
     let _ = writeln!(
         out,
-        "     Total        : {}",
+        "  Total        : {}",
         calendar::fmt_money(st.total, cur)
     );
     if st.days_written > 0 {
         let avg = st.total / st.days_written as u64;
-        let _ = writeln!(out, "     Avg / day    : {}", calendar::fmt_money(avg, cur));
+        let avg = calendar::fmt_money(avg, cur);
+        let _ = writeln!(out, "  Avg / day    : {avg}");
     }
-    let _ = writeln!(out, "     Longest run  : {} days", st.longest_run);
-    let _ = writeln!(out, "     Current run  : {} days", st.current_run);
+    let _ = writeln!(out, "  Longest run  : {} days", st.longest_run);
+    let _ = writeln!(out, "  Current run  : {} days", st.current_run);
     if st.best_day > 0 {
         let mon = NaiveDate::from_ymd_opt(y, m, st.best_day)
             .expect("best_day in-month")
             .format("%b");
         let _ = writeln!(
             out,
-            "     Biggest day  : {} {}   ({})",
+            "  Biggest day  : {} {}   ({})",
             mon,
             st.best_day,
             calendar::fmt_money(st.best_size, cur)

@@ -13,7 +13,7 @@ use std::io;
 
 use anstream::AutoStream;
 use chrono::{Datelike, NaiveDate};
-use clap::{Args, ColorChoice};
+use clap::{Args, ColorChoice, ValueEnum};
 use plc_core::calendar;
 
 const SHADES: [char; 5] = ['·', '░', '▒', '▓', '█'];
@@ -100,52 +100,105 @@ impl Heat {
     }
 }
 
-/// One month as the title, a Mo–Su grid with a heatmap row under each week, and
-/// the legend. `values` holds every day of the month (`len == last day`).
-pub fn month_grid(y: i32, m: u32, values: &[u64], heat: &Heat) -> String {
-    let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month is valid");
-    let first_dow = first.weekday().number_from_monday(); // Mon=1 … Sun=7
-    let last_day = values.len() as u32;
+/// The heatmap shape for both scopes, as `--layout` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Layout {
+    /// A row per weekday and a column per week, as GitHub draws a year.
+    Git,
+    /// A row of days per month, with a days/total summary.
+    Tab,
+}
 
-    // 42-cell (6-week) Monday-first grid; cell holds the day number or 0.
-    let mut cells = [0u32; 42];
-    for d in 1..=last_day {
-        cells[(first_dow - 1 + d - 1) as usize] = d;
+const DOW: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+/// One month in `layout`. `values` holds every day of the month.
+pub fn month(
+    y: i32,
+    m: u32,
+    values: &[u64],
+    layout: Layout,
+    heat: &Heat,
+    fmt: &dyn Fn(u64) -> String,
+) -> String {
+    match layout {
+        Layout::Git => month_git(y, m, values, heat),
+        Layout::Tab => month_tab(y, m, values, heat, fmt),
     }
-    let num_weeks = (first_dow - 1 + last_day).div_ceil(7);
+}
+
+/// A whole year in `layout`. `values` is indexed by day-of-year − 1.
+pub fn year(
+    y: i32,
+    values: &[u64],
+    today: NaiveDate,
+    layout: Layout,
+    heat: &Heat,
+    fmt: &dyn Fn(u64) -> String,
+) -> String {
+    match layout {
+        Layout::Git => year_git(y, values, heat),
+        Layout::Tab => year_tab(y, values, today, heat, fmt),
+    }
+}
+
+/// A month the way [`year_git`] draws a year, each week's column headed by
+/// its first day in the month, so every date stays readable.
+fn month_git(y: i32, m: u32, values: &[u64], heat: &Heat) -> String {
+    let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month");
+    let pad = first.weekday().num_days_from_monday() as usize;
+    let weeks = (pad + values.len()).div_ceil(7);
 
     let mut out = String::new();
-    let _ = writeln!(out, "\n              {}", first.format("%B %Y"));
-    out.push_str("      Mo Tu We Th Fr Sa Su\n");
-    for w in 0..num_weeks {
-        out.push_str("     ");
-        for dow in 0..7 {
-            let d = cells[(w * 7 + dow) as usize];
-            if d == 0 {
-                out.push_str("   ");
-            } else {
-                let _ = write!(out, "{d:3}");
-            }
-        }
-        out.push_str("\n     ");
-        for dow in 0..7 {
-            let d = cells[(w * 7 + dow) as usize];
-            if d == 0 {
-                out.push_str("   ");
-            } else {
-                out.push_str("  ");
-                heat.push_cell(&mut out, values[(d - 1) as usize]);
+    let _ = writeln!(out, "\n  {}", first.format("%B %Y"));
+    out.push_str("      ");
+    for w in 0..weeks {
+        let _ = write!(out, "{:>2} ", (w * 7).saturating_sub(pad) + 1);
+    }
+    out.push('\n');
+    for (row, label) in DOW.iter().enumerate() {
+        let _ = write!(out, "  {label}  ");
+        for w in 0..weeks {
+            match (w * 7 + row).checked_sub(pad).and_then(|i| values.get(i)) {
+                Some(&v) => {
+                    out.push(' ');
+                    heat.push_cell(&mut out, v);
+                    out.push(' ');
+                }
+                None => out.push_str("   "),
             }
         }
         out.push('\n');
     }
-    let _ = writeln!(out, "\n     Legend:  {}", heat.legend());
+    let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
+    out
+}
+
+/// A month as one [`year_tab`] row, with a day axis under it.
+fn month_tab(
+    y: i32,
+    m: u32,
+    values: &[u64],
+    heat: &Heat,
+    fmt: &dyn Fn(u64) -> String,
+) -> String {
+    let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month");
+    let mut out = String::new();
+    let _ = writeln!(out, "\n  {}\n", first.format("%B %Y"));
+    let label = first.format("%b").to_string();
+    push_tab_row(&mut out, &label, values, false, heat, fmt);
+    let mut axis = " ".repeat(7);
+    for d in 1..=values.len() {
+        let mark = d == 1 || d % 5 == 0;
+        axis.push_str(&if mark { format!("{d:<2}") } else { "  ".into() });
+    }
+    let _ = writeln!(out, "{}", axis.trim_end());
+    let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
     out
 }
 
 /// GitHub-style 7×weeks contribution grid for a year, with month labels above.
 /// `values` is indexed by day-of-year − 1.
-pub fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
+fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
     let total_days = values.len() as u32;
     let jan1_dow = NaiveDate::from_ymd_opt(y, 1, 1).unwrap().weekday().number_from_monday();
     let pad = jan1_dow - 1;
@@ -199,7 +252,7 @@ pub fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
 
 /// One row per month: a heatmap strip and a right-hand `days/total` summary
 /// (formatted by `fmt`); the current month is bold. `values` by day-of-year − 1.
-pub fn year_tab(
+fn year_tab(
     y: i32,
     values: &[u64],
     today: NaiveDate,
@@ -216,29 +269,42 @@ pub fn year_tab(
         let last = calendar::last_day_of_month(y, m);
         let label = NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b");
         let now = y == today.year() && m == today.month();
-        let (b, r) = if now && heat.cells == Cells::Color {
-            ("\x1b[1m", "\x1b[0m")
-        } else {
-            ("", "")
-        };
-        let mut strip = String::new();
-        let mut mtotal = 0u64;
-        let mut mdays = 0u32;
-        for d in 1..=last {
-            let v = values[off + (d - 1) as usize];
-            heat.push_cell(&mut strip, v);
-            strip.push(' ');
-            if v > 0 {
-                mtotal += v;
-                mdays += 1;
-            }
-        }
-        let pad = " ".repeat(62usize.saturating_sub(last as usize * 2));
-        let _ = writeln!(out, "{b}  {label}  {strip}{pad}   {mdays:2}/{last}   {}{r}", fmt(mtotal));
+        let days = &values[off..off + last as usize];
+        push_tab_row(&mut out, &label.to_string(), days, now, heat, fmt);
         off += last as usize;
     }
     let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
     out
+}
+
+/// One tab row: `label`, a strip of `values` padded to 31 days so rows
+/// line up, and the days written / total; `bold` only takes with colour.
+fn push_tab_row(
+    out: &mut String,
+    label: &str,
+    values: &[u64],
+    bold: bool,
+    heat: &Heat,
+    fmt: &dyn Fn(u64) -> String,
+) {
+    let (b, r) = if bold && heat.cells == Cells::Color {
+        ("\x1b[1m", "\x1b[0m")
+    } else {
+        ("", "")
+    };
+    let mut strip = String::new();
+    for &v in values {
+        heat.push_cell(&mut strip, v);
+        strip.push(' ');
+    }
+    let days = values.iter().filter(|&&v| v > 0).count();
+    let total = fmt(values.iter().sum());
+    let pad = " ".repeat(2 * (31 - values.len()));
+    let last = values.len();
+    let _ = writeln!(
+        out,
+        "{b}  {label}  {strip}{pad}   {days:2}/{last}   {total}{r}"
+    );
 }
 
 /// A month line chart of `values` with a day-number x-axis. `unit` names the
@@ -382,6 +448,53 @@ mod tests {
                 assert_eq!(n.count(), 365 + 5, "{c:?}");
             }
         }
+    }
+
+    #[test]
+    fn month_git_heads_each_week_with_its_first_day() {
+        let out = month_git(2026, 11, &[0; 30], &HEAT);
+        let head = out.lines().nth(2).unwrap();
+        let head: Vec<&str> = head.split_whitespace().collect();
+        assert_eq!(head, ["1", "2", "9", "16", "23", "30"]);
+        let rows: Vec<&str> =
+            out.lines().filter(|l| l.starts_with("  ")).collect();
+        assert!(rows.iter().any(|l| l.starts_with("  Su   · ")));
+        assert!(rows.iter().any(|l| l.starts_with("  Mo      · ")));
+    }
+
+    #[test]
+    fn month_layouts_draw_every_day_once() {
+        let fmt = |v: u64| v.to_string();
+        for (y, m, last) in [(2026, 2, 28), (2026, 11, 30), (2024, 12, 31)] {
+            let values = vec![0u64; last];
+            for c in [Cells::Shade, Cells::Color] {
+                let heat = HEAT.with_cells(c);
+                for layout in [Layout::Git, Layout::Tab] {
+                    let out = month(y, m, &values, layout, &heat, &fmt);
+                    let n = out
+                        .chars()
+                        .filter(|ch| SHADES.contains(ch) || *ch == BLOCK);
+                    assert_eq!(n.count(), last + 5, "{y}-{m} {layout:?} {c:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn month_tab_sums_and_marks_every_fifth_day() {
+        let mut values = vec![0u64; 30];
+        values[3] = 7;
+        values[9] = 5;
+        let out = month_tab(2026, 11, &values, &HEAT, &|v| format!("{v}B"));
+        let row = out.lines().find(|l| l.starts_with("  Nov  ")).unwrap();
+        assert!(row.ends_with(" 2/30   12B"), "{row}");
+        let axis: Vec<&str> = out
+            .lines()
+            .find(|l| l.trim_start().starts_with("1 "))
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert_eq!(axis, ["1", "5", "10", "15", "20", "25", "30"]);
     }
 
     #[test]

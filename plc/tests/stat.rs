@@ -28,16 +28,17 @@ fn plc(home: &Home, args: &[&str]) -> Command {
 #[test]
 fn always_draws_coloured_blocks_in_every_heatmap() {
     let home = with_vault("stat-always");
-    for layout in ["git", "tab"] {
-        let args = ["stat", "--type", "year", "--layout", layout];
-        let out = ok(plc(&home, &args).arg("--color=always"));
-        assert!(out.contains("\x1b[38;5;237m▇"), "{layout}: {out}");
-        assert!(!out.contains('░'), "{layout}");
+    for cmd in [&["stat"][..], &["ledger", "stat"]] {
+        for scope in ["month", "year"] {
+            for layout in ["git", "tab"] {
+                let args = ["--type", scope, "--layout", layout];
+                let mut run = plc(&home, cmd);
+                let out = ok(run.args(args).arg("--color=always"));
+                assert!(out.contains("\x1b[38;5;237m▇"), "{args:?}: {out}");
+                assert!(!out.contains('░'), "{args:?}");
+            }
+        }
     }
-    let out = ok(&mut plc(&home, &["stat", "--color", "always"]));
-    assert!(out.contains('▇'));
-    let args = ["ledger", "stat", "--type", "year", "--color", "always"];
-    assert!(ok(&mut plc(&home, &args)).contains('▇'));
 }
 
 #[test]
@@ -59,4 +60,13 @@ fn auto_colours_a_pipe_only_when_forced() {
     let mut cmd = plc(&home, &args);
     let out = ok(cmd.env("CLICOLOR_FORCE", "1").env("NO_COLOR", "1"));
     assert!(!out.contains(ESC));
+}
+
+#[test]
+fn an_unknown_layout_is_refused() {
+    let home = with_vault("stat-layout");
+    let out = plc(&home, &["stat", "--layout", "grid"]).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("possible values: git, tab"), "{err}");
 }
