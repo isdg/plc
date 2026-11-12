@@ -289,8 +289,8 @@ Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
 
 Render daily-note activity (by note byte-size) as a calendar heatmap, with
 a stats block. A whole month or year is shown, so a positional day is
-discarded. On a terminal each day is a square coloured grey to green, as
-GitHub draws contributions; piped, or with NO_COLOR set, the levels are
+discarded. On a terminal each day is a block (▇) coloured grey to green,
+as GitHub draws contributions; piped, or with NO_COLOR set, the levels are
 shade glyphs (· ░ ▒ ▓ █) instead. plc ledger stat takes --color too.
 
     --type month|year     scope (default: month)
@@ -298,7 +298,7 @@ shade glyphs (· ░ ▒ ▓ █) instead. plc ledger stat takes --color too.
     -y, --year Y          year, 2- or 4-digit (default: current)
     --layout git|tab      year layout: GitHub-style grid or a month table
     -p, --plot            replace the heatmap with an ASCII line chart
-    --color WHEN          coloured squares: auto (on a terminal, the
+    --color WHEN          coloured blocks: auto (on a terminal, the
                           default), always, or never
 
 -------------------------------------------------------------------------------

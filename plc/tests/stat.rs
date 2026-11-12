@@ -1,4 +1,4 @@
-//! End to end: `--color` picks between shade glyphs and coloured squares in
+//! End to end: `--color` picks between shade glyphs and coloured blocks in
 //! the `plc stat` and `plc ledger stat` heatmaps.
 
 mod common;
@@ -26,18 +26,18 @@ fn plc(home: &Home, args: &[&str]) -> Command {
 }
 
 #[test]
-fn always_draws_coloured_squares_in_every_heatmap() {
+fn always_draws_coloured_blocks_in_every_heatmap() {
     let home = with_vault("stat-always");
     for layout in ["git", "tab"] {
         let args = ["stat", "--type", "year", "--layout", layout];
         let out = ok(plc(&home, &args).arg("--color=always"));
-        assert!(out.contains("\x1b[38;5;237m■"), "{layout}: {out}");
+        assert!(out.contains("\x1b[38;5;237m▇"), "{layout}: {out}");
         assert!(!out.contains('░'), "{layout}");
     }
     let out = ok(&mut plc(&home, &["stat", "--color", "always"]));
-    assert!(out.contains('■'));
+    assert!(out.contains('▇'));
     let args = ["ledger", "stat", "--type", "year", "--color", "always"];
-    assert!(ok(&mut plc(&home, &args)).contains('■'));
+    assert!(ok(&mut plc(&home, &args)).contains('▇'));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn never_draws_shade_glyphs() {
     let home = with_vault("stat-never");
     let mut cmd = plc(&home, &["stat", "--type", "year", "--color", "never"]);
     let out = ok(cmd.env("CLICOLOR_FORCE", "1"));
-    assert!(!out.contains(ESC) && !out.contains('■'));
+    assert!(!out.contains(ESC) && !out.contains('▇'));
     assert!(out.contains("· empty"));
 }
 
