@@ -9,22 +9,80 @@
 //! (from file sizes, or from ledger spend) and append their own stats block.
 
 use std::fmt::Write as _;
+use std::io;
 
+use anstream::AutoStream;
 use chrono::{Datelike, NaiveDate};
+use clap::{Args, ColorChoice};
 use plc_core::calendar;
 
 const SHADES: [char; 5] = ['·', '░', '▒', '▓', '█'];
+/// GitHub's contribution ramp, grey to bright green, in xterm-256 colours.
+const GREENS: [u8; 5] = [237, 22, 28, 34, 40];
 
-/// A heatmap's scale: `level` buckets a value into 0 (empty) to 4, and
-/// `labels` names each level in the legend.
+/// How a heatmap draws a day: a shade glyph per level, or the same square
+/// in a colour per level, the way GitHub draws contributions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cells {
+    Shade,
+    Color,
+}
+
+#[derive(Args)]
+pub struct ColorArgs {
+    /// Draw heatmap days as coloured squares: `auto` (when stdout is a
+    /// terminal), `always`, or `never` (shade glyphs instead).
+    #[arg(long, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
+}
+
+impl ColorArgs {
+    /// `auto` defers to anstream: a terminal, unless NO_COLOR or CLICOLOR=0
+    /// says otherwise, or CLICOLOR_FORCE forces colour into a pipe.
+    pub fn cells(&self) -> Cells {
+        let color = match self.color {
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+            ColorChoice::Auto => {
+                AutoStream::choice(&io::stdout())
+                    != anstream::ColorChoice::Never
+            }
+        };
+        if color {
+            Cells::Color
+        } else {
+            Cells::Shade
+        }
+    }
+}
+
+/// A heatmap's scale: `level` buckets a value into 0 (empty) to 4, `labels`
+/// names each level in the legend, and `cells` draws the levels.
+#[derive(Clone, Copy)]
 pub struct Heat {
     pub level: fn(u64) -> u8,
     pub labels: [&'static str; 5],
+    pub cells: Cells,
 }
 
 impl Heat {
+    pub fn with_cells(self, cells: Cells) -> Heat {
+        Heat { cells, ..self }
+    }
+
     fn push_cell(&self, out: &mut String, v: u64) {
-        push_level(out, (self.level)(v));
+        self.push_level(out, (self.level)(v));
+    }
+
+    fn push_level(&self, out: &mut String, level: u8) {
+        let l = usize::from(level.min(4));
+        match self.cells {
+            Cells::Shade => out.push(SHADES[l]),
+            // 39 resets the foreground alone, so a bold row stays bold.
+            Cells::Color => {
+                let _ = write!(out, "\x1b[38;5;{}m■\x1b[39m", GREENS[l]);
+            }
+        }
     }
 
     fn legend(&self) -> String {
@@ -33,15 +91,11 @@ impl Heat {
             if l > 0 {
                 out.push_str("   ");
             }
-            push_level(&mut out, l);
+            self.push_level(&mut out, l);
             let _ = write!(out, " {label}");
         }
         out
     }
-}
-
-fn push_level(out: &mut String, level: u8) {
-    out.push(SHADES[usize::from(level.min(4))]);
 }
 
 /// One month as the title, a Mo–Su grid with a heatmap row under each week, and
@@ -159,7 +213,8 @@ pub fn year_tab(
     for m in 1..=12 {
         let last = calendar::last_day_of_month(y, m);
         let label = NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b");
-        let (b, r) = if y == today.year() && m == today.month() {
+        let now = y == today.year() && m == today.month();
+        let (b, r) = if now && heat.cells == Cells::Color {
             ("\x1b[1m", "\x1b[0m")
         } else {
             ("", "")
@@ -267,4 +322,77 @@ fn push_day_axis(out: &mut String, last_day: u32) {
         d += 1;
     }
     out.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HEAT: Heat = Heat {
+        level: calendar::level,
+        labels: ["0", "1", "2", "3", "4"],
+        cells: Cells::Shade,
+    };
+    const GREY: &str = "\x1b[38;5;237m■\x1b[39m";
+    const GREEN: &str = "\x1b[38;5;40m■\x1b[39m";
+
+    fn cells(heat: &Heat, values: &[u64]) -> String {
+        let mut out = String::new();
+        for &v in values {
+            heat.push_cell(&mut out, v);
+        }
+        out
+    }
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn shade_cells_are_glyphs() {
+        assert_eq!(cells(&HEAT, &[0, 2048, 20_000]), "·▒█");
+    }
+
+    #[test]
+    fn color_cells_are_squares_from_grey_to_green() {
+        let heat = HEAT.with_cells(Cells::Color);
+        assert_eq!(cells(&heat, &[0, 20_000]), format!("{GREY}{GREEN}"));
+    }
+
+    #[test]
+    fn legend_draws_each_level_as_a_cell() {
+        assert_eq!(HEAT.legend(), "· 0   ░ 1   ▒ 2   ▓ 3   █ 4");
+        let legend = HEAT.with_cells(Cells::Color).legend();
+        assert!(legend.starts_with(&format!("{GREY} 0   ")));
+        assert!(legend.ends_with(&format!("{GREEN} 4")));
+    }
+
+    #[test]
+    fn year_layouts_draw_every_day_and_legend_level() {
+        let values = vec![0u64; 365];
+        let fmt = |v: u64| v.to_string();
+        for (c, glyphs) in [(Cells::Shade, "·░▒▓█"), (Cells::Color, "■")] {
+            let heat = HEAT.with_cells(c);
+            let git = year_git(2025, &values, &heat);
+            let tab = year_tab(2025, &values, day(2025, 3, 9), &heat, &fmt);
+            for out in [git, tab] {
+                let n = out.chars().filter(|ch| glyphs.contains(*ch));
+                assert_eq!(n.count(), 365 + 5, "{c:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tab_bolds_the_current_month_only_in_colour() {
+        let values = vec![0u64; 365];
+        let fmt = |v: u64| v.to_string();
+        let today = day(2025, 3, 9);
+        let tab = |c| year_tab(2025, &values, today, &HEAT.with_cells(c), &fmt);
+        assert!(!tab(Cells::Shade).contains('\x1b'));
+        let color = tab(Cells::Color);
+        let bold: Vec<_> =
+            color.lines().filter(|l| l.contains("\x1b[1m")).collect();
+        assert_eq!(bold.len(), 1);
+        assert!(bold[0].starts_with("\x1b[1m  Mar  "));
+    }
 }

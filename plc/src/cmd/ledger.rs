@@ -27,7 +27,7 @@ use clap::{Args, Subcommand};
 use plc_core::calendar::{self, MonthStats, YearStats};
 use plc_core::ledger::{self, Filter, Kind, Measure, State, Transaction};
 
-use crate::cmd::calview::{self, Heat};
+use crate::cmd::calview::{self, Cells, ColorArgs, Heat};
 use crate::config::Palace;
 use crate::note;
 use crate::settings::Settings;
@@ -90,6 +90,7 @@ impl Decl {
 const MONEY: Heat = Heat {
     level: calendar::money_level,
     labels: ["empty", "<5", "<20", "<50", "≥50"],
+    cells: Cells::Shade,
 };
 
 #[derive(Args)]
@@ -205,6 +206,8 @@ pub struct LedgerStatArgs {
     /// Only pending (`!`) transactions.
     #[arg(long = "pending")]
     pending: bool,
+    #[command(flatten)]
+    color: ColorArgs,
 }
 
 #[derive(Args)]
@@ -447,6 +450,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
     let cur = resolved_currency(palace);
     let root = palace.root().join("notes/management/daily");
     let money = |minor| calendar::fmt_money(minor, &cur);
+    let heat = MONEY.with_cells(args.color.cells());
 
     match args.scope.as_str() {
         "month" => {
@@ -456,7 +460,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             let mut out = if args.plot {
                 calview::plot_month(y, m, &vals, unit, &money)
             } else {
-                calview::month_grid(y, m, &vals, &MONEY)
+                calview::month_grid(y, m, &vals, &heat)
             };
             push_month_spend(&mut out, &st, y, m, unit, &cur);
             Ok(out)
@@ -469,8 +473,8 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
                 calview::plot_year(y, &vals, unit, &money)
             } else {
                 match args.layout.as_str() {
-                    "git" => calview::year_git(y, &vals, &MONEY),
-                    "tab" => calview::year_tab(y, &vals, today, &MONEY, &money),
+                    "git" => calview::year_git(y, &vals, &heat),
+                    "tab" => calview::year_tab(y, &vals, today, &heat, &money),
                     o => {
                         return Err(format!(
                             "ledger stat: unknown layout: {o} (expected git|tab)"

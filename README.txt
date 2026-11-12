@@ -263,17 +263,21 @@ PLC STAT
 -------------------------------------------------------------------------------
 
 Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
-                [--layout git|tab] [-p]
+                [--layout git|tab] [-p] [--color auto|always|never]
 
 Render daily-note activity (by note byte-size) as a calendar heatmap, with
 a stats block. A whole month or year is shown, so a positional day is
-discarded.
+discarded. On a terminal each day is a square coloured grey to green, as
+GitHub draws contributions; piped, or with NO_COLOR set, the levels are
+shade glyphs (· ░ ▒ ▓ █) instead. plc ledger stat takes --color too.
 
     --type month|year     scope (default: month)
     -m, --month M         month 1-12 (default: current)
     -y, --year Y          year, 2- or 4-digit (default: current)
     --layout git|tab      year layout: GitHub-style grid or a month table
     -p, --plot            replace the heatmap with an ASCII line chart
+    --color WHEN          coloured squares: auto (on a terminal, the
+                          default), always, or never
 
 -------------------------------------------------------------------------------
 PLC LEDGER

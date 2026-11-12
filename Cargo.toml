@@ -16,6 +16,7 @@ plc-core = { path = "plc-core" }
 walkdir = "2"
 sha2 = "0.10"
 clap = { version = "4", features = ["derive"] }
+anstream = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tower-lsp = "0.20"
 tokio = { version = "1", features = [

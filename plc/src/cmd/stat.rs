@@ -16,13 +16,14 @@ use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
 use plc_core::calendar::{self, MonthStats, YearStats};
 
-use crate::cmd::calview::{self, Heat};
+use crate::cmd::calview::{self, Cells, ColorArgs, Heat};
 use crate::config::Palace;
 
 /// The byte scale, shared by every `plc stat` heatmap.
 const BYTES: Heat = Heat {
     level: calendar::level,
     labels: ["empty", "<1KB", "1–4KB", "4–10KB", ">10KB"],
+    cells: Cells::Shade,
 };
 
 #[derive(Args)]
@@ -47,16 +48,22 @@ pub struct StatArgs {
     /// Replace the heatmap with an ASCII line chart.
     #[arg(short = 'p', long = "plot")]
     plot: bool,
+    #[command(flatten)]
+    color: ColorArgs,
 }
 
 pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
     let today = Local::now().date_naive();
     let (year, month) = resolve(args.month, args.year, &args.positional, today)?;
+    let heat = BYTES.with_cells(args.color.cells());
 
     match args.scope.as_str() {
         "month" if args.plot => Ok(render_plot_month(palace.root(), year, month, today)),
-        "month" => Ok(render_month(palace.root(), year, month, today)),
-        "year" => render_year(palace.root(), year, &args.layout, args.plot, today),
+        "month" => Ok(render_month(palace.root(), year, month, today, &heat)),
+        "year" => {
+            let layout = &args.layout;
+            render_year(palace.root(), year, layout, args.plot, today, &heat)
+        }
         other => Err(format!("plc stat: unknown type: {other} (expected month|year)")),
     }
 }
@@ -123,11 +130,17 @@ fn month_sizes(root: &Path, y: i32, m: u32) -> Vec<u64> {
 }
 
 /// Render one month: the shared grid heatmap, then the byte Stats block.
-fn render_month(root: &Path, y: i32, m: u32, today: NaiveDate) -> String {
+fn render_month(
+    root: &Path,
+    y: i32,
+    m: u32,
+    today: NaiveDate,
+    heat: &Heat,
+) -> String {
     let sizes = month_sizes(root, y, m);
     let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
     let st = calendar::month_stats(&sizes, cutoff);
-    let mut out = calview::month_grid(y, m, &sizes, &BYTES);
+    let mut out = calview::month_grid(y, m, &sizes, heat);
     push_month_stats(&mut out, &st, y, m);
     out
 }
@@ -166,15 +179,22 @@ fn push_month_stats(out: &mut String, st: &MonthStats, y: i32, m: u32) {
 
 /// Render a whole year: the chosen heatmap layout followed by the year Stats
 /// block. Ports the `year` arm of the script's dispatch.
-fn render_year(root: &Path, y: i32, layout: &str, plot: bool, today: NaiveDate) -> Result<String, String> {
+fn render_year(
+    root: &Path,
+    y: i32,
+    layout: &str,
+    plot: bool,
+    today: NaiveDate,
+    heat: &Heat,
+) -> Result<String, String> {
     let sizes = calendar::collect_year(root, y);
     let bytes = |b| calendar::fmt_bytes(b);
     let mut out = if plot {
         calview::plot_year(y, &sizes, "bytes", &bytes)
     } else {
         match layout {
-            "git" => calview::year_git(y, &sizes, &BYTES),
-            "tab" => calview::year_tab(y, &sizes, today, &BYTES, &bytes),
+            "git" => calview::year_git(y, &sizes, heat),
+            "tab" => calview::year_tab(y, &sizes, today, heat, &bytes),
             other => return Err(format!("plc stat: unknown layout: {other} (expected git|tab)")),
         }
     };
