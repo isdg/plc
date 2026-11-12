@@ -86,6 +86,26 @@ pub fn ensure_note(
     ensure_file(root, subdir, filename, &seed_body(stamp_prefix, tag, marker))
 }
 
+/// Ensure a note exists at `<root>/<subdir>/<filename>`, seeding just the
+/// stamp line (plus the run's `--tag` link) when it is absent or empty.
+pub fn ensure_stamped(
+    root: &Path,
+    subdir: &str,
+    filename: &str,
+) -> std::io::Result<PathBuf> {
+    let extra = TAG_POSTFIX.get().and_then(|t| t.as_deref());
+    let body = stamped_body(&stamp_line(SIGNATURE), extra);
+    ensure_file(root, subdir, filename, &body)
+}
+
+/// A stamp line, then an `[[extra]]` link after a blank line when given.
+fn stamped_body(stamp: &str, extra: Option<&str>) -> String {
+    match extra {
+        Some(extra) => format!("{stamp}\n\n[[{extra}]]\n"),
+        None => format!("{stamp}\n"),
+    }
+}
+
 /// Ensure a file exists at `<root>/<subdir>/<filename>`, writing `body` (making
 /// parent dirs as needed) only when the file is absent or empty. Returns its
 /// path. The body-agnostic core of [`ensure_note`]; used by commands that seed
@@ -240,6 +260,13 @@ mod tests {
             body_with_tags("isg 2026", "shots", Some("review")),
             "isg 2026\n\n[[shots]]\n[[review]]\n"
         );
+    }
+
+    #[test]
+    fn stamped_body_with_and_without_tag() {
+        assert_eq!(stamped_body("isg 2026", None), "isg 2026\n");
+        let body = stamped_body("isg 2026", Some("review"));
+        assert_eq!(body, "isg 2026\n\n[[review]]\n");
     }
 
     #[test]

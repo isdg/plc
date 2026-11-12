@@ -16,6 +16,7 @@ are shared across every note type — including ledgers.
     plc daily      today's (or a given date's) daily note
     plc weekly     this ISO week's note
     plc shot       a timestamped snapshot note
+    plc add        a named note in the notes dir (alias: plc note, plc no)
     plc top        TOP.md — the vault landing page
     plc do         week-based "do" notes with a "last" pointer
     plc murmur     free-form named notes
@@ -200,6 +201,21 @@ default in the current month's daily dir.
                        tag)
     -H, --no-header    omit the stamp header (with -i, writes just the text;
                        alone, an empty note)
+
+-------------------------------------------------------------------------------
+PLC ADD
+-------------------------------------------------------------------------------
+
+Usage: plc add NAME        (aliases: plc note, plc no)
+
+Create or resolve NAME.md (.md appended if missing) in the notes dir, the
+one plc config notes prints: notes in .plcrc, under the vault unless
+absolute, else <vault>/notes. A new note holds just the stamp line (and
+a [[TAG]] line with -t); an existing one is kept. NAME is one file name,
+so a / in it is refused. Unless notes is absolute, the vault must validate.
+
+    > plc add idea              # <vault>/notes/idea.md
+    > plc no idea -t review     # the same, with a [[review]] line
 
 -------------------------------------------------------------------------------
 PLC TOP

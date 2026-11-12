@@ -45,6 +45,9 @@ enum Cmd {
     Weekly,
     /// Create a timestamped snapshot note in the daily dir (or a chosen path).
     Shot(cmd::shot::ShotArgs),
+    /// Create/resolve a stamped note NAME in the notes dir.
+    #[command(visible_aliases = ["note", "no"])]
+    Add(cmd::add::AddArgs),
     /// Create/resolve TOP.md at the vault root (the palace landing page).
     Top,
     /// Manage do-notes (week-based) with a "last" pointer.
@@ -97,6 +100,7 @@ fn main() -> ExitCode {
         Cmd::Daily(args) => with_palace(|p| cmd::daily::run(p, args)),
         Cmd::Weekly => with_palace(cmd::weekly::run),
         Cmd::Shot(args) => cmd::shot::run(args),
+        Cmd::Add(args) => cmd::add::run(args),
         Cmd::Top => with_palace(cmd::top::run),
         Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
         Cmd::Ledger(args) => with_palace(|p| cmd::ledger::run(p, args)),
