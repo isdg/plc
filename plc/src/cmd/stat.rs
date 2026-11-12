@@ -16,11 +16,14 @@ use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
 use plc_core::calendar::{self, MonthStats, YearStats};
 
-use crate::cmd::calview;
+use crate::cmd::calview::{self, Heat};
 use crate::config::Palace;
 
-/// Heatmap-glyph meanings for the byte scale, shared by every `plc stat` layout.
-const BYTE_LEGEND: &str = "·  empty   ░ <1KB   ▒ 1–4KB   ▓ 4–10KB   █ >10KB";
+/// The byte scale, shared by every `plc stat` heatmap.
+const BYTES: Heat = Heat {
+    level: calendar::level,
+    labels: ["empty", "<1KB", "1–4KB", "4–10KB", ">10KB"],
+};
 
 #[derive(Args)]
 pub struct StatArgs {
@@ -124,7 +127,7 @@ fn render_month(root: &Path, y: i32, m: u32, today: NaiveDate) -> String {
     let sizes = month_sizes(root, y, m);
     let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
     let st = calendar::month_stats(&sizes, cutoff);
-    let mut out = calview::month_grid(y, m, &sizes, calendar::symbol, BYTE_LEGEND);
+    let mut out = calview::month_grid(y, m, &sizes, &BYTES);
     push_month_stats(&mut out, &st, y, m);
     out
 }
@@ -170,8 +173,8 @@ fn render_year(root: &Path, y: i32, layout: &str, plot: bool, today: NaiveDate) 
         calview::plot_year(y, &sizes, "bytes", &bytes)
     } else {
         match layout {
-            "git" => calview::year_git(y, &sizes, calendar::symbol, BYTE_LEGEND),
-            "tab" => calview::year_tab(y, &sizes, today, calendar::symbol, BYTE_LEGEND, &bytes),
+            "git" => calview::year_git(y, &sizes, &BYTES),
+            "tab" => calview::year_tab(y, &sizes, today, &BYTES, &bytes),
             other => return Err(format!("plc stat: unknown layout: {other} (expected git|tab)")),
         }
     };

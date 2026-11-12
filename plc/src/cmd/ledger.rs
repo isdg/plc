@@ -27,7 +27,7 @@ use clap::{Args, Subcommand};
 use plc_core::calendar::{self, MonthStats, YearStats};
 use plc_core::ledger::{self, Filter, Kind, Measure, State, Transaction};
 
-use crate::cmd::calview;
+use crate::cmd::calview::{self, Heat};
 use crate::config::Palace;
 use crate::note;
 use crate::settings::Settings;
@@ -86,8 +86,11 @@ impl Decl {
     }
 }
 
-/// Heatmap-glyph meanings for the money scale (fixed buckets, currency units).
-const MONEY_LEGEND: &str = "·  empty   ░ <5   ▒ <20   ▓ <50   █ ≥50";
+/// The money scale for heatmaps (fixed buckets, currency units).
+const MONEY: Heat = Heat {
+    level: calendar::money_level,
+    labels: ["empty", "<5", "<20", "<50", "≥50"],
+};
 
 #[derive(Args)]
 pub struct LedgerArgs {
@@ -453,7 +456,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             let mut out = if args.plot {
                 calview::plot_month(y, m, &vals, unit, &money)
             } else {
-                calview::month_grid(y, m, &vals, calendar::money_symbol, MONEY_LEGEND)
+                calview::month_grid(y, m, &vals, &MONEY)
             };
             push_month_spend(&mut out, &st, y, m, unit, &cur);
             Ok(out)
@@ -466,15 +469,8 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
                 calview::plot_year(y, &vals, unit, &money)
             } else {
                 match args.layout.as_str() {
-                    "git" => calview::year_git(y, &vals, calendar::money_symbol, MONEY_LEGEND),
-                    "tab" => calview::year_tab(
-                        y,
-                        &vals,
-                        today,
-                        calendar::money_symbol,
-                        MONEY_LEGEND,
-                        &money,
-                    ),
+                    "git" => calview::year_git(y, &vals, &MONEY),
+                    "tab" => calview::year_tab(y, &vals, today, &MONEY, &money),
                     o => {
                         return Err(format!(
                             "ledger stat: unknown layout: {o} (expected git|tab)"

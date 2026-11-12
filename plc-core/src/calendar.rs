@@ -24,27 +24,27 @@ pub fn size_of(path: &Path) -> u64 {
     fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-/// Heatmap glyph for a byte size, by the same buckets as the script's `sym()`:
-/// `·` empty · `░` <1KB · `▒` 1–4KB · `▓` 4–10KB · `█` >10KB.
-pub fn symbol(bytes: u64) -> char {
+/// Heatmap level 0–4 for a byte size, by the same buckets as the script's
+/// `sym()`: empty · <1KB · 1–4KB · 4–10KB · >10KB.
+pub fn level(bytes: u64) -> u8 {
     match bytes {
-        0 => '·',
-        b if b < 1024 => '░',
-        b if b < 4096 => '▒',
-        b if b < 10240 => '▓',
-        _ => '█',
+        0 => 0,
+        b if b < 1024 => 1,
+        b if b < 4096 => 2,
+        b if b < 10240 => 3,
+        _ => 4,
     }
 }
 
-/// Heatmap glyph for a day's money amount (minor units), by fixed buckets:
-/// `·` empty · `░` <5 · `▒` <20 · `▓` <50 · `█` ≥50 (major currency units).
-pub fn money_symbol(minor: u64) -> char {
+/// Heatmap level 0–4 for a day's money amount (minor units), by fixed
+/// buckets: empty · <5 · <20 · <50 · ≥50 (major currency units).
+pub fn money_level(minor: u64) -> u8 {
     match minor {
-        0 => '·',
-        v if v < 500 => '░',
-        v if v < 2000 => '▒',
-        v if v < 5000 => '▓',
-        _ => '█',
+        0 => 0,
+        v if v < 500 => 1,
+        v if v < 2000 => 2,
+        v if v < 5000 => 3,
+        _ => 4,
     }
 }
 
@@ -329,26 +329,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn symbol_buckets() {
-        assert_eq!(symbol(0), '·');
-        assert_eq!(symbol(1), '░');
-        assert_eq!(symbol(1023), '░');
-        assert_eq!(symbol(1024), '▒');
-        assert_eq!(symbol(4095), '▒');
-        assert_eq!(symbol(4096), '▓');
-        assert_eq!(symbol(10239), '▓');
-        assert_eq!(symbol(10240), '█');
+    fn level_buckets() {
+        assert_eq!(level(0), 0);
+        assert_eq!(level(1), 1);
+        assert_eq!(level(1023), 1);
+        assert_eq!(level(1024), 2);
+        assert_eq!(level(4095), 2);
+        assert_eq!(level(4096), 3);
+        assert_eq!(level(10239), 3);
+        assert_eq!(level(10240), 4);
     }
 
     #[test]
-    fn money_symbol_buckets() {
-        assert_eq!(money_symbol(0), '·');
-        assert_eq!(money_symbol(499), '░'); // <5.00
-        assert_eq!(money_symbol(500), '▒'); // 5.00
-        assert_eq!(money_symbol(1999), '▒');
-        assert_eq!(money_symbol(2000), '▓'); // 20.00
-        assert_eq!(money_symbol(4999), '▓');
-        assert_eq!(money_symbol(5000), '█'); // 50.00
+    fn money_level_buckets() {
+        assert_eq!(money_level(0), 0);
+        assert_eq!(money_level(499), 1); // <5.00
+        assert_eq!(money_level(500), 2); // 5.00
+        assert_eq!(money_level(1999), 2);
+        assert_eq!(money_level(2000), 3); // 20.00
+        assert_eq!(money_level(4999), 3);
+        assert_eq!(money_level(5000), 4); // 50.00
         assert_eq!(fmt_money(1250, "EUR"), "12.50 EUR");
     }
 

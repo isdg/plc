@@ -2,8 +2,8 @@
 //!
 //! These lay out per-day values (`values[i]` = day `i + 1` for a month, or
 //! day-of-year for a year) as an ASCII heatmap or line chart. They are
-//! *value-agnostic*: the heatmap glyph comes from an injected `symbol` fn, the
-//! legend meanings from `legend`, and any numeric axis/summary label from a
+//! *value-agnostic*: a [`Heat`] buckets each value into a level and names the
+//! levels in the legend, and any numeric axis/summary label comes from a
 //! `fmt` closure — so `plc stat` passes byte formatters and `plc ledger stat`
 //! passes money formatters, sharing one layout. Callers build the `values`
 //! (from file sizes, or from ledger spend) and append their own stats block.
@@ -13,9 +13,40 @@ use std::fmt::Write as _;
 use chrono::{Datelike, NaiveDate};
 use plc_core::calendar;
 
+const SHADES: [char; 5] = ['·', '░', '▒', '▓', '█'];
+
+/// A heatmap's scale: `level` buckets a value into 0 (empty) to 4, and
+/// `labels` names each level in the legend.
+pub struct Heat {
+    pub level: fn(u64) -> u8,
+    pub labels: [&'static str; 5],
+}
+
+impl Heat {
+    fn push_cell(&self, out: &mut String, v: u64) {
+        push_level(out, (self.level)(v));
+    }
+
+    fn legend(&self) -> String {
+        let mut out = String::new();
+        for (l, label) in (0u8..).zip(self.labels) {
+            if l > 0 {
+                out.push_str("   ");
+            }
+            push_level(&mut out, l);
+            let _ = write!(out, " {label}");
+        }
+        out
+    }
+}
+
+fn push_level(out: &mut String, level: u8) {
+    out.push(SHADES[usize::from(level.min(4))]);
+}
+
 /// One month as the title, a Mo–Su grid with a heatmap row under each week, and
 /// the legend. `values` holds every day of the month (`len == last day`).
-pub fn month_grid(y: i32, m: u32, values: &[u64], symbol: fn(u64) -> char, legend: &str) -> String {
+pub fn month_grid(y: i32, m: u32, values: &[u64], heat: &Heat) -> String {
     let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month is valid");
     let first_dow = first.weekday().number_from_monday(); // Mon=1 … Sun=7
     let last_day = values.len() as u32;
@@ -47,18 +78,18 @@ pub fn month_grid(y: i32, m: u32, values: &[u64], symbol: fn(u64) -> char, legen
                 out.push_str("   ");
             } else {
                 out.push_str("  ");
-                out.push(symbol(values[(d - 1) as usize]));
+                heat.push_cell(&mut out, values[(d - 1) as usize]);
             }
         }
         out.push('\n');
     }
-    let _ = writeln!(out, "\n     Legend:  {legend}");
+    let _ = writeln!(out, "\n     Legend:  {}", heat.legend());
     out
 }
 
 /// GitHub-style 7×weeks contribution grid for a year, with month labels above.
 /// `values` is indexed by day-of-year − 1.
-pub fn year_git(y: i32, values: &[u64], symbol: fn(u64) -> char, legend: &str) -> String {
+pub fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
     let total_days = values.len() as u32;
     let jan1_dow = NaiveDate::from_ymd_opt(y, 1, 1).unwrap().weekday().number_from_monday();
     let pad = jan1_dow - 1;
@@ -100,13 +131,13 @@ pub fn year_git(y: i32, values: &[u64], symbol: fn(u64) -> char, legend: &str) -
             if d_idx == 0 {
                 out.push_str("  ");
             } else {
-                out.push(symbol(values[(d_idx - 1) as usize]));
+                heat.push_cell(&mut out, values[(d_idx - 1) as usize]);
                 out.push(' ');
             }
         }
         out.push('\n');
     }
-    let _ = writeln!(out, "\n  Legend:  {legend}");
+    let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
     out
 }
 
@@ -116,8 +147,7 @@ pub fn year_tab(
     y: i32,
     values: &[u64],
     today: NaiveDate,
-    symbol: fn(u64) -> char,
-    legend: &str,
+    heat: &Heat,
     fmt: &dyn Fn(u64) -> String,
 ) -> String {
     let mut out = String::new();
@@ -139,7 +169,7 @@ pub fn year_tab(
         let mut mdays = 0u32;
         for d in 1..=last {
             let v = values[off + (d - 1) as usize];
-            strip.push(symbol(v));
+            heat.push_cell(&mut strip, v);
             strip.push(' ');
             if v > 0 {
                 mtotal += v;
@@ -150,7 +180,7 @@ pub fn year_tab(
         let _ = writeln!(out, "{b}  {label}  {strip}{pad}   {mdays:2}/{last}   {}{r}", fmt(mtotal));
         off += last as usize;
     }
-    let _ = writeln!(out, "\n  Legend:  {legend}");
+    let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
     out
 }
 
