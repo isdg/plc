@@ -85,19 +85,6 @@ impl Heat {
         }
     }
 
-    /// What follows a day in the year layouts: a square has side bearings of
-    /// its own, while shade glyphs would run together without a space.
-    fn gap(&self) -> &'static str {
-        match self.cells {
-            Cells::Shade => " ",
-            Cells::Color => "",
-        }
-    }
-
-    fn cols(&self) -> u32 {
-        1 + self.gap().len() as u32
-    }
-
     fn legend(&self) -> String {
         let mut out = String::new();
         for (l, label) in (0u8..).zip(self.labels) {
@@ -175,14 +162,12 @@ pub fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
 
     let mut out = String::new();
     out.push('\n');
-    let cols = heat.cols();
-    let indent = 39 * cols as usize / 2;
-    let _ = writeln!(out, "{}{y} activity", " ".repeat(indent));
+    let _ = writeln!(out, "{}{y} activity", " ".repeat(39));
 
     out.push_str("      ");
     let mut printed = 0u32;
     for m in 1..=12 {
-        let target = month_col[m as usize] * cols;
+        let target = month_col[m as usize] * 2;
         while printed < target {
             out.push(' ');
             printed += 1;
@@ -198,10 +183,10 @@ pub fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
         for c in 0..weeks {
             let d_idx = grid[(c * 7 + row as u32) as usize];
             if d_idx == 0 {
-                out.push_str(&" ".repeat(cols as usize));
+                out.push_str("  ");
             } else {
                 heat.push_cell(&mut out, values[(d_idx - 1) as usize]);
-                out.push_str(heat.gap());
+                out.push(' ');
             }
         }
         out.push('\n');
@@ -221,8 +206,7 @@ pub fn year_tab(
 ) -> String {
     let mut out = String::new();
     out.push('\n');
-    let cols = heat.cols() as usize;
-    let _ = writeln!(out, "{}{y} activity", " ".repeat(30 * cols / 2));
+    let _ = writeln!(out, "{}{y} activity", " ".repeat(30));
     out.push('\n');
 
     let mut off = 0usize;
@@ -241,13 +225,13 @@ pub fn year_tab(
         for d in 1..=last {
             let v = values[off + (d - 1) as usize];
             heat.push_cell(&mut strip, v);
-            strip.push_str(heat.gap());
+            strip.push(' ');
             if v > 0 {
                 mtotal += v;
                 mdays += 1;
             }
         }
-        let pad = " ".repeat((31 - last as usize) * cols);
+        let pad = " ".repeat(62usize.saturating_sub(last as usize * 2));
         let _ = writeln!(out, "{b}  {label}  {strip}{pad}   {mdays:2}/{last}   {}{r}", fmt(mtotal));
         off += last as usize;
     }
@@ -395,48 +379,6 @@ mod tests {
                 let n = out.chars().filter(|ch| glyphs.contains(*ch));
                 assert_eq!(n.count(), 365 + 5, "{c:?}");
             }
-        }
-    }
-
-    /// Display columns of `line`, its escapes dropped.
-    fn width(line: &str) -> usize {
-        let mut n = 0;
-        let mut esc = false;
-        for ch in line.chars() {
-            match (esc, ch) {
-                (false, '\x1b') => esc = true,
-                (true, 'm') => esc = false,
-                (false, _) => n += 1,
-                _ => {}
-            }
-        }
-        n
-    }
-
-    #[test]
-    fn git_rows_take_one_column_a_week_in_colour() {
-        let values = vec![0u64; 365];
-        for (c, cols) in [(Cells::Shade, 2), (Cells::Color, 1)] {
-            let out = year_git(2025, &values, &HEAT.with_cells(c));
-            let row = out.lines().find(|l| l.starts_with("  Mo")).unwrap();
-            assert_eq!(width(row), 6 + 53 * cols, "{c:?}");
-        }
-    }
-
-    #[test]
-    fn tab_summaries_line_up_in_both_cells() {
-        let values = vec![0u64; 365];
-        let fmt = |v: u64| v.to_string();
-        let today = day(2025, 3, 9);
-        for c in [Cells::Shade, Cells::Color] {
-            let out = year_tab(2025, &values, today, &HEAT.with_cells(c), &fmt);
-            let at: Vec<usize> = out
-                .lines()
-                .filter(|l| l.contains('/'))
-                .map(|l| width(&l[..l.find('/').unwrap()]))
-                .collect();
-            assert_eq!(at.len(), 12, "{c:?}");
-            assert!(at.iter().all(|&a| a == at[0]), "{c:?}: {at:?}");
         }
     }
 
