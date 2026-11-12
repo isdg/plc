@@ -11,11 +11,17 @@ use std::path::{Path, PathBuf};
 /// The settings file's name inside the plc home.
 pub const RC: &str = ".plcrc";
 
+/// Where `plc add` puts notes when `.plcrc` sets no `notes`, under the vault.
+pub const NOTES: &str = "notes";
+
 /// The parsed `.plcrc`. A missing file loads as [`Rc::default`].
 #[derive(Debug, Default, PartialEq)]
 pub struct Rc {
     /// The default vault, with a leading `~` expanded.
     pub vault: Option<PathBuf>,
+    /// The directory `plc add` writes to, with a leading `~` expanded; a
+    /// relative path is under the vault (see [`Rc::notes_dir`]).
+    pub notes: Option<PathBuf>,
     /// Keys plc does not recognise, as written; commands ignore them.
     pub unknown: Vec<String>,
 }
@@ -104,10 +110,28 @@ impl Rc {
             match (key.trim(), value.trim()) {
                 ("vault", "") => rc.vault = None,
                 ("vault", v) => rc.vault = Some(expand_tilde(v)),
+                ("notes", "") => rc.notes = None,
+                ("notes", v) => rc.notes = Some(expand_tilde(v)),
                 (k, _) => rc.unknown.push(k.to_string()),
             }
         }
         rc
+    }
+
+    /// The directory `plc add` writes to: `notes` as is when absolute, else
+    /// under the vault `root`, which is only resolved then. Unset, it is
+    /// `<root>/notes`.
+    pub fn notes_dir<F>(&self, root: F) -> Result<PathBuf, String>
+    where
+        F: FnOnce() -> Result<PathBuf, String>,
+    {
+        match &self.notes {
+            Some(dir) if dir.is_absolute() => Ok(dir.clone()),
+            dir => {
+                let rel = dir.as_deref().unwrap_or(Path::new(NOTES));
+                Ok(root()?.join(rel))
+            }
+        }
     }
 
     /// Whether it still sets `PALACE_DIR`, the key a legacy `~/.plcrc` used
@@ -186,6 +210,32 @@ mod tests {
         assert_eq!(rc.vault, Some(PathBuf::from("/w")));
         assert_eq!(rc.unknown, ["foo", "bare"]);
         assert_eq!(Rc::parse("vault = /v\nvault =\n").vault, None);
+    }
+
+    #[test]
+    fn parse_notes() {
+        let rc = Rc::parse("notes = inbox\n");
+        assert_eq!(rc.notes, Some(PathBuf::from("inbox")));
+        assert!(rc.unknown.is_empty());
+        assert_eq!(Rc::parse("notes = /n\nnotes =\n").notes, None);
+    }
+
+    #[test]
+    fn notes_dir_cases() {
+        let root = || Ok(PathBuf::from("/v"));
+        let dir = |text| Rc::parse(text).notes_dir(root).unwrap();
+        assert_eq!(dir(""), PathBuf::from("/v/notes"));
+        assert_eq!(dir("notes = inbox/q"), PathBuf::from("/v/inbox/q"));
+        assert_eq!(dir("notes = /abs"), PathBuf::from("/abs"));
+    }
+
+    #[test]
+    fn absolute_notes_need_no_vault() {
+        let no_vault = || Err("no vault".to_string());
+        let rc = Rc::parse("notes = /abs");
+        assert_eq!(rc.notes_dir(no_vault), Ok(PathBuf::from("/abs")));
+        let rc = Rc::parse("notes = rel");
+        assert_eq!(rc.notes_dir(no_vault), Err("no vault".to_string()));
     }
 
     #[test]

@@ -37,7 +37,8 @@ fn reports_an_unmoved_legacy_rc() {
 fn quiet_when_the_rc_is_clean() {
     let home = Home::new("doctor-clean");
     home.vault("palace");
-    home.write(".plc/.plcrc", "# defaults\nvault = ~/palace\n");
+    let rc = "# defaults\nvault = ~/palace\nnotes = inbox\n";
+    home.write(".plc/.plcrc", rc);
     let out = ok(&mut home.plc(&["doctor"]));
     assert!(!out.contains("  ! "), "{out}");
 }
