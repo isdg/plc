@@ -117,6 +117,23 @@ fn vault_is_the_default_key() {
 }
 
 #[test]
+fn cats_lists_the_dirs_in_notes() {
+    let home = Home::new("cats");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    let err = fail(&mut home.plc(&["config", "cats"]));
+    assert!(err.starts_with("config: read ~/palace/notes: "), "{err}");
+
+    for dir in ["triage", "me", ".git"] {
+        fs::create_dir_all(home.path(&format!("palace/notes/{dir}"))).unwrap();
+    }
+    home.write("palace/notes/loose.md", "x\n");
+    let want = [home.path("palace/notes/me"), home.path("palace/notes/triage")]
+        .map(|p| display(&p))
+        .join("\n");
+    assert_eq!(ok(&mut home.plc(&["config", "cats"])), want);
+}
+
+#[test]
 fn set_and_rc_flags_are_gone() {
     let home = Home::new("set");
     for flag in ["--set", "--rc"] {

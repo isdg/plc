@@ -6,6 +6,7 @@
 
 use std::env;
 use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::rc::{self, expand_tilde, Rc};
@@ -31,6 +32,25 @@ pub fn palace_dir() -> Result<PathBuf, String> {
             }
         }
     }
+}
+
+/// The categories of the vault at `root`: the directories in `notes/`,
+/// sorted, leaving out hidden ones.
+pub fn categories(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let notes = root.join("notes");
+    let read = |e| format!("read {}: {e}", rc::tilde(&notes));
+    let mut dirs = Vec::new();
+    for entry in fs::read_dir(&notes).map_err(read)? {
+        let path = entry.map_err(read)?.path();
+        let hidden = path
+            .file_name()
+            .is_some_and(|n| n.as_encoded_bytes().starts_with(b"."));
+        if !hidden && path.is_dir() {
+            dirs.push(path);
+        }
+    }
+    dirs.sort();
+    Ok(dirs)
 }
 
 fn no_vault(path: &Path, rc: &Rc) -> String {

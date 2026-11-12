@@ -26,7 +26,7 @@ are shared across every note type — including ledgers.
     plc stat       calendar heatmap + stats of daily-note activity
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
-    plc config     show the resolved vault (or notes dir) location
+    plc config     show the vault, notes dir or category paths
 
 
 -------------------------------------------------------------------------------
@@ -358,18 +358,21 @@ ids, migrating the pointer). It's built to grow into a whole-vault checkup
 PLC CONFIG
 -------------------------------------------------------------------------------
 
-Usage: plc config [vault|notes]
+Usage: plc config [vault|notes|cats]
 
-Print a resolved location with a leading ~ expanded, without validating
+Print resolved locations with a leading ~ expanded, without validating
 the vault:
 
     vault    (default) $PALACE_DIR, else vault in .plcrc. It fails, saying
              how to set one, when neither is.
     notes    the dir plc add writes to: notes in .plcrc, under the vault
              unless absolute, else <vault>/notes/triage
+    cats     the categories, one per line: every dir in <vault>/notes but
+             hidden ones, sorted. mkdir one there to add a category.
 
     > plc config
     > cd "$(plc config notes)"
+    > cd "$(plc config cats | fzf)"
 
 -------------------------------------------------------------------------------
 HOW IT RUNS DAY TO DAY
