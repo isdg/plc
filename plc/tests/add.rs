@@ -13,11 +13,11 @@ fn stamped(text: &str) -> bool {
 }
 
 #[test]
-fn defaults_to_vault_notes() {
+fn defaults_to_triage() {
     let home = Home::new("add-default");
     home.vault("palace");
     home.write(".plc/.plcrc", "vault = ~/palace\n");
-    let dir = home.path("palace/notes");
+    let dir = home.path("palace/notes/triage");
     assert_eq!(ok(&mut home.plc(&["config", "notes"])), display(&dir));
 
     let out = ok(&mut home.plc(&["add", "idea"]));
@@ -77,7 +77,7 @@ fn an_existing_note_is_kept() {
     let home = Home::new("add-keep");
     home.vault("palace");
     home.write(".plc/.plcrc", "vault = ~/palace\n");
-    let note = home.write("palace/notes/idea.md", "mine\n");
+    let note = home.write("palace/notes/triage/idea.md", "mine\n");
     assert_eq!(ok(&mut home.plc(&["note", "idea"])), display(&note));
     assert_eq!(fs::read_to_string(&note).unwrap(), "mine\n");
 }
@@ -88,7 +88,7 @@ fn global_tag_and_postfix_apply() {
     home.vault("palace");
     home.write(".plc/.plcrc", "vault = ~/palace\n");
     let out = ok(&mut home.plc(&["add", "idea", "-t", "review", "-x", "v2"]));
-    assert!(out.ends_with("/notes/idea+v2.md"), "{out}");
+    assert!(out.ends_with("/notes/triage/idea+v2.md"), "{out}");
     let text = fs::read_to_string(&out).unwrap();
     assert!(text.starts_with("isg 20"), "{text:?}");
     assert!(text.ends_with("\n\n[[review]]\n"), "{text:?}");

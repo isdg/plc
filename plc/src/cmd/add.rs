@@ -1,8 +1,8 @@
 //! `plc add NAME` — create a stamped note in the notes directory.
 //!
 //! The directory is `plc config notes`: `notes` in `.plcrc`, under the vault
-//! unless absolute, else `<vault>/notes`. The note is seeded with only the
-//! stamp line; an existing note is kept and its path printed.
+//! unless absolute, else `<vault>/notes/triage`. The note is seeded with only
+//! the stamp line; an existing note is kept and its path printed.
 
 use std::path::{MAIN_SEPARATOR, PathBuf};
 

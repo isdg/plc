@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 /// The settings file's name inside the plc home.
 pub const RC: &str = ".plcrc";
 
-/// Where `plc add` puts notes when `.plcrc` sets no `notes`, under the vault.
-pub const NOTES: &str = "notes";
+/// Where `plc add` puts notes when `.plcrc` sets no `notes`: the triage
+/// category, under the vault.
+pub const NOTES: &str = "notes/triage";
 
 /// The parsed `.plcrc`. A missing file loads as [`Rc::default`].
 #[derive(Debug, Default, PartialEq)]
@@ -120,7 +121,7 @@ impl Rc {
 
     /// The directory `plc add` writes to: `notes` as is when absolute, else
     /// under the vault `root`, which is only resolved then. Unset, it is
-    /// `<root>/notes`.
+    /// `<root>/notes/triage`.
     pub fn notes_dir<F>(&self, root: F) -> Result<PathBuf, String>
     where
         F: FnOnce() -> Result<PathBuf, String>,
@@ -224,7 +225,7 @@ mod tests {
     fn notes_dir_cases() {
         let root = || Ok(PathBuf::from("/v"));
         let dir = |text| Rc::parse(text).notes_dir(root).unwrap();
-        assert_eq!(dir(""), PathBuf::from("/v/notes"));
+        assert_eq!(dir(""), PathBuf::from("/v/notes/triage"));
         assert_eq!(dir("notes = inbox/q"), PathBuf::from("/v/inbox/q"));
         assert_eq!(dir("notes = /abs"), PathBuf::from("/abs"));
     }

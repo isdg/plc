@@ -28,6 +28,7 @@ const DIRS: &[&str] = &[
     "notes/me/writing/murmur",
     "notes/projects",
     "notes/sensible",
+    "notes/triage",
     "templates",
 ];
 

@@ -20,7 +20,8 @@ pub struct ConfigArgs {
 enum Key {
     /// The vault root: $PALACE_DIR, else `vault` in .plcrc.
     Vault,
-    /// Where `plc add` puts notes: `notes` in .plcrc, else <vault>/notes.
+    /// Where `plc add` puts notes: `notes` in .plcrc, else
+    /// <vault>/notes/triage.
     Notes,
 }
 

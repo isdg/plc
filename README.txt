@@ -59,7 +59,7 @@ Build and install the binary, point it at a vault, and scaffold it:
     > mkdir -p ~/.plc
     > echo 'vault = ~/vault' > ~/.plc/.plcrc
     > plc init
-    init: ~/vault — 9 created, 0 already present (9 dirs)
+    init: ~/vault — 10 created, 0 already present (10 dirs)
 
 plc finds the vault in $PALACE_DIR when it is set and non-empty, else in
 the vault key of ~/.plc/.plcrc (a leading ~ is expanded in either), then
@@ -82,7 +82,7 @@ reports) any key but these:
 
     vault = ~/vault           # the vault, unless $PALACE_DIR is set
     notes = notes/inbox       # where plc add puts notes: under the vault
-                              # when relative (default: notes)
+                              # when relative (default: notes/triage)
 
 plc never writes .plcrc, so it can be a link into your dotfiles. What travels with a vault
 stays inside it, in <vault>/.plc/ (see THE VAULT).
@@ -134,6 +134,7 @@ alone):
         me/writing/murmur/    # plc murmur
         projects/
         sensible/
+        triage/               # plc add
       templates/
 
 Every note plc creates (when the file is absent or empty) is seeded with a
@@ -210,11 +211,12 @@ Usage: plc add NAME        (aliases: plc note, plc no)
 
 Create or resolve NAME.md (.md appended if missing) in the notes dir, the
 one plc config notes prints: notes in .plcrc, under the vault unless
-absolute, else <vault>/notes. A new note holds just the stamp line (and
-a [[TAG]] line with -t); an existing one is kept. NAME is one file name,
-so a / in it is refused. Unless notes is absolute, the vault must validate.
+absolute, else <vault>/notes/triage. A new note holds just the stamp line
+(and a [[TAG]] line with -t); an existing one is kept. NAME is one file
+name, so a / in it is refused. Unless notes is absolute, the vault must
+validate.
 
-    > plc add idea              # <vault>/notes/idea.md
+    > plc add idea              # <vault>/notes/triage/idea.md
     > plc no idea -t review     # the same, with a [[review]] line
 
 -------------------------------------------------------------------------------
@@ -364,7 +366,7 @@ the vault:
     vault    (default) $PALACE_DIR, else vault in .plcrc. It fails, saying
              how to set one, when neither is.
     notes    the dir plc add writes to: notes in .plcrc, under the vault
-             unless absolute, else <vault>/notes
+             unless absolute, else <vault>/notes/triage
 
     > plc config
     > cd "$(plc config notes)"
