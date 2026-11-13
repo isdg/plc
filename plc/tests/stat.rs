@@ -5,7 +5,7 @@ mod common;
 
 use std::process::Command;
 
-use common::{ok, Home};
+use common::{fail, ok, Home};
 
 const ESC: char = '\x1b';
 
@@ -91,4 +91,23 @@ fn days_count_the_bytes_under_each_stamp_across_the_vault() {
     assert!(out.contains(legend), "{out}");
     assert!(out.contains("Days written : 2 / 30"), "{out}");
     assert!(out.contains("Total        : 400 B"), "{out}");
+}
+
+#[test]
+fn day_lists_the_notes_written_on_it() {
+    let home = with_vault("stat-day");
+    let weekly = "isg 2026-11-02 08:00:00 +0100\n\n[[weekly]]\nabc\n\
+                  isg 2026-11-05 08:00:00 +0100\nde\n";
+    home.write("palace/notes/w.md", weekly);
+    home.write("palace/notes/x.md", "isg 2026-11-05 09:00:00 +0100\nxyzw\n");
+    let day = |d: &str| ok(&mut home.plc(&["stat", "--day", "26", "11", d]));
+    let want = "
+  Thu 2026-11-05   6 B in 2 notes
+
+        4 B  notes/x.md
+        2 B  notes/w.md";
+    assert_eq!(day("05"), want);
+    assert_eq!(day("06"), "\n  Fri 2026-11-06   nothing written");
+    let mut both = home.plc(&["stat", "--day", "26", "11", "05", "-m", "3"]);
+    fail(&mut both);
 }

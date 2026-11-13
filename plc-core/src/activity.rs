@@ -4,33 +4,52 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDate};
 
 use crate::ledger::TIMESTAMP_FMT;
 use crate::notes;
 
-/// Bytes written per day in the notes of the vault at `root`, leaving out
+/// The notes of the vault at `root` with their bytes by day, leaving out
 /// `+ledger` notes: their lines are transactions, which `plc ledger stat`
 /// counts. Text above a note's first stamp is dated by its file name, else
 /// its mtime.
-pub fn by_day(root: &Path) -> HashMap<NaiveDate, u64> {
-    let mut days = HashMap::new();
+pub fn per_note(
+    root: &Path,
+) -> impl Iterator<Item = (PathBuf, Vec<(NaiveDate, u64)>)> {
     let ledger =
         |p: &Path| notes::stem(p).is_some_and(|s| s.ends_with("+ledger"));
-    for path in notes::walk(root).filter(|p| !ledger(p)) {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
+    notes::walk(root).filter(move |p| !ledger(p)).filter_map(|path| {
+        let text = fs::read_to_string(&path).ok()?;
         let undated = notes::stem(&path)
             .and_then(notes::name_date)
             .or_else(|| modified(&path));
-        for (day, bytes) in note_bytes(&text, undated) {
-            *days.entry(day).or_default() += bytes;
-        }
+        let bytes = note_bytes(&text, undated);
+        Some((path, bytes))
+    })
+}
+
+/// Bytes written per day across the vault at `root` (see [`per_note`]).
+pub fn by_day(root: &Path) -> HashMap<NaiveDate, u64> {
+    let mut days = HashMap::new();
+    for (day, bytes) in per_note(root).flat_map(|(_, bytes)| bytes) {
+        *days.entry(day).or_default() += bytes;
     }
     days
+}
+
+/// The notes written on `day` with the bytes each, most first.
+pub fn on_day(root: &Path, day: NaiveDate) -> Vec<(PathBuf, u64)> {
+    let mut found: Vec<(PathBuf, u64)> = per_note(root)
+        .filter_map(|(path, bytes)| {
+            let on = bytes.iter().filter(|(d, _)| *d == day);
+            let total: u64 = on.map(|(_, b)| b).sum();
+            (total > 0).then_some((path, total))
+        })
+        .collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    found
 }
 
 fn modified(path: &Path) -> Option<NaiveDate> {
@@ -187,6 +206,15 @@ mod tests {
         assert_eq!(days.get(&day(9)), Some(&1));
         assert_eq!(days.get(&day(10)), Some(&(3 + 2 + 2)));
         assert_eq!(days.len(), 2);
+
+        let on = on_day(&root, day(10));
+        let want = [
+            (daily.join("2026-11-10.md"), 3),
+            (daily.join("2026-11-10T21.00.md"), 2),
+            (root.join("w.md"), 2),
+        ];
+        assert_eq!(on, want);
+        assert!(on_day(&root, day(11)).is_empty());
         fs::remove_dir_all(&root).ok();
     }
 }

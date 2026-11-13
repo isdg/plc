@@ -294,6 +294,7 @@ PLC STAT
 
 Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
                 [--layout git|tab] [-p] [--color auto|always|never]
+       plc stat --day YY MM DD
 
 Render the bytes written each day as a calendar heatmap, with a stats
 block. A whole month or year is shown, so a positional day is discarded.
@@ -324,6 +325,8 @@ per month with the days written and total; a month gets a day axis.
     -y, --year Y          year, 2- or 4-digit (default: current)
     --layout git|tab      GitHub-style grid (default) or rows of days
     -p, --plot            replace the heatmap with an ASCII line chart
+    --day YY MM DD        list the notes written that day instead, most
+                          bytes first, with the bytes each
     --color WHEN          colour the glyphs: auto (on a terminal, the
                           default), always, or never
 

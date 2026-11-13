@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::path::Path;
 
 use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
@@ -66,12 +67,23 @@ pub struct StatArgs {
     /// Replace the heatmap with an ASCII line chart.
     #[arg(short = 'p', long = "plot")]
     plot: bool,
+    /// List the notes written on one day, and the bytes each, instead.
+    #[arg(
+        long,
+        num_args = 3,
+        value_names = ["YY", "MM", "DD"],
+        conflicts_with_all = ["positional", "month", "year", "plot"]
+    )]
+    day: Option<Vec<String>>,
     #[command(flatten)]
     color: ColorArgs,
 }
 
 pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
     let today = Local::now().date_naive();
+    if let Some(day) = &args.day {
+        return Ok(render_day(palace.root(), parse_day(day)?));
+    }
     let (year, month) = resolve(args.month, args.year, &args.positional, today)?;
     let days = activity::by_day(palace.root());
     let values = calendar::year_values(&days, year);
@@ -144,6 +156,36 @@ fn parse_year(s: &str) -> Result<i32, String> {
     let n: i32 = t.parse().map_err(|_| format!("plc stat: invalid year: {s}"))?;
     let two_digit = t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit());
     Ok(if two_digit { 2000 + n } else { n })
+}
+
+/// Parse `--day YY MM DD`, the year as [`parse_year`] takes it.
+fn parse_day(fields: &[String]) -> Result<NaiveDate, String> {
+    let [y, m, d] = fields else {
+        return Err("plc stat: --day takes YY MM DD".to_string());
+    };
+    let invalid = || format!("plc stat: invalid day: {y} {m} {d}");
+    let d: u32 = d.trim().parse().map_err(|_| invalid())?;
+    NaiveDate::from_ymd_opt(parse_year(y)?, parse_month(m)?, d)
+        .ok_or_else(invalid)
+}
+
+/// The notes written on `day`, most bytes first, under their total.
+fn render_day(root: &Path, day: NaiveDate) -> String {
+    let notes = activity::on_day(root, day);
+    let total: u64 = notes.iter().map(|(_, bytes)| bytes).sum();
+    let date = day.format("%a %Y-%m-%d");
+    let size = calendar::fmt_bytes(total);
+    let mut out = match notes.len() {
+        0 => format!("\n  {date}   nothing written\n"),
+        1 => format!("\n  {date}   {size} in 1 note\n\n"),
+        n => format!("\n  {date}   {size} in {n} notes\n\n"),
+    };
+    for (path, bytes) in &notes {
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let bytes = calendar::fmt_bytes(*bytes);
+        let _ = writeln!(out, "  {bytes:>9}  {}", rel.display());
+    }
+    out
 }
 
 /// Render one month: the heatmap in `layout`, then the byte Stats block.
@@ -281,6 +323,17 @@ mod tests {
 
     fn none() -> Option<String> {
         None
+    }
+
+    #[test]
+    fn day_is_yy_mm_dd() {
+        let day = |f: [&str; 3]| parse_day(&f.map(String::from));
+        let want = NaiveDate::from_ymd_opt(2025, 9, 27).unwrap();
+        assert_eq!(day(["25", "09", "27"]), Ok(want));
+        assert_eq!(day(["2025", "9", "27"]), Ok(want));
+        let err = day(["26", "02", "30"]).unwrap_err();
+        assert_eq!(err, "plc stat: invalid day: 26 02 30");
+        assert!(day(["26", "13", "01"]).is_err());
     }
 
     #[test]
