@@ -4,11 +4,37 @@
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use walkdir::{DirEntry, WalkDir};
+
+use crate::ledger::TIMESTAMP_FMT;
 
 /// The note name of `path`: its file name without `.md`, if it has one.
 pub fn stem(path: &Path) -> Option<&str> {
     path.file_name()?.to_str()?.strip_suffix(".md")
+}
+
+/// The time a stamp line holds: `<signature> <date> <time> <zone>`, the
+/// line plc seeds every note with.
+pub fn stamp(line: &str) -> Option<DateTime<FixedOffset>> {
+    let mut tokens = line.split_whitespace().skip(1);
+    let stamp = [tokens.next()?, tokens.next()?, tokens.next()?].join(" ");
+    DateTime::parse_from_str(&stamp, TIMESTAMP_FMT).ok()
+}
+
+/// The first `YYYY-MM-DD` in a note name, as daily notes and shots have.
+pub fn name_date(name: &str) -> Option<NaiveDate> {
+    let bytes = name.as_bytes();
+    (0..bytes.len().saturating_sub(9)).find_map(|i| {
+        let s = name.get(i..i + 10)?;
+        let shaped = s.bytes().enumerate().all(|(k, b)| match k {
+            4 | 7 => b == b'-',
+            _ => b.is_ascii_digit(),
+        });
+        shaped
+            .then(|| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+            .flatten()
+    })
 }
 
 fn hidden(name: &OsStr) -> bool {

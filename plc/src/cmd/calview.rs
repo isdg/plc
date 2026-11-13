@@ -57,22 +57,18 @@ impl ColorArgs {
     }
 }
 
-/// A heatmap's scale: `level` buckets a value into 0 (empty) to 4, `labels`
-/// names each level in the legend, and `cells` draws the levels.
-#[derive(Clone, Copy)]
+/// A heatmap's scale: levels 1–3 end at `bounds` (see [`calendar::level`]),
+/// `labels` names each level in the legend, and `cells` draws the levels.
+#[derive(Clone)]
 pub struct Heat {
-    pub level: fn(u64) -> u8,
-    pub labels: [&'static str; 5],
+    pub bounds: [u64; 3],
+    pub labels: [String; 5],
     pub cells: Cells,
 }
 
 impl Heat {
-    pub fn with_cells(self, cells: Cells) -> Heat {
-        Heat { cells, ..self }
-    }
-
     fn push_cell(&self, out: &mut String, v: u64) {
-        self.push_level(out, (self.level)(v));
+        self.push_level(out, calendar::level(v, &self.bounds));
     }
 
     fn push_level(&self, out: &mut String, level: u8) {
@@ -88,7 +84,7 @@ impl Heat {
 
     fn legend(&self) -> String {
         let mut out = String::new();
-        for (l, label) in (0u8..).zip(self.labels) {
+        for (l, label) in (0u8..).zip(&self.labels) {
             if l > 0 {
                 out.push_str("   ");
             }
@@ -395,11 +391,17 @@ fn push_day_axis(out: &mut String, last_day: u32) {
 mod tests {
     use super::*;
 
-    const HEAT: Heat = Heat {
-        level: calendar::level,
-        labels: ["0", "1", "2", "3", "4"],
-        cells: Cells::Shade,
-    };
+    fn heat() -> Heat {
+        heat_in(Cells::Shade)
+    }
+
+    fn heat_in(cells: Cells) -> Heat {
+        Heat {
+            bounds: [1023, 4095, 10239],
+            labels: ["0", "1", "2", "3", "4"].map(String::from),
+            cells,
+        }
+    }
     const GREY: &str = "\x1b[90m·\x1b[39m";
     const GREEN: &str = "\x1b[32m█\x1b[39m";
 
@@ -417,19 +419,19 @@ mod tests {
 
     #[test]
     fn shade_cells_are_glyphs() {
-        assert_eq!(cells(&HEAT, &[0, 2048, 20_000]), "·▒█");
+        assert_eq!(cells(&heat(), &[0, 2048, 20_000]), "·▒█");
     }
 
     #[test]
     fn color_cells_are_shades_from_grey_to_green() {
-        let heat = HEAT.with_cells(Cells::Color);
+        let heat = heat_in(Cells::Color);
         assert_eq!(cells(&heat, &[0, 20_000]), format!("{GREY}{GREEN}"));
     }
 
     #[test]
     fn legend_draws_each_level_as_a_cell() {
-        assert_eq!(HEAT.legend(), "· 0   ░ 1   ▒ 2   ▓ 3   █ 4");
-        let legend = HEAT.with_cells(Cells::Color).legend();
+        assert_eq!(heat().legend(), "· 0   ░ 1   ▒ 2   ▓ 3   █ 4");
+        let legend = heat_in(Cells::Color).legend();
         assert!(legend.starts_with(&format!("{GREY} 0   ")));
         assert!(legend.ends_with(&format!("{GREEN} 4")));
     }
@@ -439,7 +441,7 @@ mod tests {
         let values = vec![0u64; 365];
         let fmt = |v: u64| v.to_string();
         for c in [Cells::Shade, Cells::Color] {
-            let heat = HEAT.with_cells(c);
+            let heat = heat_in(c);
             let git = year_git(2025, &values, &heat);
             let tab = year_tab(2025, &values, day(2025, 3, 9), &heat, &fmt);
             for out in [git, tab] {
@@ -451,7 +453,7 @@ mod tests {
 
     #[test]
     fn month_git_heads_each_week_with_its_first_day() {
-        let out = month_git(2026, 11, &[0; 30], &HEAT);
+        let out = month_git(2026, 11, &[0; 30], &heat());
         let head = out.lines().nth(2).unwrap();
         let head: Vec<&str> = head.split_whitespace().collect();
         assert_eq!(head, ["1", "8", "15", "22", "29"]);
@@ -460,7 +462,7 @@ mod tests {
         assert!(rows[1].starts_with("  Mo   · "), "{out}");
         assert!(rows[6].starts_with("  Sa   · "), "{out}");
 
-        let out = month_git(2026, 12, &[0; 31], &HEAT);
+        let out = month_git(2026, 12, &[0; 31], &heat());
         let rows: Vec<&str> = out.lines().skip(3).take(7).collect();
         assert!(rows[0].starts_with("  Su      · "), "{out}");
         assert!(rows[2].starts_with("  Tu   · "), "{out}");
@@ -472,7 +474,7 @@ mod tests {
         for (y, m, last) in [(2026, 2, 28), (2026, 11, 30), (2024, 12, 31)] {
             let values = vec![0u64; last];
             for c in [Cells::Shade, Cells::Color] {
-                let heat = HEAT.with_cells(c);
+                let heat = heat_in(c);
                 for layout in [Layout::Git, Layout::Tab] {
                     let out = month(y, m, &values, layout, &heat, &fmt);
                     let n = out
@@ -489,7 +491,7 @@ mod tests {
         let mut values = vec![0u64; 30];
         values[3] = 7;
         values[9] = 5;
-        let out = month_tab(2026, 11, &values, &HEAT, &|v| format!("{v}B"));
+        let out = month_tab(2026, 11, &values, &heat(), &|v| format!("{v}B"));
         let row = out.lines().find(|l| l.starts_with("  Nov  ")).unwrap();
         assert!(row.ends_with(" 2/30   12B"), "{row}");
         let axis: Vec<&str> = out
@@ -506,7 +508,7 @@ mod tests {
         let values = vec![0u64; 365];
         let fmt = |v: u64| v.to_string();
         let today = day(2025, 3, 9);
-        let tab = |c| year_tab(2025, &values, today, &HEAT.with_cells(c), &fmt);
+        let tab = |c| year_tab(2025, &values, today, &heat_in(c), &fmt);
         assert!(!tab(Cells::Shade).contains('\x1b'));
         let color = tab(Cells::Color);
         let bold: Vec<_> =

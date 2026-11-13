@@ -1,7 +1,8 @@
 //! `plc stat` — render daily-note activity as an ASCII calendar heatmap + stats.
 //!
-//! Ports `_calendar.sh` (the `pst` script): scores each daily note by its file
-//! size, lays out a Sunday-first month grid with a size heatmap, and prints a
+//! Ports `_calendar.sh` (the `pst` script): scores each day by the bytes
+//! written that day across the vault (see [`activity`]), lays out a
+//! Sunday-first month grid with a heatmap scaled to the year, and prints a
 //! Stats block (days written, total, avg, streaks, best day). Year and plot
 //! modes land in follow-up commits; their flags are defined now so the CLI
 //! surface stays stable.
@@ -9,22 +10,34 @@
 //! Note: the scope flag is `--type` (long-only) because the global `-t` is
 //! taken by `--tag`; the `pst` wrapper maps a bare `-t` back to `--type`.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::path::Path;
 
 use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
+use plc_core::activity;
 use plc_core::calendar::{self, MonthStats, YearStats};
 
 use crate::cmd::calview::{self, Cells, ColorArgs, Heat, Layout};
 use crate::config::Palace;
 
-/// The byte scale, shared by every `plc stat` heatmap.
-const BYTES: Heat = Heat {
-    level: calendar::level,
-    labels: ["empty", "<1KB", "1–4KB", "4–10KB", ">10KB"],
-    cells: Cells::Shade,
-};
+/// Bytes written per day.
+type Days = HashMap<NaiveDate, u64>;
+
+/// The byte scale for a year's `values`: its levels end at the quartiles of
+/// the year's written days, as GitHub scales contributions.
+fn bytes_heat(values: &[u64], cells: Cells) -> Heat {
+    let bounds = calendar::quartiles(values);
+    let [q1, q2, q3] = bounds.map(calendar::fmt_bytes);
+    let labels = [
+        "empty".to_string(),
+        format!("≤{q1}"),
+        format!("≤{q2}"),
+        format!("≤{q3}"),
+        format!(">{q3}"),
+    ];
+    Heat { bounds, labels, cells }
+}
 
 #[derive(Args)]
 pub struct StatArgs {
@@ -60,17 +73,20 @@ pub struct StatArgs {
 pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
     let today = Local::now().date_naive();
     let (year, month) = resolve(args.month, args.year, &args.positional, today)?;
-    let heat = BYTES.with_cells(args.color.cells());
+    let days = activity::by_day(palace.root());
+    let values = calendar::year_values(&days, year);
+    let heat = bytes_heat(&values, args.color.cells());
+    let layout = args.layout;
 
     match args.scope.as_str() {
-        "month" if args.plot => Ok(render_plot_month(palace.root(), year, month, today)),
+        "month" if args.plot => {
+            Ok(render_plot_month(&days, year, month, today))
+        }
         "month" => {
-            let root = palace.root();
-            Ok(render_month(root, year, month, today, args.layout, &heat))
+            Ok(render_month(&days, year, month, today, layout, &heat))
         }
         "year" => {
-            let root = palace.root();
-            Ok(render_year(root, year, args.layout, args.plot, today, &heat))
+            Ok(render_year(&values, year, layout, args.plot, today, &heat))
         }
         other => Err(format!("plc stat: unknown type: {other} (expected month|year)")),
     }
@@ -130,23 +146,16 @@ fn parse_year(s: &str) -> Result<i32, String> {
     Ok(if two_digit { 2000 + n } else { n })
 }
 
-/// Per-day byte sizes for a month (`sizes[d-1]` = day `d`).
-fn month_sizes(root: &Path, y: i32, m: u32) -> Vec<u64> {
-    (1..=calendar::last_day_of_month(y, m))
-        .map(|d| calendar::size_of(&calendar::day_path(root, y, m, d)))
-        .collect()
-}
-
 /// Render one month: the heatmap in `layout`, then the byte Stats block.
 fn render_month(
-    root: &Path,
+    days: &Days,
     y: i32,
     m: u32,
     today: NaiveDate,
     layout: Layout,
     heat: &Heat,
 ) -> String {
-    let sizes = month_sizes(root, y, m);
+    let sizes = calendar::month_values(days, y, m);
     let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
     let st = calendar::month_stats(&sizes, cutoff);
     let bytes = |b| calendar::fmt_bytes(b);
@@ -190,22 +199,21 @@ fn push_month_stats(out: &mut String, st: &MonthStats, y: i32, m: u32) {
 /// Render a whole year: the chosen heatmap layout followed by the year Stats
 /// block. Ports the `year` arm of the script's dispatch.
 fn render_year(
-    root: &Path,
+    sizes: &[u64],
     y: i32,
     layout: Layout,
     plot: bool,
     today: NaiveDate,
     heat: &Heat,
 ) -> String {
-    let sizes = calendar::collect_year(root, y);
     let bytes = |b| calendar::fmt_bytes(b);
     let mut out = if plot {
-        calview::plot_year(y, &sizes, "bytes", &bytes)
+        calview::plot_year(y, sizes, "bytes", &bytes)
     } else {
-        calview::year(y, &sizes, today, layout, heat, &bytes)
+        calview::year(y, sizes, today, layout, heat, &bytes)
     };
     let cutoff = (y == today.year()).then_some(today.ordinal());
-    let st = calendar::year_stats(&sizes, y, cutoff);
+    let st = calendar::year_stats(sizes, y, cutoff);
     push_year_stats(&mut out, &st, y);
     out
 }
@@ -254,8 +262,8 @@ fn push_year_stats(out: &mut String, st: &YearStats, y: i32) {
 
 /// Plot layout for a month: the shared line chart of daily bytes, then the
 /// month Stats block.
-fn render_plot_month(root: &Path, y: i32, m: u32, today: NaiveDate) -> String {
-    let sizes = month_sizes(root, y, m);
+fn render_plot_month(days: &Days, y: i32, m: u32, today: NaiveDate) -> String {
+    let sizes = calendar::month_values(days, y, m);
     let mut out = calview::plot_month(y, m, &sizes, "bytes", &|b| calendar::fmt_bytes(b));
     let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
     let st = calendar::month_stats(&sizes, cutoff);

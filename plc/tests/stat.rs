@@ -71,3 +71,24 @@ fn an_unknown_layout_is_refused() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("possible values: git, tab"), "{err}");
 }
+
+#[test]
+fn days_count_the_bytes_under_each_stamp_across_the_vault() {
+    let home = with_vault("stat-stamps");
+    let a = "a".repeat(100);
+    let b = "b".repeat(300);
+    let weekly = format!(
+        "isg 2026-11-02 08:00:00 +0100\n\n[[weekly]]\n{a}\n\
+         isg 2026-11-05 08:00:00 +0100\n{b}\n"
+    );
+    home.write("palace/notes/w.md", &weekly);
+    let daily = "notes/management/daily/2026/11/2026-11-10.md";
+    home.write(&format!("palace/{daily}"), "isg 2026-11-10 09:00:00 +0100\n");
+    let args = ["stat", "-m", "11", "-y", "2026", "--layout", "tab"];
+    let out = ok(plc(&home, &args).arg("--color=never"));
+    let legend =
+        "· empty   ░ ≤100 B   ▒ ≤100 B   ▓ ≤300 B   █ >300 B";
+    assert!(out.contains(legend), "{out}");
+    assert!(out.contains("Days written : 2 / 30"), "{out}");
+    assert!(out.contains("Total        : 400 B"), "{out}");
+}

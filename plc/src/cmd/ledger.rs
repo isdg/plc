@@ -87,11 +87,14 @@ impl Decl {
 }
 
 /// The money scale for heatmaps (fixed buckets, currency units).
-const MONEY: Heat = Heat {
-    level: calendar::money_level,
-    labels: ["empty", "<5", "<20", "<50", "≥50"],
-    cells: Cells::Shade,
-};
+fn money_heat(cells: Cells) -> Heat {
+    let labels = ["empty", "<5", "<20", "<50", "≥50"];
+    Heat {
+        bounds: calendar::MONEY_BOUNDS,
+        labels: labels.map(String::from),
+        cells,
+    }
+}
 
 #[derive(Args)]
 pub struct LedgerArgs {
@@ -455,7 +458,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
     let cur = resolved_currency(palace);
     let root = palace.root().join("notes/management/daily");
     let money = |minor| calendar::fmt_money(minor, &cur);
-    let heat = MONEY.with_cells(args.color.cells());
+    let heat = money_heat(args.color.cells());
 
     match args.scope.as_str() {
         "month" => {

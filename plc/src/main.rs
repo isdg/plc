@@ -55,7 +55,7 @@ enum Cmd {
     /// Plain-text double-entry ledger: append transactions to `+ledger` notes.
     #[command(visible_alias = "lr")]
     Ledger(cmd::ledger::LedgerArgs),
-    /// Render daily-note activity as a calendar heatmap + stats.
+    /// Render the bytes written each day as a calendar heatmap + stats.
     Stat(cmd::stat::StatArgs),
     /// Manage free-form murmur notes.
     Murmur(cmd::murmur::MurmurArgs),

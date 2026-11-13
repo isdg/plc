@@ -1,52 +1,38 @@
-//! Daily-note activity stats — the data behind `plc stat` (ports `_calendar.sh`).
+//! Activity stats — the math behind `plc stat` (ports `_calendar.sh`).
 //!
-//! Every daily note is scored by its on-disk **byte size** (never its content);
-//! sizes drive a heatmap glyph and a set of streak/total statistics. The math
-//! here is pure given a slice of sizes, so month/year aggregation is unit-tested
-//! without touching the filesystem. Date/weekday layout lives in the `plc stat`
-//! command (which already depends on chrono); this crate stays chrono-free.
+//! A day's value is what [`crate::activity`] counts, the bytes written that
+//! day; values drive a heatmap level and a set of streak/total statistics.
+//! The math here is pure given a slice of values, so month/year aggregation
+//! is unit-tested without touching the filesystem.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 
-/// Path to the daily note for `y-m-d` under a vault `root`:
-/// `notes/management/daily/<YYYY>/<MM>/<YYYY>-<MM>-<DD>.md` — the same string
-/// the `daily` and `fin` commands build.
-pub fn day_path(root: &Path, y: i32, m: u32, d: u32) -> PathBuf {
-    root.join(format!(
-        "notes/management/daily/{y:04}/{m:02}/{y:04}-{m:02}-{d:02}.md"
-    ))
-}
+use chrono::NaiveDate;
 
-/// On-disk byte size of `path`, or 0 when it is missing/unreadable (a missing
-/// daily note counts as an empty day). Ports `stat -f%z … || echo 0`.
-pub fn size_of(path: &Path) -> u64 {
-    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
-}
-
-/// Heatmap level 0–4 for a byte size, by the same buckets as the script's
-/// `sym()`: empty · <1KB · 1–4KB · 4–10KB · >10KB.
-pub fn level(bytes: u64) -> u8 {
-    match bytes {
+/// Heatmap level 0–4 of `v` on a scale whose levels 1–3 end at `bounds`:
+/// 0 is empty, and anything over the last bound is 4.
+pub fn level(v: u64, bounds: &[u64; 3]) -> u8 {
+    match v {
         0 => 0,
-        b if b < 1024 => 1,
-        b if b < 4096 => 2,
-        b if b < 10240 => 3,
-        _ => 4,
+        v => 1 + bounds.iter().filter(|&&b| v > b).count() as u8,
     }
 }
 
-/// Heatmap level 0–4 for a day's money amount (minor units), by fixed
-/// buckets: empty · <5 · <20 · <50 · ≥50 (major currency units).
-pub fn money_level(minor: u64) -> u8 {
-    match minor {
+/// Bounds that cut the non-zero `values` into quarters, as GitHub scales
+/// contributions: the nearest-rank 25th, 50th and 75th percentiles.
+pub fn quartiles(values: &[u64]) -> [u64; 3] {
+    let mut written: Vec<u64> =
+        values.iter().copied().filter(|&v| v > 0).collect();
+    written.sort_unstable();
+    let rank = |k: usize| match written.len() {
         0 => 0,
-        v if v < 500 => 1,
-        v if v < 2000 => 2,
-        v if v < 5000 => 3,
-        _ => 4,
-    }
+        n => written[(k * n).div_ceil(4) - 1],
+    };
+    [rank(1), rank(2), rank(3)]
 }
+
+/// The money scale's bounds, in minor units: <5 · <20 · <50 · ≥50.
+pub const MONEY_BOUNDS: [u64; 3] = [499, 1999, 4999];
 
 /// A money amount (minor units) as `<whole>.<cc> <CUR>`, e.g. `12.50 EUR`.
 pub fn fmt_money(minor: u64, currency: &str) -> String {
@@ -148,16 +134,21 @@ pub fn month_stats(sizes: &[u64], cutoff: Option<u32>) -> MonthStats {
     }
 }
 
-/// Per-day byte sizes for a whole year, indexed by day-of-year − 1 (Jan 1 = 0),
-/// walking Jan→Dec. Length is the number of days in `y`. Ports `collect_year`.
-pub fn collect_year(root: &Path, y: i32) -> Vec<u64> {
-    let mut sizes = Vec::with_capacity(366);
-    for m in 1..=12 {
-        for d in 1..=last_day_of_month(y, m) {
-            sizes.push(size_of(&day_path(root, y, m, d)));
-        }
-    }
-    sizes
+/// Month `m`'s values from per-day `days`, day `d` at index `d - 1`.
+pub fn month_values(
+    days: &HashMap<NaiveDate, u64>,
+    y: i32,
+    m: u32,
+) -> Vec<u64> {
+    (1..=last_day_of_month(y, m))
+        .map(|d| NaiveDate::from_ymd_opt(y, m, d).and_then(|at| days.get(&at)))
+        .map(|v| v.copied().unwrap_or(0))
+        .collect()
+}
+
+/// Year `y`'s values from per-day `days`, by day-of-year − 1.
+pub fn year_values(days: &HashMap<NaiveDate, u64>, y: i32) -> Vec<u64> {
+    (1..=12).flat_map(|m| month_values(days, y, m)).collect()
 }
 
 /// Aggregate statistics over one year's day-of-year sizes (`collect_year`).
@@ -329,27 +320,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn level_buckets() {
-        assert_eq!(level(0), 0);
-        assert_eq!(level(1), 1);
-        assert_eq!(level(1023), 1);
-        assert_eq!(level(1024), 2);
-        assert_eq!(level(4095), 2);
-        assert_eq!(level(4096), 3);
-        assert_eq!(level(10239), 3);
-        assert_eq!(level(10240), 4);
+    fn levels_end_at_their_bounds() {
+        let b = [10, 20, 30];
+        let got: Vec<u8> = [0, 1, 10, 11, 20, 21, 30, 31, 999]
+            .iter()
+            .map(|&v| level(v, &b))
+            .collect();
+        assert_eq!(got, [0, 1, 1, 2, 2, 3, 3, 4, 4]);
     }
 
     #[test]
-    fn money_level_buckets() {
-        assert_eq!(money_level(0), 0);
-        assert_eq!(money_level(499), 1); // <5.00
-        assert_eq!(money_level(500), 2); // 5.00
-        assert_eq!(money_level(1999), 2);
-        assert_eq!(money_level(2000), 3); // 20.00
-        assert_eq!(money_level(4999), 3);
-        assert_eq!(money_level(5000), 4); // 50.00
+    fn quartiles_rank_the_written_days() {
+        assert_eq!(quartiles(&[0, 0]), [0, 0, 0]);
+        assert_eq!(quartiles(&[0, 7, 0]), [7, 7, 7]);
+        let days = [0, 40, 10, 0, 30, 20, 80, 60, 50, 70];
+        assert_eq!(quartiles(&days), [20, 40, 60]);
+    }
+
+    #[test]
+    fn money_bounds_and_format() {
+        let money = |v| level(v, &MONEY_BOUNDS);
+        assert_eq!([money(0), money(499), money(500)], [0, 1, 2]);
+        assert_eq!([money(1999), money(2000), money(5000)], [2, 3, 4]);
         assert_eq!(fmt_money(1250, "EUR"), "12.50 EUR");
+    }
+
+    #[test]
+    fn values_by_day_of_month_and_year() {
+        let at = |m, d| NaiveDate::from_ymd_opt(2024, m, d).unwrap();
+        let days = HashMap::from([(at(2, 29), 5), (at(12, 31), 9)]);
+        let feb = month_values(&days, 2024, 2);
+        assert_eq!((feb.len(), feb[28]), (29, 5));
+        let year = year_values(&days, 2024);
+        assert_eq!((year.len(), year[59], year[365]), (366, 5, 9));
+        assert_eq!(year.iter().sum::<u64>(), 14);
     }
 
     #[test]

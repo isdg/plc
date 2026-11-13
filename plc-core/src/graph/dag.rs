@@ -6,10 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Local, TimeZone};
 
 use super::layout::{layout, Line};
-use crate::ledger::TIMESTAMP_FMT;
 use crate::{fold_name, links, normalize_target, notes};
 
 /// A note as read from disk: what [`Dag::build`] needs of it.
@@ -185,11 +184,11 @@ fn link_name(inner: &str) -> &str {
 /// its first line's `<signature> <stamp>`, else a date in its file name
 /// (local midnight), else its mtime.
 fn written(s: &Source) -> (i64, String) {
-    if let Some(at) = stamp(&s.text) {
+    if let Some(at) = s.text.lines().next().and_then(notes::stamp) {
         return (at.timestamp(), at.format("%Y-%m-%d").to_string());
     }
     let name = notes::stem(&s.path).unwrap_or_default();
-    if let Some(day) = name_date(name) {
+    if let Some(day) = notes::name_date(name) {
         let midnight = day.and_hms_opt(0, 0, 0).unwrap_or_default();
         let at = Local
             .from_local_datetime(&midnight)
@@ -199,27 +198,6 @@ fn written(s: &Source) -> (i64, String) {
     }
     let at: DateTime<Local> = s.modified.into();
     (at.timestamp(), at.format("%Y-%m-%d").to_string())
-}
-
-fn stamp(text: &str) -> Option<DateTime<chrono::FixedOffset>> {
-    let first = text.lines().next()?;
-    let mut tokens = first.split_whitespace().skip(1);
-    let stamp = [tokens.next()?, tokens.next()?, tokens.next()?].join(" ");
-    DateTime::parse_from_str(&stamp, TIMESTAMP_FMT).ok()
-}
-
-fn name_date(name: &str) -> Option<NaiveDate> {
-    let bytes = name.as_bytes();
-    (0..bytes.len().saturating_sub(9)).find_map(|i| {
-        let s = name.get(i..i + 10)?;
-        let shaped = s.bytes().enumerate().all(|(k, b)| match k {
-            4 | 7 => b == b'-',
-            _ => b.is_ascii_digit(),
-        });
-        shaped
-            .then(|| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-            .flatten()
-    })
 }
 
 #[cfg(test)]

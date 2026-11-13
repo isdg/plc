@@ -23,7 +23,7 @@ are shared across every note type — including ledgers.
     plc isg        enumerated writing notes (isg0, isg1, …)
     plc orphans    list notes with no links in or out
     plc graph      draw the notes and their links like git log --graph
-    plc stat       calendar heatmap + stats of daily-note activity
+    plc stat       calendar heatmap + stats of the bytes written
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
     plc config     show the vault, notes dir or category paths
@@ -295,12 +295,23 @@ PLC STAT
 Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
                 [--layout git|tab] [-p] [--color auto|always|never]
 
-Render daily-note activity (by note byte-size) as a calendar heatmap, with
-a stats block. A whole month or year is shown, so a positional day is
-discarded. Each day is a shade glyph (· ░ ▒ ▓ █); on a terminal, empty
-days are bright black and the rest green, the terminal's own ANSI colours,
-so the heatmap follows its light and dark themes. Piped, or with NO_COLOR
-set, the glyphs are plain. plc ledger stat takes --color and --layout too.
+Render the bytes written each day as a calendar heatmap, with a stats
+block. A whole month or year is shown, so a positional day is discarded.
+
+Every note in the vault counts, outside hidden directories. Its text
+belongs to the stamp above it, "<signature> YYYY-MM-DD HH:MM:SS +ZZZZ":
+the header plc seeds, or one written inline, so a note kept for weeks
+counts on each day it grew. Stamps, the signature that starts a stamp
+line, and the seeded header count for nothing, so a note only opened is
+an empty day. Text above every stamp is dated by the note's file name,
+else its mtime.
+
+The levels end at the quartiles of the year's written days, as GitHub
+scales contributions, and the legend shows them. Each day is a shade
+glyph (· ░ ▒ ▓ █); on a terminal, empty days are bright black and the
+rest green, the terminal's own ANSI colours, so the heatmap follows its
+light and dark themes. Piped, or with NO_COLOR set, the glyphs are
+plain. plc ledger stat takes --color and --layout too.
 
 Both scopes have two layouts. git draws a row per weekday and a column
 per week, as GitHub does; a month heads each week's column with its
