@@ -298,7 +298,8 @@ Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
 Render the bytes written each day as a calendar heatmap, with a stats
 block. A whole month or year is shown, so a positional day is discarded.
 
-Every note in the vault counts, outside hidden directories. Its text
+Every note in the vault counts but those in hidden directories and the
++ledger notes, whose transactions plc ledger stat counts. A note's text
 belongs to the stamp above it, "<signature> YYYY-MM-DD HH:MM:SS +ZZZZ":
 the header plc seeds, or one written inline, so a note kept for weeks
 counts on each day it grew. Stamps, the signature that starts a stamp

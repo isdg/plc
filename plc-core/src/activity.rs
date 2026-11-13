@@ -11,11 +11,15 @@ use chrono::{DateTime, FixedOffset, Local, NaiveDate};
 use crate::ledger::TIMESTAMP_FMT;
 use crate::notes;
 
-/// Bytes written per day in every note of the vault at `root`. Text above
-/// a note's first stamp is dated by its file name, else its mtime.
+/// Bytes written per day in the notes of the vault at `root`, leaving out
+/// `+ledger` notes: their lines are transactions, which `plc ledger stat`
+/// counts. Text above a note's first stamp is dated by its file name, else
+/// its mtime.
 pub fn by_day(root: &Path) -> HashMap<NaiveDate, u64> {
     let mut days = HashMap::new();
-    for path in notes::walk(root) {
+    let ledger =
+        |p: &Path| notes::stem(p).is_some_and(|s| s.ends_with("+ledger"));
+    for path in notes::walk(root).filter(|p| !ledger(p)) {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
@@ -176,6 +180,8 @@ mod tests {
                       isg 2026-11-10 08:00:00 +0100\nyy\n";
         fs::write(root.join("w.md"), weekly).unwrap();
         fs::write(root.join(".plc/hidden.md"), "zzzz").unwrap();
+        let spend = "$ 2026-11-11 12:00:00 +0100 * 4.50 coffee -a cash\n";
+        fs::write(daily.join("2026-11+ledger.md"), spend).unwrap();
 
         let days = by_day(&root);
         assert_eq!(days.get(&day(9)), Some(&1));
