@@ -17,13 +17,12 @@ use clap::{Args, ColorChoice, ValueEnum};
 use plc_core::calendar;
 
 const SHADES: [char; 5] = ['·', '░', '▒', '▓', '█'];
-/// Seven eighths of the line high, so stacked rows keep a gap between them.
-const BLOCK: char = '▇';
-/// GitHub's contribution ramp, grey to bright green, in xterm-256 colours.
-const GREENS: [u8; 5] = [237, 22, 28, 34, 40];
+/// Bright black, then green: ANSI slots the terminal's theme defines, so
+/// the cells follow its light and dark palettes.
+const FG: [u8; 5] = [90, 32, 32, 32, 32];
 
-/// How a heatmap draws a day: a shade glyph per level, or the same block
-/// in a colour per level, the way GitHub draws contributions.
+/// How a heatmap draws a day: a shade glyph per level, plain or in the
+/// terminal's own colours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cells {
     Shade,
@@ -32,8 +31,8 @@ pub enum Cells {
 
 #[derive(Args)]
 pub struct ColorArgs {
-    /// Draw heatmap days as coloured blocks: `auto` (when stdout is a
-    /// terminal), `always`, or `never` (shade glyphs instead).
+    /// Colour the heatmap's glyphs: `auto` (when stdout is a terminal),
+    /// `always`, or `never`.
     #[arg(long, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
     color: ColorChoice,
 }
@@ -82,7 +81,7 @@ impl Heat {
             Cells::Shade => out.push(SHADES[l]),
             // 39 resets the foreground alone, so a bold row stays bold.
             Cells::Color => {
-                let _ = write!(out, "\x1b[38;5;{}m{BLOCK}\x1b[39m", GREENS[l]);
+                let _ = write!(out, "\x1b[{}m{}\x1b[39m", FG[l], SHADES[l]);
             }
         }
     }
@@ -401,8 +400,8 @@ mod tests {
         labels: ["0", "1", "2", "3", "4"],
         cells: Cells::Shade,
     };
-    const GREY: &str = "\x1b[38;5;237m▇\x1b[39m";
-    const GREEN: &str = "\x1b[38;5;40m▇\x1b[39m";
+    const GREY: &str = "\x1b[90m·\x1b[39m";
+    const GREEN: &str = "\x1b[32m█\x1b[39m";
 
     fn cells(heat: &Heat, values: &[u64]) -> String {
         let mut out = String::new();
@@ -422,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn color_cells_are_blocks_from_grey_to_green() {
+    fn color_cells_are_shades_from_grey_to_green() {
         let heat = HEAT.with_cells(Cells::Color);
         assert_eq!(cells(&heat, &[0, 20_000]), format!("{GREY}{GREEN}"));
     }
@@ -439,12 +438,12 @@ mod tests {
     fn year_layouts_draw_every_day_and_legend_level() {
         let values = vec![0u64; 365];
         let fmt = |v: u64| v.to_string();
-        for (c, glyphs) in [(Cells::Shade, "·░▒▓█"), (Cells::Color, "▇")] {
+        for c in [Cells::Shade, Cells::Color] {
             let heat = HEAT.with_cells(c);
             let git = year_git(2025, &values, &heat);
             let tab = year_tab(2025, &values, day(2025, 3, 9), &heat, &fmt);
             for out in [git, tab] {
-                let n = out.chars().filter(|ch| glyphs.contains(*ch));
+                let n = out.chars().filter(|ch| SHADES.contains(ch));
                 assert_eq!(n.count(), 365 + 5, "{c:?}");
             }
         }
@@ -478,7 +477,7 @@ mod tests {
                     let out = month(y, m, &values, layout, &heat, &fmt);
                     let n = out
                         .chars()
-                        .filter(|ch| SHADES.contains(ch) || *ch == BLOCK);
+                        .filter(|ch| SHADES.contains(ch));
                     assert_eq!(n.count(), last + 5, "{y}-{m} {layout:?} {c:?}");
                 }
             }
