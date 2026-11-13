@@ -109,7 +109,8 @@ pub enum Layout {
     Tab,
 }
 
-const DOW: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+/// Sunday first, as GitHub draws it, so the weekend frames the week.
+const DOW: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 /// One month in `layout`. `values` holds every day of the month.
 pub fn month(
@@ -145,7 +146,7 @@ pub fn year(
 /// its first day in the month, so every date stays readable.
 fn month_git(y: i32, m: u32, values: &[u64], heat: &Heat) -> String {
     let first = NaiveDate::from_ymd_opt(y, m, 1).expect("first-of-month");
-    let pad = first.weekday().num_days_from_monday() as usize;
+    let pad = first.weekday().num_days_from_sunday() as usize;
     let weeks = (pad + values.len()).div_ceil(7);
 
     let mut out = String::new();
@@ -200,8 +201,8 @@ fn month_tab(
 /// `values` is indexed by day-of-year − 1.
 fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
     let total_days = values.len() as u32;
-    let jan1_dow = NaiveDate::from_ymd_opt(y, 1, 1).unwrap().weekday().number_from_monday();
-    let pad = jan1_dow - 1;
+    let jan1 = NaiveDate::from_ymd_opt(y, 1, 1).unwrap();
+    let pad = jan1.weekday().num_days_from_sunday();
     let weeks = (pad + total_days).div_ceil(7);
 
     let mut grid = vec![0u32; (weeks * 7) as usize];
@@ -232,8 +233,7 @@ fn year_git(y: i32, values: &[u64], heat: &Heat) -> String {
     }
     out.push('\n');
 
-    let dow = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-    for (row, label) in dow.iter().enumerate() {
+    for (row, label) in DOW.iter().enumerate() {
         let _ = write!(out, "  {label}  ");
         for c in 0..weeks {
             let d_idx = grid[(c * 7 + row as u32) as usize];
@@ -455,11 +455,16 @@ mod tests {
         let out = month_git(2026, 11, &[0; 30], &HEAT);
         let head = out.lines().nth(2).unwrap();
         let head: Vec<&str> = head.split_whitespace().collect();
-        assert_eq!(head, ["1", "2", "9", "16", "23", "30"]);
-        let rows: Vec<&str> =
-            out.lines().filter(|l| l.starts_with("  ")).collect();
-        assert!(rows.iter().any(|l| l.starts_with("  Su   · ")));
-        assert!(rows.iter().any(|l| l.starts_with("  Mo      · ")));
+        assert_eq!(head, ["1", "8", "15", "22", "29"]);
+        let rows: Vec<&str> = out.lines().skip(3).take(7).collect();
+        assert!(rows[0].starts_with("  Su   · "), "{out}");
+        assert!(rows[1].starts_with("  Mo   · "), "{out}");
+        assert!(rows[6].starts_with("  Sa   · "), "{out}");
+
+        let out = month_git(2026, 12, &[0; 31], &HEAT);
+        let rows: Vec<&str> = out.lines().skip(3).take(7).collect();
+        assert!(rows[0].starts_with("  Su      · "), "{out}");
+        assert!(rows[2].starts_with("  Tu   · "), "{out}");
     }
 
     #[test]

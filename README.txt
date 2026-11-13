@@ -304,7 +304,7 @@ shade glyphs (· ░ ▒ ▓ █) instead. plc ledger stat takes --color and
 
 Both scopes have two layouts. git draws a row per weekday and a column
 per week, as GitHub does; a month heads each week's column with its
-first day, so the Tuesday under 9 is the 10th. tab draws a row of days
+first day, so the Tuesday under 8 is the 10th. tab draws a row of days
 per month with the days written and total; a month gets a day axis.
 
     --type month|year     scope (default: month)

@@ -1,7 +1,7 @@
 //! `plc stat` — render daily-note activity as an ASCII calendar heatmap + stats.
 //!
 //! Ports `_calendar.sh` (the `pst` script): scores each daily note by its file
-//! size, lays out a Monday-first month grid with a size heatmap, and prints a
+//! size, lays out a Sunday-first month grid with a size heatmap, and prints a
 //! Stats block (days written, total, avg, streaks, best day). Year and plot
 //! modes land in follow-up commits; their flags are defined now so the CLI
 //! surface stays stable.
