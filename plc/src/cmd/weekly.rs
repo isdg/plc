@@ -1,15 +1,19 @@
-//! `plc weekly` — create/resolve this ISO week's note and print its path.
+//! `plc weekly` — create/resolve this week's note and print its path.
 //!
 //! Ports `weekly()` (palace.zsh): target
-//! `notes/management/weekly/<%G-W%V>.md`, tag `weekly`.
+//! `notes/management/weekly/<YYYY-Www>.md`, tag `weekly`, the week starting
+//! on `week_start` (see [`week::label`]).
 
 use chrono::Local;
+use plc_core::{rc, week};
 
 use crate::config::Palace;
 use crate::note;
 
 pub fn run(palace: &Palace) -> Result<String, String> {
-    let filename = Local::now().format("%G-W%V.md").to_string();
+    let start = rc::week_start().map_err(|e| format!("weekly: {e}"))?;
+    let today = Local::now().date_naive();
+    let filename = format!("{}.md", week::label(today, start));
     note::ensure_note(
         palace.root(),
         "notes/management/weekly",

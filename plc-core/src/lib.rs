@@ -10,6 +10,7 @@ pub mod orphans;
 pub mod rc;
 pub mod settings;
 pub mod vault;
+pub mod week;
 
 use std::collections::HashSet;
 use std::ops::Range;

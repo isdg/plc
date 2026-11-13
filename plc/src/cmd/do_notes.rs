@@ -1,11 +1,12 @@
 //! `plc do` — manage week-based do-notes with a "last" pointer.
 //!
 //! Ports `dn()` (palace.zsh). Do-notes live in `notes/management/do/` named
-//! `do-<%G-W%V>.md`. A pointer file at `<PALACE_DIR>/.plc/last-do` records the
+//! `do-<YYYY-Www>.md`, the week starting on `week_start` (see
+//! [`week::label`]). A pointer file at `<PALACE_DIR>/.plc/last-do` records the
 //! basename of the most recently used note (older vaults kept it at the vault
 //! root as `.last-do`, which is still read as a fallback).
 //!
-//!   `plc do -n`          create this ISO week's note, mark it last → prints path
+//!   `plc do -n`          create this week's note, mark it last → prints path
 //!   `plc do -l FILE`     re-point "last" at FILE (basename)     → prints confirmation
 //!   `plc do -L`          list notes, last marked with `*`       → prints listing
 //!   `plc do`             resolve the last note                  → prints path
@@ -19,6 +20,7 @@ use std::path::Path;
 
 use chrono::Local;
 use clap::Args;
+use plc_core::{rc, week};
 
 use crate::config::Palace;
 use crate::note;
@@ -31,7 +33,7 @@ const LEGACY_POINTER: &str = ".last-do";
 
 #[derive(Args)]
 pub struct DoArgs {
-    /// Create a new do-note for the current ISO week and mark it last.
+    /// Create a new do-note for the current week and mark it last.
     #[arg(short = 'n', long = "new", conflicts_with_all = ["last", "list"])]
     new: bool,
     /// Mark FILE (basename) as the last do-note.
@@ -60,9 +62,11 @@ pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
     }
 }
 
-/// `-n`: create this ISO week's note, point "last" at it, return its path.
+/// `-n`: create this week's note, point "last" at it, return its path.
 fn new_note(root: &Path, pointer: &Path) -> Result<String, String> {
-    let name = Local::now().format("do-%G-W%V.md").to_string();
+    let start = rc::week_start().map_err(|e| format!("do: {e}"))?;
+    let today = Local::now().date_naive();
+    let name = format!("do-{}.md", week::label(today, start));
     write_pointer(pointer, &name)?;
     note::ensure_note(root, SUBDIR, &name, "do", None, note::SIGNATURE)
         .map(|p| p.display().to_string())

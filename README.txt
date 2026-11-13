@@ -14,7 +14,7 @@ are shared across every note type — including ledgers.
 
     plc init       scaffold the vault directory tree
     plc daily      today's (or a given date's) daily note
-    plc weekly     this ISO week's note
+    plc weekly     this week's note
     plc shot       a timestamped snapshot note
     plc add        a named note in the notes dir (alias: plc note, plc no)
     plc top        TOP.md — the vault landing page
@@ -83,6 +83,8 @@ reports) any key but these:
     vault = ~/vault           # the vault, unless $PALACE_DIR is set
     notes = notes/inbox       # where plc add puts notes: under the vault
                               # when relative (default: notes/triage)
+    week_start = saturday     # the day weekly and do-notes start a week
+                              # on: mon … sun, or in full (default: monday)
 
 plc never writes .plcrc, so it can be a link into your dotfiles. What travels with a vault
 stays inside it, in <vault>/.plc/ (see THE VAULT).
@@ -182,8 +184,12 @@ Any explicitly given date field back-dates the note (marked with a *).
 PLC WEEKLY
 -------------------------------------------------------------------------------
 
-Create or resolve this ISO week's note at
+Create or resolve this week's note at
 notes/management/weekly/<GGGG-Www>.md (e.g. 2026-W29.md, tag [[weekly]]).
+A week starts on week_start (.plcrc, default Monday) and takes the ISO
+week number of its Thursday, the ISO week holding most of its days: from
+Monday it is the ISO week, and from Saturday, Saturday and Sunday join the
+next ISO week.
 
 -------------------------------------------------------------------------------
 PLC SHOT
@@ -237,7 +243,7 @@ Week-based "do" notes (do-<GGGG-Www>.md under notes/management/do) with a
 
     (no flag)          resolve the "last" do-note's path (errors if
                        unset/stale)
-    -n, --new          create this ISO week's do-note and mark it "last"
+    -n, --new          create this week's do-note and mark it "last"
     -l, --last FILE    re-point "last" at an existing do-note (basename)
     -L, --list         list do-notes, marking the "last" one with *
 

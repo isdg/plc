@@ -41,7 +41,7 @@ struct Cli {
 enum Cmd {
     /// Create/resolve today's (or a given date's) daily note.
     Daily(cmd::daily::DailyArgs),
-    /// Create/resolve this ISO week's note.
+    /// Create/resolve this week's note.
     Weekly,
     /// Create a timestamped snapshot note in the daily dir (or a chosen path).
     Shot(cmd::shot::ShotArgs),

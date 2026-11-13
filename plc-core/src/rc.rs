@@ -8,6 +8,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use chrono::Weekday;
+
 /// The settings file's name inside the plc home.
 pub const RC: &str = ".plcrc";
 
@@ -23,6 +25,8 @@ pub struct Rc {
     /// The directory `plc add` writes to, with a leading `~` expanded; a
     /// relative path is under the vault (see [`Rc::notes_dir`]).
     pub notes: Option<PathBuf>,
+    /// The day weeks start on, as written (see [`Rc::week_start`]).
+    pub week_start: Option<String>,
     /// Keys plc does not recognise, as written; commands ignore them.
     pub unknown: Vec<String>,
 }
@@ -113,6 +117,8 @@ impl Rc {
                 ("vault", v) => rc.vault = Some(expand_tilde(v)),
                 ("notes", "") => rc.notes = None,
                 ("notes", v) => rc.notes = Some(expand_tilde(v)),
+                ("week_start", "") => rc.week_start = None,
+                ("week_start", v) => rc.week_start = Some(v.to_string()),
                 (k, _) => rc.unknown.push(k.to_string()),
             }
         }
@@ -135,6 +141,17 @@ impl Rc {
         }
     }
 
+    /// The day weeks start on: `week_start`, a weekday name in full or
+    /// cut to three letters, in any case. Unset, it is Monday, as in ISO.
+    pub fn week_start(&self) -> Result<Weekday, String> {
+        let Some(day) = &self.week_start else {
+            return Ok(Weekday::Mon);
+        };
+        day.parse().map_err(|_| {
+            format!("week_start: `{day}` is not a weekday (monday … sunday)")
+        })
+    }
+
     /// Whether it still sets `PALACE_DIR`, the key a legacy `~/.plcrc` used
     /// for what `.plcrc` calls `vault`.
     pub fn has_legacy_key(&self) -> bool {
@@ -143,6 +160,11 @@ impl Rc {
             .map(|k| k.trim_start_matches("export ").trim())
             .any(|k| k == "PALACE_DIR")
     }
+}
+
+/// The `week_start` of the settings file (see [`path`]).
+pub fn week_start() -> Result<Weekday, String> {
+    Rc::read(&path()?)?.week_start()
 }
 
 /// Expand a leading `~` / `~/` to `$HOME`; otherwise the path as-is.
@@ -219,6 +241,20 @@ mod tests {
         assert_eq!(rc.notes, Some(PathBuf::from("inbox")));
         assert!(rc.unknown.is_empty());
         assert_eq!(Rc::parse("notes = /n\nnotes =\n").notes, None);
+    }
+
+    #[test]
+    fn week_start_cases() {
+        let start = |text: &str| Rc::parse(text).week_start();
+        assert_eq!(start(""), Ok(Weekday::Mon));
+        assert_eq!(start("week_start = sunday"), Ok(Weekday::Sun));
+        assert_eq!(start("week_start = Sat"), Ok(Weekday::Sat));
+        assert_eq!(start("week_start = sun\nweek_start ="), Ok(Weekday::Mon));
+        for bad in ["su", "sundays", "7"] {
+            let err = start(&format!("week_start = {bad}")).unwrap_err();
+            assert!(err.contains(&format!("`{bad}`")), "{err}");
+        }
+        assert!(Rc::parse("week_start = x").unknown.is_empty());
     }
 
     #[test]
