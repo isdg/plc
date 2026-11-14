@@ -382,23 +382,26 @@ receipt or split a bill inline:
 
 # 6 Reports
 
-    plc ledger report  [-g PATTERN]  summary: net, by account / category / project
-    plc ledger reg     [-g PATTERN]  chronological register + running total
-    plc ledger balance [-g PATTERN]  net worth, account balances, recent (alias bal)
+    plc ledger report  [DD MM YY]    summary: net, by account / category / project
+    plc ledger reg     [DD MM YY]    chronological register + running total
+    plc ledger balance [DD MM YY]    net worth, account balances, recent (alias bal)
     plc ledger check   [--strict]    verify balance assertions (and declarations)
     plc ledger fmt     [--check]     reformat every ledger file in place
 
 `-g PATTERN` keeps transactions whose account, category, tag, or memo
 contains it (case-insensitive; repeated, a transaction matching any one is
-kept). `report`, `reg`, and `balance` share these filters:
+kept). `report`, `reg`, and `balance` share these filters, and cover all
+time without them:
 
-    --since YYYY-MM-DD    --until YYYY-MM-DD    --month YYYY-MM
+    DD [MM [YY]]          a day, month (- MM YY) or year (- - YY), as
+                          plc stat takes it
+    --since YYYY-MM-DD    --until YYYY-MM-DD    (instead of a date)
     --cleared             --pending
     --depth N             (report only: cap the tree)
 
 For example, July's dining, cleared only:
 
-    $ plc ledger report -g food/dining --month 2026-07 --cleared
+    $ plc ledger report - 07 26 -g food/dining --cleared
 
 `plc ledger stat` brings the `plc stat` calendar heatmap / line-plot to daily
 **spend**, and takes the same date and `-f` (see the README's `stat` section);
@@ -581,9 +584,9 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
       --amount / --memo / -a / -c / --to / -i / --expense / --cur /
       -p / --no-projects / -d / --cleared / --pending / --uncleared /
       --assert / --no-assert      change that field in place (id stays frozen)
-    plc ledger report  [-g PATTERN]  summary report         (+ filters, --depth)
-    plc ledger reg     [-g PATTERN]  chronological register (+ filters)
-    plc ledger balance [-g PATTERN]  net-worth snapshot      (+ filters, -n N)
+    plc ledger report  [DD MM YY]    summary report         (+ filters, --depth)
+    plc ledger reg     [DD MM YY]    chronological register (+ filters)
+    plc ledger balance [DD MM YY]    net-worth snapshot      (+ filters, -n N)
     plc ledger check   [--strict]    verify assertions (+ undeclared names)
     plc ledger fmt     [--check]     reformat every ledger file in place
     plc ledger stat    [DD MM YY]    spend calendar/plot/stats (see README)

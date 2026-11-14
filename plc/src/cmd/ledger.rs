@@ -233,9 +233,10 @@ pub struct ReportArgs {
     /// Only on/before this date (YYYY-MM-DD).
     #[arg(long = "until", value_name = "YYYY-MM-DD")]
     until: Option<String>,
-    /// Restrict to one month (YYYY-MM); sets since/until to its bounds.
-    #[arg(long = "month", value_name = "YYYY-MM", conflicts_with_all = ["since", "until"])]
-    month: Option<String>,
+    /// `DD [MM [YY]]`, as `plc stat` takes it, `-` for a whole field: only
+    /// that day, month (`- MM YY`) or year (`- - YY`). None is all time.
+    #[arg(value_name = "DD MM YY", conflicts_with_all = ["since", "until"])]
+    date: Vec<String>,
     /// Report only: cap the account/category/tag trees at N levels.
     #[arg(long = "depth", value_name = "N")]
     depth: Option<usize>,
@@ -474,7 +475,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             let vals =
                 ledger::daily_spend(&root, &cur, &filter, y, Some(m), measure)?;
             if f == Format::Tsv {
-                return Ok(spend_tsv(&vals, NaiveDate::from_ymd_opt(y, m, 1)));
+                return Ok(spend_tsv(&vals, scope.span().0));
             }
             let cutoff = (y == today.year() && m == today.month())
                 .then_some(today.day());
@@ -490,7 +491,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
             let vals =
                 ledger::daily_spend(&root, &cur, &filter, y, None, measure)?;
             if f == Format::Tsv {
-                return Ok(spend_tsv(&vals, NaiveDate::from_ymd_opt(y, 1, 1)));
+                return Ok(spend_tsv(&vals, scope.span().0));
             }
             let cutoff = (y == today.year()).then_some(today.ordinal());
             let st = calendar::year_stats(&vals, y, cutoff);
@@ -525,10 +526,7 @@ fn decimal(minor: i64) -> String {
 }
 
 /// `YYYY-MM-DD<TAB>amount` for each of `vals`, the days from `first`.
-fn spend_tsv(vals: &[u64], first: Option<NaiveDate>) -> String {
-    let Some(first) = first else {
-        return String::new();
-    };
+fn spend_tsv(vals: &[u64], first: NaiveDate) -> String {
     let lines: Vec<String> = first
         .iter_days()
         .zip(vals)
@@ -687,16 +685,13 @@ fn build_filter(args: &ReportArgs) -> Result<Filter, String> {
     })
 }
 
-/// Resolve the `--since`/`--until`/`--month` flags into an inclusive date range.
+/// Resolve the date, else `--since`/`--until`, into an inclusive range.
 fn date_range(args: &ReportArgs) -> Result<(Option<NaiveDate>, Option<NaiveDate>), String> {
-    if let Some(m) = &args.month {
-        let first = NaiveDate::parse_from_str(&format!("{}-01", m.trim()), "%Y-%m-%d")
-            .map_err(|_| format!("ledger: invalid month (want YYYY-MM): {m}"))?;
-        let (y, mo) = (first.year(), first.month());
-        let (ny, nm) = if mo == 12 { (y + 1, 1) } else { (y, mo + 1) };
-        let last = NaiveDate::from_ymd_opt(ny, nm, 1)
-            .and_then(|d| d.pred_opt())
-            .ok_or_else(|| format!("ledger: invalid month: {m}"))?;
+    if !args.date.is_empty() {
+        let today = Local::now().date_naive();
+        let scope = when::parse(&args.date, today)
+            .map_err(|e| format!("ledger: {e}"))?;
+        let (first, last) = scope.span();
         return Ok((Some(first), Some(last)));
     }
     let parse = |o: &Option<String>| match o {

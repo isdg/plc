@@ -3,6 +3,7 @@
 //! field, which widens what is shown: `- MM YY` is a month, `- - YY` a year.
 
 use chrono::{Datelike, NaiveDate};
+use plc_core::calendar;
 
 /// What a date names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,6 +11,20 @@ pub enum Scope {
     Day(NaiveDate),
     Month(i32, u32),
     Year(i32),
+}
+
+impl Scope {
+    /// The first and last day it covers.
+    pub fn span(self) -> (NaiveDate, NaiveDate) {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).expect("a day");
+        match self {
+            Scope::Day(day) => (day, day),
+            Scope::Month(y, m) => {
+                (ymd(y, m, 1), ymd(y, m, calendar::last_day_of_month(y, m)))
+            }
+            Scope::Year(y) => (ymd(y, 1, 1), ymd(y, 12, 31)),
+        }
+    }
 }
 
 const WHOLE: &str = "-";
@@ -97,6 +112,14 @@ mod tests {
         assert_eq!(scope(&["-", "09", "25"]), Ok(Scope::Month(2025, 9)));
         assert_eq!(scope(&["-", "-"]), Ok(Scope::Year(2026)));
         assert_eq!(scope(&["-", "-", "25"]), Ok(Scope::Year(2025)));
+    }
+
+    #[test]
+    fn a_scope_spans_its_days() {
+        let at = |m, d| NaiveDate::from_ymd_opt(2024, m, d).unwrap();
+        assert_eq!(Scope::Day(at(2, 29)).span(), (at(2, 29), at(2, 29)));
+        assert_eq!(Scope::Month(2024, 2).span(), (at(2, 1), at(2, 29)));
+        assert_eq!(Scope::Year(2024).span(), (at(1, 1), at(12, 31)));
     }
 
     #[test]

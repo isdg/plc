@@ -81,9 +81,9 @@ pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
     let values = calendar::year_values(&days, year);
     let heat = bytes_heat(&values, args.color.cells());
     Ok(match (scope, format) {
-        (Scope::Month(y, m), Format::Tsv) => {
-            let last = calendar::last_day_of_month(y, m);
-            days_tsv(&days, ymd(y, m, 1), ymd(y, m, last))
+        (_, Format::Tsv) => {
+            let (first, last) = scope.span();
+            days_tsv(&days, first, last)
         }
         (Scope::Month(y, m), Format::Plot) => {
             render_plot_month(&days, y, m, today)
@@ -91,7 +91,6 @@ pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
         (Scope::Month(y, m), f) => {
             render_month(&days, y, m, today, layout(f), &heat)
         }
-        (_, Format::Tsv) => days_tsv(&days, ymd(year, 1, 1), ymd(year, 12, 31)),
         (_, f) => {
             let plot = f == Format::Plot;
             render_year(&values, year, layout(f), plot, today, &heat)
@@ -110,10 +109,6 @@ fn layout(format: Format) -> Layout {
         Format::Rows => Layout::Tab,
         _ => Layout::Git,
     }
-}
-
-fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(y, m, d).expect("a day of the scope")
 }
 
 /// `YYYY-MM-DD<TAB>bytes` for each day from `first` to `last`.
