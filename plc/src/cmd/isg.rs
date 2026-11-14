@@ -8,14 +8,18 @@
 //! follow-ups of `isg52`. Letters use a bijective base-26 sequence
 //! (`a`…`z`, `aa`, `ab`, …) so follow-ups never run out.
 //!
-//!   `plc isg`                  open the last (most recently modified) note
-//!   `plc isg -l` / `--last`    open the last note (explicit alias of default)
+//!   `plc isg`                  open the last note
 //!   `plc isg -n` / `--new`     create the next enumerated note → prints path
-//!   `plc isg -f [N]`           follow up note N (or the latest) → isg<N><letter>
-//!   `plc isg --list`           list notes newest-first → zsh pipes to fzf
+//!   `plc isg -nf [N]`          follow up note N (or the last) → isg<N><letter>
+//!   `plc isg -l` / `--list`    list notes newest-first → zsh pipes to fzf
 //!   `plc isg NAME`             resolve/open an existing note by basename
+//!
+//! Every note plc creates or opens becomes the last, recorded in the vault's
+//! `.plc/last-isg` as `do` records its own. Without a pointer, or with a
+//! stale one, the last note is the most recently modified.
 
 use std::fs;
+use std::path::Path;
 
 use clap::Args;
 
@@ -24,26 +28,25 @@ use crate::note;
 
 const SUBDIR: &str = "notes/me/writing/isg";
 const TAG: &str = "isg";
+/// Pointer basename inside the vault's `.plc` dir.
+const POINTER: &str = "last-isg";
 
 #[derive(Args)]
 pub struct IsgArgs {
-    /// Open the last (most recently modified) note — same as no flag.
-    #[arg(short = 'l', long = "last", conflicts_with_all = ["list", "new", "follow", "name"])]
-    last: bool,
     /// List isg notes newest-first (zsh pipes this through fzf).
-    #[arg(long = "list", conflicts_with_all = ["new", "follow", "name"])]
+    #[arg(short = 'l', long = "list", conflicts_with_all = ["new", "name"])]
     list: bool,
     /// Create the next enumerated note (isg0, isg1, …).
-    #[arg(short = 'n', long = "new", conflicts_with_all = ["follow", "name"])]
+    #[arg(short = 'n', long = "new", conflicts_with = "name")]
     new: bool,
-    /// Follow up note INDEX (or the latest if omitted) with the next letter
-    /// suffix → isg<INDEX>a, isg<INDEX>b, …
+    /// With --new: follow up note INDEX (or the last note's) with the next
+    /// letter suffix → isg<INDEX>a, isg<INDEX>b, …
     #[arg(
         short = 'f',
         long = "follow",
         value_name = "INDEX",
         num_args = 0..=1,
-        conflicts_with = "name"
+        requires = "new"
     )]
     follow: Option<Option<u64>>,
     /// Open an existing note by basename (".md" appended if missing).
@@ -65,33 +68,45 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
     }
 
     let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
+    let pointer = palace.plc_dir().join(POINTER);
+    let last = last_note(&note_dir, &pointer, &names);
 
-    let filename = if args.new {
-        // -n/--new: next enumerated note.
-        format!("isg{}.md", next_index(&names))
-    } else if let Some(which) = args.follow {
-        // -f/--follow [INDEX]: follow up note INDEX (or the latest) with a letter.
+    let filename = if let Some(which) = args.follow {
+        // -nf [INDEX]: follow up note INDEX (or the last note's) with a letter.
         let base = match which {
             Some(n) => n,
-            None => max_base(&names).ok_or_else(|| "isg: no notes to follow up".to_string())?,
+            None => last
+                .as_deref()
+                .and_then(base_of)
+                .ok_or_else(|| "isg: no note to follow up".to_string())?,
         };
         next_continuation(&names, base)
+    } else if args.new {
+        // -n/--new: next enumerated note.
+        format!("isg{}.md", next_index(&names))
     } else if let Some(n) = args.name {
         // NAME: open an existing note by basename.
         with_md(n.trim())?
     } else {
-        // default (and -l/--last): open the most recently modified note.
-        let _ = args.last;
-        names
-            .first()
-            .cloned()
-            .ok_or_else(|| "isg: no isg notes yet — create one with `plc isg -n`".to_string())?
+        last.ok_or_else(|| "isg: no isg notes yet — create one with `plc isg -n`".to_string())?
     };
     // isg notes lead their header with their own index, e.g. `isg20 <date>`.
     let stem = filename.strip_suffix(".md").unwrap_or(&filename);
-    note::ensure_note(palace.root(), SUBDIR, &filename, TAG, None, stem)
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("isg: {e}"))
+    let path = note::ensure_note(palace.root(), SUBDIR, &filename, TAG, None, stem)
+        .map_err(|e| format!("isg: {e}"))?;
+    // The written name, not `filename`: a run's --postfix renames the file.
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        note::write_pointer(&pointer, name).map_err(|e| format!("isg: {e}"))?;
+    }
+    Ok(path.display().to_string())
+}
+
+/// The last note: the one the pointer names while it exists, else the most
+/// recently modified.
+fn last_note(note_dir: &Path, pointer: &Path, names: &[String]) -> Option<String> {
+    note::read_pointer(pointer)
+        .filter(|n| note_dir.join(n).is_file())
+        .or_else(|| names.first().cloned())
 }
 
 /// The next isg index: one past the highest existing `isg<N>.md`, or 0 if none.
@@ -113,9 +128,19 @@ fn parse_index(name: &str) -> Option<u64> {
     digits.parse::<u64>().ok()
 }
 
-/// The highest base index present (ignoring continuations), or `None` if empty.
-fn max_base(names: &[String]) -> Option<u64> {
-    names.iter().filter_map(|n| parse_index(n)).max()
+/// The index a note belongs to: 52 for `isg52.md`, `isg52b.md` and
+/// `isg52+review.md`. `None` for anything else.
+fn base_of(name: &str) -> Option<u64> {
+    let stem = name.strip_suffix(".md")?.strip_prefix("isg")?;
+    let stem = stem.split('+').next().unwrap_or(stem);
+    let split = stem
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(stem.len());
+    let (digits, letters) = stem.split_at(split);
+    if !letters.chars().all(|c| c.is_ascii_lowercase()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// The next continuation filename for `base`: `isg<base><letter>.md`, where the
@@ -272,8 +297,15 @@ mod tests {
     }
 
     #[test]
-    fn max_base_ignores_continuations() {
-        let names = s(&["isg3.md", "isg7.md", "isg7a.md", "isg7b.md"]);
-        assert_eq!(max_base(&names), Some(7));
+    fn base_of_cases() {
+        assert_eq!(base_of("isg52.md"), Some(52));
+        assert_eq!(base_of("isg52b.md"), Some(52));
+        assert_eq!(base_of("isg52aa.md"), Some(52));
+        assert_eq!(base_of("isg52+review.md"), Some(52));
+        assert_eq!(base_of("isg52b+review.md"), Some(52));
+        assert_eq!(base_of("isg.md"), None);
+        assert_eq!(base_of("isgfoo.md"), None);
+        assert_eq!(base_of("isg52B.md"), None);
+        assert_eq!(base_of("foo.md"), None);
     }
 }

@@ -125,7 +125,8 @@ plc init creates the canonical tree (idempotent — existing dirs are left
 alone):
 
     <PALACE_DIR>/
-      .plc/                   # travels with the vault: config, last-do
+      .plc/                   # travels with the vault: config, last-do,
+                              # last-isg
       TOP.md                  # plc top
       notes/
         archive/
@@ -264,16 +265,19 @@ missing).
 PLC ISG
 -------------------------------------------------------------------------------
 
-Usage: plc isg [NAME] | -l | --list | -n | -f [INDEX]
+Usage: plc isg [NAME] | -l | -n [-f [INDEX]]
 
-Enumerated writing notes under notes/me/writing/isg.
+Enumerated writing notes under notes/me/writing/isg, with a "last" pointer
+stored in <PALACE_DIR>/.plc/last-isg: every note plc creates or opens
+becomes the last. With no pointer, or a stale one, the last is the most
+recently modified note.
 
-    (no flag) / -l, --last   open the most recently modified isg note
+    (no flag)                open the last isg note
     NAME                     open an existing note by basename (.md optional)
-    --list                   list isg notes newest-first (fzf)
+    -l, --list               list isg notes newest-first (fzf)
     -n, --new                create the next enumerated note: isg0, isg1, …
-    -f, --follow [INDEX]     follow up note INDEX (or the latest) with the
-                             next letter suffix: isg<INDEX>a, isg<INDEX>b, …
+    -n -f, --follow [INDEX]  follow up note INDEX (or the last note's) with
+                             the next letter suffix: isg<INDEX>a, isg<INDEX>b, …
 
 -------------------------------------------------------------------------------
 PLC ORPHANS
