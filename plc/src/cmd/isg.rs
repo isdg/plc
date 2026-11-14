@@ -11,7 +11,7 @@
 //!   `plc isg`                  open the last (most recently modified) note
 //!   `plc isg -l` / `--last`    open the last note (explicit alias of default)
 //!   `plc isg -n` / `--next`    create the next enumerated note → prints path
-//!   `plc isg --continue [N]`   continue note N (or the latest) → isg<N><letter>
+//!   `plc isg -c [N]`           continue note N (or the latest) → isg<N><letter>
 //!   `plc isg --list`           list notes newest-first → zsh pipes to fzf
 //!   `plc isg NAME`             resolve/open an existing note by basename
 
@@ -38,7 +38,13 @@ pub struct IsgArgs {
     next: bool,
     /// Continue note INDEX (or the latest if omitted) with the next letter
     /// suffix → isg<INDEX>a, isg<INDEX>b, …
-    #[arg(long = "continue", value_name = "INDEX", num_args = 0..=1, conflicts_with = "name")]
+    #[arg(
+        short = 'c',
+        long = "continue",
+        value_name = "INDEX",
+        num_args = 0..=1,
+        conflicts_with = "name"
+    )]
     cont: Option<Option<u64>>,
     /// Open an existing note by basename (".md" appended if missing).
     #[arg(value_name = "NAME")]
