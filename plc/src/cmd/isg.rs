@@ -10,7 +10,7 @@
 //!
 //!   `plc isg`                  open the last (most recently modified) note
 //!   `plc isg -l` / `--last`    open the last note (explicit alias of default)
-//!   `plc isg -c` / `--create`  create the next enumerated note → prints path
+//!   `plc isg -n` / `--next`    create the next enumerated note → prints path
 //!   `plc isg --continue [N]`   continue note N (or the latest) → isg<N><letter>
 //!   `plc isg --list`           list notes newest-first → zsh pipes to fzf
 //!   `plc isg NAME`             resolve/open an existing note by basename
@@ -28,14 +28,14 @@ const TAG: &str = "isg";
 #[derive(Args)]
 pub struct IsgArgs {
     /// Open the last (most recently modified) note — same as no flag.
-    #[arg(short = 'l', long = "last", conflicts_with_all = ["list", "create", "cont", "name"])]
+    #[arg(short = 'l', long = "last", conflicts_with_all = ["list", "next", "cont", "name"])]
     last: bool,
     /// List isg notes newest-first (zsh pipes this through fzf).
-    #[arg(long = "list", conflicts_with_all = ["create", "cont", "name"])]
+    #[arg(long = "list", conflicts_with_all = ["next", "cont", "name"])]
     list: bool,
     /// Create the next enumerated note (isg0, isg1, …).
-    #[arg(short = 'c', long = "create", conflicts_with_all = ["cont", "name"])]
-    create: bool,
+    #[arg(short = 'n', long = "next", conflicts_with_all = ["cont", "name"])]
+    next: bool,
     /// Continue note INDEX (or the latest if omitted) with the next letter
     /// suffix → isg<INDEX>a, isg<INDEX>b, …
     #[arg(long = "continue", value_name = "INDEX", num_args = 0..=1, conflicts_with = "name")]
@@ -60,8 +60,8 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
 
     let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
 
-    let filename = if args.create {
-        // -c/--create: next enumerated note.
+    let filename = if args.next {
+        // -n/--next: next enumerated note.
         format!("isg{}.md", next_index(&names))
     } else if let Some(which) = args.cont {
         // --continue [INDEX]: continue note INDEX (or the latest) with a letter.
@@ -79,7 +79,7 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
         names
             .first()
             .cloned()
-            .ok_or_else(|| "isg: no isg notes yet — create one with `plc isg -c`".to_string())?
+            .ok_or_else(|| "isg: no isg notes yet — create one with `plc isg -n`".to_string())?
     };
     // isg notes lead their header with their own index, e.g. `isg20 <date>`.
     let stem = filename.strip_suffix(".md").unwrap_or(&filename);

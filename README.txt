@@ -264,14 +264,14 @@ missing).
 PLC ISG
 -------------------------------------------------------------------------------
 
-Usage: plc isg [NAME] | -l | --list | -c | --continue [INDEX]
+Usage: plc isg [NAME] | -l | --list | -n | --continue [INDEX]
 
 Enumerated writing notes under notes/me/writing/isg.
 
     (no flag) / -l, --last   open the most recently modified isg note
     NAME                     open an existing note by basename (.md optional)
     --list                   list isg notes newest-first (fzf)
-    -c, --create             create the next enumerated note: isg0, isg1, …
+    -n, --next               create the next enumerated note: isg0, isg1, …
     --continue [INDEX]       continue note INDEX (or the latest) with the
                              next letter suffix: isg<INDEX>a, isg<INDEX>b, …
 
