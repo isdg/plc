@@ -1592,15 +1592,41 @@ pub fn daily_spend(
             Some(_) => continue,
             None => (d.ordinal() - 1) as usize,
         };
-        vals[idx] += match (measure, t.kind) {
-            (Measure::Expense, Kind::Expense) => t.amount,
-            (Measure::Income, Kind::Income) => t.amount,
-            (Measure::Net, Kind::Expense) => -t.amount,
-            (Measure::Net, Kind::Income) => t.amount,
-            _ => 0, // transfers, or a kind the measure ignores
-        };
+        vals[idx] += measured(measure, t);
     }
     Ok(vals.into_iter().map(i64::unsigned_abs).collect())
+}
+
+/// What `t` adds to a day under `measure`, in minor units: income and
+/// spend as positive, net with spend negative, transfers nothing.
+fn measured(measure: Measure, t: &Transaction) -> i64 {
+    match (measure, t.kind) {
+        (Measure::Expense, Kind::Expense) => t.amount,
+        (Measure::Income, Kind::Income) => t.amount,
+        (Measure::Net, Kind::Expense) => -t.amount,
+        (Measure::Net, Kind::Income) => t.amount,
+        _ => 0,
+    }
+}
+
+/// The transactions in `currency` effective on `day` that `measure`
+/// counts, each with what it adds (see [`daily_spend`]), largest first.
+pub fn day_spend(
+    root: &Path,
+    currency: &str,
+    filter: &Filter,
+    day: NaiveDate,
+    measure: Measure,
+) -> Result<Vec<(i64, Transaction)>, String> {
+    let (items, _) = collect(root, currency, filter)?;
+    let mut found: Vec<(i64, Transaction)> = items
+        .into_iter()
+        .filter(|(eff, t)| *eff == Some(day) && t.currency == currency)
+        .map(|(_, t)| (measured(measure, &t), t))
+        .filter(|(v, _)| *v != 0)
+        .collect();
+    found.sort_by_key(|(v, _)| std::cmp::Reverse(v.unsigned_abs()));
+    Ok(found)
 }
 
 /// Format a summary as a human-readable block, in the visual style of

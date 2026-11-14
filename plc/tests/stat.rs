@@ -29,16 +29,11 @@ fn plc(home: &Home, args: &[&str]) -> Command {
 fn always_colours_every_heatmap_from_the_ansi_ramp() {
     let home = with_vault("stat-always");
     let mut runs = Vec::new();
-    for date in [&[][..], &["-", "-"]] {
-        for format in ["grid", "rows"] {
-            let args = [&["stat"][..], date, &["-f", format]].concat();
-            runs.push(args);
-        }
-    }
-    for scope in ["month", "year"] {
-        for layout in ["git", "tab"] {
-            let args = ["ledger", "stat", "--type", scope, "--layout", layout];
-            runs.push(args.to_vec());
+    for cmd in [&["stat"][..], &["ledger", "stat"]] {
+        for date in [&[][..], &["-", "-"]] {
+            for format in ["grid", "rows"] {
+                runs.push([cmd, date, &["-f", format]].concat());
+            }
         }
     }
     for args in runs {
@@ -127,4 +122,33 @@ fn day_lists_the_notes_written_on_it() {
     assert_eq!(lines.len(), 30);
     assert_eq!(lines[0], "2026-11-01\t0");
     assert_eq!(lines[4], "2026-11-05\t6");
+}
+
+#[test]
+fn ledger_stat_takes_the_same_dates() {
+    let home = with_vault("stat-ledger");
+    for (amount, memo, account) in
+        [("4.50", "coffee", "cash"), ("12", "lunch", "bank")]
+    {
+        let args = ["ledger", "add", amount, memo, "-a", account, "-n"];
+        ok(home.plc(&args).args(["-c", "food", "-d", "2026-11-05"]));
+    }
+    let day = ok(&mut home.plc(&["ledger", "stat", "05", "11", "26"]));
+    let head = "\n  Thu 2026-11-05   16.50 EUR spend in 2 transactions\n\n";
+    assert!(day.starts_with(head), "{day}");
+    let lines: Vec<&str> = day.lines().skip(3).collect();
+    assert!(lines[0].starts_with("       12.00  $ "), "{day}");
+    assert!(lines[1].contains("coffee"), "{day}");
+
+    let grep = ["ledger", "stat", "05", "11", "26", "-g", "coffee"];
+    let one = ok(&mut home.plc(&grep));
+    assert!(one.contains("4.50 EUR spend in 1 transaction"), "{one}");
+
+    let month = ["ledger", "stat", "-", "11", "26", "-f", "tsv"];
+    let tsv = ok(&mut home.plc(&month));
+    let lines: Vec<&str> = tsv.lines().collect();
+    assert_eq!((lines.len(), lines[4]), (30, "2026-11-05\t16.50"));
+
+    let none = ok(&mut home.plc(&["ledger", "stat", "06", "11", "26"]));
+    assert_eq!(none, "\n  Fri 2026-11-06   no spend");
 }

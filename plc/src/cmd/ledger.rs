@@ -23,11 +23,12 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use chrono::{DateTime, Datelike, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use plc_core::calendar::{self, MonthStats, YearStats};
 use plc_core::ledger::{self, Filter, Kind, Measure, State, Transaction};
 
-use crate::cmd::calview::{self, Cells, ColorArgs, Heat, Layout};
+use crate::cmd::calview::{self, Cells, ColorArgs, Format, Heat, Layout};
+use crate::cmd::when::{self, Scope};
 use crate::config::Palace;
 use crate::note;
 use crate::settings::Settings;
@@ -182,29 +183,17 @@ pub struct FmtArgs {
 
 #[derive(Args)]
 pub struct LedgerStatArgs {
-    /// Limit to transactions whose account/category/tag/memo contains a PATTERN.
-    #[arg(value_name = "PATTERN")]
+    /// `DD [MM [YY]]`, as `plc stat` takes it: a day lists its
+    /// transactions, `- MM YY` is a month, `- - YY` a year, none this month.
+    #[arg(value_name = "DD MM YY")]
+    date: Vec<String>,
+    /// Limit to transactions whose account/category/tag/memo contains
+    /// PATTERN; repeat for any of several.
+    #[arg(short = 'g', long = "grep", value_name = "PATTERN")]
     patterns: Vec<String>,
-    /// Scope: `month` or `year`.
-    #[arg(long = "type", value_name = "SCOPE", default_value = "month")]
-    scope: String,
-    /// Month 1-12 (defaults to the current month).
-    #[arg(short = 'm', long = "month")]
-    month: Option<String>,
-    /// Year; 2-digit (25 → 2025) or 4-digit (defaults to the current year).
-    #[arg(short = 'y', long = "year")]
-    year: Option<String>,
-    /// Heatmap layout: `git` (GitHub-style) or `tab` (a row of days).
-    #[arg(
-        long,
-        value_enum,
-        value_name = "LAYOUT",
-        default_value_t = Layout::Git
-    )]
-    layout: Layout,
-    /// Replace the heatmap with an ASCII line chart.
-    #[arg(short = 'p', long = "plot")]
-    plot: bool,
+    /// How to show it, as `plc stat -f` does.
+    #[arg(short = 'f', long, value_enum, value_name = "FORMAT")]
+    format: Option<Format>,
     /// What to measure per day: `expense` (default), `income`, or `net`.
     #[arg(long = "of", value_name = "MEASURE", default_value = "expense")]
     of: String,
@@ -427,7 +416,8 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
 /// `plc ledger stat`: `plc stat`'s calendar/plot/stats visuals over daily spend.
 fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
     let today = Local::now().date_naive();
-    let (y, m) = resolve_ym(&args, today)?;
+    let scope = when::parse(&args.date, today)
+        .map_err(|e| format!("ledger stat: {e}"))?;
     let measure = match args.of.as_str() {
         "expense" => Measure::Expense,
         "income" => Measure::Income,
@@ -459,66 +449,123 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
     let root = palace.root().join("notes/management/daily");
     let money = |minor| calendar::fmt_money(minor, &cur);
     let heat = money_heat(args.color.cells());
+    let format = args.format.unwrap_or(match scope {
+        Scope::Day(_) => Format::List,
+        _ => Format::Grid,
+    });
 
-    match args.scope.as_str() {
-        "month" => {
-            let vals = ledger::daily_spend(&root, &cur, &filter, y, Some(m), measure)?;
-            let cutoff = (y == today.year() && m == today.month()).then_some(today.day());
-            let st = calendar::month_stats(&vals, cutoff);
-            let mut out = if args.plot {
-                calview::plot_month(y, m, &vals, unit, &money)
+    match (scope, format) {
+        (Scope::Day(day), Format::List | Format::Tsv) => {
+            let found = ledger::day_spend(&root, &cur, &filter, day, measure)?;
+            Ok(if format == Format::Tsv {
+                day_tsv(&found)
             } else {
-                calview::month(y, m, &vals, args.layout, &heat, &money)
+                render_day(day, &found, unit, &cur)
+            })
+        }
+        (Scope::Day(_), f) => Err(format!(
+            "ledger stat: -f {} shows a month or a year: - MM YY",
+            format_name(f)
+        )),
+        (_, Format::List) => {
+            Err("ledger stat: -f list shows a day: DD MM YY".to_string())
+        }
+        (Scope::Month(y, m), f) => {
+            let vals =
+                ledger::daily_spend(&root, &cur, &filter, y, Some(m), measure)?;
+            if f == Format::Tsv {
+                return Ok(spend_tsv(&vals, NaiveDate::from_ymd_opt(y, m, 1)));
+            }
+            let cutoff = (y == today.year() && m == today.month())
+                .then_some(today.day());
+            let st = calendar::month_stats(&vals, cutoff);
+            let mut out = match f {
+                Format::Plot => calview::plot_month(y, m, &vals, unit, &money),
+                f => calview::month(y, m, &vals, layout(f), &heat, &money),
             };
             push_month_spend(&mut out, &st, y, m, unit, &cur);
             Ok(out)
         }
-        "year" => {
-            let vals = ledger::daily_spend(&root, &cur, &filter, y, None, measure)?;
+        (Scope::Year(y), f) => {
+            let vals =
+                ledger::daily_spend(&root, &cur, &filter, y, None, measure)?;
+            if f == Format::Tsv {
+                return Ok(spend_tsv(&vals, NaiveDate::from_ymd_opt(y, 1, 1)));
+            }
             let cutoff = (y == today.year()).then_some(today.ordinal());
             let st = calendar::year_stats(&vals, y, cutoff);
-            let mut out = if args.plot {
-                calview::plot_year(y, &vals, unit, &money)
-            } else {
-                calview::year(y, &vals, today, args.layout, &heat, &money)
+            let mut out = match f {
+                Format::Plot => calview::plot_year(y, &vals, unit, &money),
+                f => calview::year(y, &vals, today, layout(f), &heat, &money),
             };
             push_year_spend(&mut out, &st, y, unit, &cur);
             Ok(out)
         }
-        o => Err(format!(
-            "ledger stat: unknown type: {o} (expected month|year)"
-        )),
     }
 }
 
-/// Resolve `(year, month)` for `fin stat` from `-m/-y` (else today). Positional
-/// args are a pattern filter, not a date, so they play no part here.
-fn resolve_ym(args: &LedgerStatArgs, today: NaiveDate) -> Result<(i32, u32), String> {
-    let m = match &args.month {
-        Some(s) => s
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| format!("ledger stat: invalid month: {s}"))?,
-        None => today.month(),
-    };
-    let y = match &args.year {
-        Some(s) => {
-            let t = s.trim();
-            let n: i32 = t
-                .parse()
-                .map_err(|_| format!("ledger stat: invalid year: {s}"))?;
-            if t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit()) {
-                2000 + n
-            } else {
-                n
-            }
-        }
-        None => today.year(),
-    };
-    if !(1..=12).contains(&m) {
-        return Err(format!("ledger stat: invalid month: {m}"));
+fn format_name(format: Format) -> String {
+    format
+        .to_possible_value()
+        .map_or_else(String::new, |v| v.get_name().to_string())
+}
+
+fn layout(format: Format) -> Layout {
+    match format {
+        Format::Rows => Layout::Tab,
+        _ => Layout::Git,
     }
-    Ok((y, m))
+}
+
+/// An amount in minor units as `[-]<whole>.<cc>`.
+fn decimal(minor: i64) -> String {
+    let sign = if minor < 0 { "-" } else { "" };
+    let abs = minor.unsigned_abs();
+    format!("{sign}{}.{:02}", abs / 100, abs % 100)
+}
+
+/// `YYYY-MM-DD<TAB>amount` for each of `vals`, the days from `first`.
+fn spend_tsv(vals: &[u64], first: Option<NaiveDate>) -> String {
+    let Some(first) = first else {
+        return String::new();
+    };
+    let lines: Vec<String> = first
+        .iter_days()
+        .zip(vals)
+        .map(|(d, &v)| format!("{d}\t{}", decimal(v as i64)))
+        .collect();
+    lines.join("\n")
+}
+
+/// `line<TAB>amount` for each of a day's transactions.
+fn day_tsv(found: &[(i64, Transaction)]) -> String {
+    let lines: Vec<String> = found
+        .iter()
+        .map(|(v, t)| format!("{}\t{}", ledger::format_line(t), decimal(*v)))
+        .collect();
+    lines.join("\n")
+}
+
+/// A day's transactions, largest first, under their total.
+fn render_day(
+    day: NaiveDate,
+    found: &[(i64, Transaction)],
+    unit: &str,
+    cur: &str,
+) -> String {
+    let date = day.format("%a %Y-%m-%d");
+    let total: i64 = found.iter().map(|(v, _)| v).sum();
+    let total = format!("{} {cur}", decimal(total));
+    let mut out = match found.len() {
+        0 => return format!("\n  {date}   no {unit}"),
+        1 => format!("\n  {date}   {total} {unit} in 1 transaction\n\n"),
+        n => format!("\n  {date}   {total} {unit} in {n} transactions\n\n"),
+    };
+    for (v, t) in found {
+        let amount = decimal(*v);
+        let _ = writeln!(out, "  {amount:>10}  {}", ledger::format_line(t));
+    }
+    out
 }
 
 /// The month spend Stats block (money-formatted; reworded from `plc stat`).

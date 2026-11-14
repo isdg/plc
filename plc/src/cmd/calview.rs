@@ -110,8 +110,8 @@ pub enum Format {
     Tsv,
 }
 
-/// The heatmap shape for both scopes, as `--layout` names it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+/// The heatmap shape for both scopes: `-f grid` or `-f rows`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
     /// A row per weekday and a column per week, as GitHub draws a year.
     Git,

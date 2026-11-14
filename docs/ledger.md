@@ -400,8 +400,13 @@ For example, July's dining, cleared only:
     $ plc ledger report food/dining --month 2026-07 --cleared
 
 `plc ledger stat` brings the `plc stat` calendar heatmap / line-plot to daily
-**spend** (see the README's `stat` section; `--of income|net` switches what it
-measures).
+**spend**, and takes the same date and `-f` (see the README's `stat` section);
+`--of income|net` switches what it measures, `-g PATTERN` filters:
+
+    plc ledger stat                    this month
+    plc ledger stat 27 09 25           27 Sep 2025: its transactions, largest first
+    plc ledger stat - 09 25 -g coffee  September 2025's coffee
+    plc ledger stat - - 25 -f plot     2025 as a line chart
 
 ---
 
@@ -579,7 +584,7 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
     plc ledger balance [PATTERN…]    net-worth snapshot      (+ filters, -n N)
     plc ledger check   [--strict]    verify assertions (+ undeclared names)
     plc ledger fmt     [--check]     reformat every ledger file in place
-    plc ledger stat    [PATTERN…]    spend calendar/plot/stats (see README)
+    plc ledger stat    [DD MM YY]    spend calendar/plot/stats (see README)
     plc ledger account [NAME…]       list/manage the vocabulary   (alias: acc)
       -a, --add                   add the named entries
       -d, --delete                delete the named entries
