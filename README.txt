@@ -350,7 +350,7 @@ file per day. Quick tour:
 
     > plc ledger report       # net, by account/category
     > plc ledger bal          # net-worth snapshot
-    > plc ledger reg coffee   # register, filtered
+    > plc ledger reg -g coffee # register, filtered
 
 ledger has its own subcommands (add, edit, rm, report, reg, balance/bal,
 check, fmt, stat, account/acc, last, undo) and a full grammar for dates,

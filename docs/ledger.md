@@ -113,8 +113,8 @@ account) are hidden from `by account`; categories always list in full.
       2026-07-19       200.00 EUR     +5400.00  @bnp > @cash  ATM
       2026-07-19        -4.50 EUR     +5395.50  @cash #coffee  Blue Bottle
 
-Add a search term to narrow it — `plc ledger reg coffee` shows only transactions
-touching `coffee`, with a running total of just those.
+Add a search term to narrow it — `plc ledger reg -g coffee` shows only
+transactions touching `coffee`, with a running total of just those.
 
 ## 2.3 The balance snapshot
 
@@ -141,8 +141,9 @@ transactions:
         2026-07-19     +3000.00 EUR  @bnp #opening  opening balance
 
 `-n N` sets how many recent transactions to show (default 5); it takes the same
-`PATTERN` / `--cleared` / date filters as `report` and `reg`, so
-`plc ledger bal rent -n 3` shows your rent standing plus the last three rent moves.
+`-g PATTERN` / `--cleared` / date filters as `report` and `reg`, so
+`plc ledger bal -g rent -n 3` shows your rent standing plus the last three
+rent moves.
 
 ---
 
@@ -381,15 +382,15 @@ receipt or split a bill inline:
 
 # 6 Reports
 
-    plc ledger report  [PATTERN…]    summary: net, by account / category / project
-    plc ledger reg     [PATTERN…]    chronological register + running total
-    plc ledger balance [PATTERN…]    net worth, account balances, recent (alias bal)
+    plc ledger report  [-g PATTERN]  summary: net, by account / category / project
+    plc ledger reg     [-g PATTERN]  chronological register + running total
+    plc ledger balance [-g PATTERN]  net worth, account balances, recent (alias bal)
     plc ledger check   [--strict]    verify balance assertions (and declarations)
     plc ledger fmt     [--check]     reformat every ledger file in place
 
-`PATTERN` keeps transactions whose account, category, tag, or memo contains it
-(case-insensitive; multiple patterns match if any does). `report`, `reg`, and
-`balance` share these filters:
+`-g PATTERN` keeps transactions whose account, category, tag, or memo
+contains it (case-insensitive; repeated, a transaction matching any one is
+kept). `report`, `reg`, and `balance` share these filters:
 
     --since YYYY-MM-DD    --until YYYY-MM-DD    --month YYYY-MM
     --cleared             --pending
@@ -397,7 +398,7 @@ receipt or split a bill inline:
 
 For example, July's dining, cleared only:
 
-    $ plc ledger report food/dining --month 2026-07 --cleared
+    $ plc ledger report -g food/dining --month 2026-07 --cleared
 
 `plc ledger stat` brings the `plc stat` calendar heatmap / line-plot to daily
 **spend**, and takes the same date and `-f` (see the README's `stat` section);
@@ -579,9 +580,9 @@ precedence is `--cur` > `$PLC_CURRENCY` > `.plc/config` > `EUR`. The
       --amount / --memo / -a / -c / --to / -i / --expense / --cur /
       -p / --no-projects / -d / --cleared / --pending / --uncleared /
       --assert / --no-assert      change that field in place (id stays frozen)
-    plc ledger report  [PATTERN…]    summary report         (+ filters, --depth)
-    plc ledger reg     [PATTERN…]    chronological register (+ filters)
-    plc ledger balance [PATTERN…]    net-worth snapshot      (+ filters, -n N)
+    plc ledger report  [-g PATTERN]  summary report         (+ filters, --depth)
+    plc ledger reg     [-g PATTERN]  chronological register (+ filters)
+    plc ledger balance [-g PATTERN]  net-worth snapshot      (+ filters, -n N)
     plc ledger check   [--strict]    verify assertions (+ undeclared names)
     plc ledger fmt     [--check]     reformat every ledger file in place
     plc ledger stat    [DD MM YY]    spend calendar/plot/stats (see README)

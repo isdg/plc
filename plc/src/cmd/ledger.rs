@@ -217,9 +217,9 @@ pub struct CheckArgs {
 
 #[derive(Args)]
 pub struct ReportArgs {
-    /// Keep only transactions whose account/category/tag/memo contains a PATTERN
-    /// (case-insensitive). Multiple patterns match if any one does.
-    #[arg(value_name = "PATTERN")]
+    /// Keep only transactions whose account/category/tag/memo contains
+    /// PATTERN (case-insensitive); repeat for any of several, as `stat -g`.
+    #[arg(short = 'g', long = "grep", value_name = "PATTERN")]
     patterns: Vec<String>,
     /// Only cleared (`*`) transactions.
     #[arg(long = "cleared", conflicts_with = "pending")]
@@ -243,7 +243,7 @@ pub struct ReportArgs {
 
 #[derive(Args)]
 pub struct BalanceArgs {
-    /// Same filtering as `report`/`reg` (PATTERN, --cleared/--pending, dates).
+    /// Same filtering as `report`/`reg` (-g, --cleared/--pending, dates).
     #[command(flatten)]
     filter: ReportArgs,
     /// How many recent transactions to list (default 5).
