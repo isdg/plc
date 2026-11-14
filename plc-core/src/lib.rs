@@ -105,6 +105,36 @@ impl<'a> Iterator for Links<'a> {
     }
 }
 
+/// Rename the targets of `content`'s links: `rename` gets each target's name
+/// as written (compare it with [`fold_name`]) and may return a new one,
+/// which replaces it, keeping any path, `|alias`, `#heading` or `^block`.
+/// Returns the new content and how many links it renamed.
+pub fn rename_links<F>(content: &str, rename: F) -> (String, usize)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let mut out = String::with_capacity(content.len());
+    let (mut at, mut renamed) = (0, 0);
+    for link in links(content) {
+        let inner = link.inner;
+        let path = &inner[..inner.find(['|', '#', '^']).unwrap_or(inner.len())];
+        let base_at = path.rfind('/').map_or(0, |s| s + 1);
+        let base = &path[base_at..];
+        let name = base.trim();
+        let Some(new) = rename(name) else {
+            continue;
+        };
+        let lead = base.len() - base.trim_start().len();
+        let from = link.range.start + 2 + base_at + lead;
+        out.push_str(&content[at..from]);
+        out.push_str(&new);
+        at = from + name.len();
+        renamed += 1;
+    }
+    out.push_str(&content[at..]);
+    (out, renamed)
+}
+
 /// Scan markdown content for `[[...]]` outbound links. Each normalized
 /// target is inserted into `targets`. Returns true iff any well-formed
 /// `[[...]]` was seen.
@@ -182,6 +212,20 @@ mod tests {
         let got: Vec<_> = links("[[a] x [[b]]").map(|l| l.inner).collect();
         assert_eq!(got, ["b"]);
         assert_eq!(links("[[open").count(), 0);
+    }
+
+    #[test]
+    fn rename_links_keeps_path_alias_and_heading() {
+        let text = "[[do]] [[a/Do-W1|w#x]] [[do-2#h]] [[dog]] [[ do-W1 ]]";
+        let rename = |name: &str| match fold_name(name).as_str() {
+            "do" | "do-w1" => Some(format!("to{name}")),
+            _ => None,
+        };
+        let (out, n) = rename_links(text, rename);
+        let want =
+            "[[todo]] [[a/toDo-W1|w#x]] [[do-2#h]] [[dog]] [[ todo-W1 ]]";
+        assert_eq!((out.as_str(), n), (want, 3));
+        assert_eq!(rename_links("[[x]] no", |_| None), ("[[x]] no".into(), 0));
     }
 
     #[test]
