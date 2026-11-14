@@ -297,14 +297,16 @@ Usage: plc stat [DD [MM [YY]]] [-f FORMAT] [--color auto|always|never]
 
 The bytes written each day. The date is read as plc daily reads it, a
 field left off being today's; - for a whole field widens it to a month
-or a year:
+or a year. A day lists the notes written on it; a month or a year is
+drawn as a heatmap:
 
-    plc stat                this month
-    plc stat 27             the 27th of this month: the notes written
-    plc stat 27 09 25       27 Sep 2025: the notes written
+    plc stat                today
+    plc stat 27             the 27th of this month
+    plc stat 27 09 25       27 Sep 2025
+    plc stat -              this month
     plc stat - 09 25        September 2025
-    plc stat - - 25         2025
     plc stat - -            this year
+    plc stat - - 25         2025
 
 Every note in the vault counts but those in hidden directories and the
 +ledger notes, whose transactions plc ledger stat counts. A note's text

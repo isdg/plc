@@ -1,10 +1,10 @@
 //! The date the stat commands take: `DD [MM [YY]]` as `plc daily` reads it,
-//! a field left off at the end being today's, and `-` for a whole field,
-//! which widens what is shown: `- MM YY` is a month, `- - YY` a year.
+//! a field left off being today's, so no date is today, and `-` for a whole
+//! field, which widens what is shown: `- MM YY` is a month, `- - YY` a year.
 
 use chrono::{Datelike, NaiveDate};
 
-/// What a date names. No date at all is the current month.
+/// What a date names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     Day(NaiveDate),
@@ -28,7 +28,7 @@ pub fn parse(fields: &[String], today: NaiveDate) -> Result<Scope, String> {
         None => Some(today.month()),
     };
     match (fields.len(), field(0), month) {
-        (0, _, _) => Ok(Scope::Month(today.year(), today.month())),
+        (0, _, _) => Ok(Scope::Day(today)),
         (4.., _, _) => Err("a date is at most DD MM YY".to_string()),
         (_, Some(WHOLE), None) => Ok(Scope::Year(year)),
         (_, Some(WHOLE), Some(m)) => Ok(Scope::Month(year, m)),
@@ -78,8 +78,8 @@ mod tests {
     }
 
     #[test]
-    fn no_date_is_this_month() {
-        assert_eq!(scope(&[]), Ok(Scope::Month(2026, 11)));
+    fn no_date_is_today() {
+        assert_eq!(scope(&[]), Ok(day(2026, 11, 14)));
     }
 
     #[test]

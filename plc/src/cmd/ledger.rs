@@ -184,7 +184,7 @@ pub struct FmtArgs {
 #[derive(Args)]
 pub struct LedgerStatArgs {
     /// `DD [MM [YY]]`, as `plc stat` takes it: a day lists its
-    /// transactions, `- MM YY` is a month, `- - YY` a year, none this month.
+    /// transactions, `- MM YY` is a month, `- - YY` a year, none today.
     #[arg(value_name = "DD MM YY")]
     date: Vec<String>,
     /// Limit to transactions whose account/category/tag/memo contains

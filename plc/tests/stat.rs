@@ -30,7 +30,7 @@ fn always_colours_every_heatmap_from_the_ansi_ramp() {
     let home = with_vault("stat-always");
     let mut runs = Vec::new();
     for cmd in [&["stat"][..], &["ledger", "stat"]] {
-        for date in [&[][..], &["-", "-"]] {
+        for date in [&["-"][..], &["-", "-"]] {
             for format in ["grid", "rows"] {
                 runs.push([cmd, date, &["-f", format]].concat());
             }

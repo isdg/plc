@@ -404,7 +404,8 @@ For example, July's dining, cleared only:
 **spend**, and takes the same date and `-f` (see the README's `stat` section);
 `--of income|net` switches what it measures, `-g PATTERN` filters:
 
-    plc ledger stat                    this month
+    plc ledger stat                    today: its transactions
+    plc ledger stat -                  this month
     plc ledger stat 27 09 25           27 Sep 2025: its transactions, largest first
     plc ledger stat - 09 25 -g coffee  September 2025's coffee
     plc ledger stat - - 25 -f plot     2025 as a line chart

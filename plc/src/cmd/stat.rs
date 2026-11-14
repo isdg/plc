@@ -41,7 +41,7 @@ fn bytes_heat(values: &[u64], cells: Cells) -> Heat {
 pub struct StatArgs {
     /// `DD [MM [YY]]`, as `plc daily` takes it, today's for any field left
     /// off; `-` for a whole field shows a month (`- MM YY`) or a year
-    /// (`- - YY`). None is this month.
+    /// (`- - YY`). None is today; `-` is this month.
     #[arg(value_name = "DD MM YY")]
     date: Vec<String>,
     /// How to show it: a day as `list` (default) or `tsv`; a month or year
