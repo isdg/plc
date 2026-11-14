@@ -4,14 +4,14 @@
 //! assigned at creation: `isg0.md`, `isg1.md`, … `isg52.md`. The next index is
 //! one past the highest existing `isg<N>.md` (so deletions never cause reuse).
 //!
-//! A note can be *continued* with letter suffixes: `isg52a`, `isg52b`, … are
-//! continuations of `isg52`. Letters use a bijective base-26 sequence
-//! (`a`…`z`, `aa`, `ab`, …) so continuations never run out.
+//! A note can be *followed up* with letter suffixes: `isg52a`, `isg52b`, … are
+//! follow-ups of `isg52`. Letters use a bijective base-26 sequence
+//! (`a`…`z`, `aa`, `ab`, …) so follow-ups never run out.
 //!
 //!   `plc isg`                  open the last (most recently modified) note
 //!   `plc isg -l` / `--last`    open the last note (explicit alias of default)
-//!   `plc isg -n` / `--next`    create the next enumerated note → prints path
-//!   `plc isg -c [N]`           continue note N (or the latest) → isg<N><letter>
+//!   `plc isg -n` / `--new`     create the next enumerated note → prints path
+//!   `plc isg -f [N]`           follow up note N (or the latest) → isg<N><letter>
 //!   `plc isg --list`           list notes newest-first → zsh pipes to fzf
 //!   `plc isg NAME`             resolve/open an existing note by basename
 
@@ -28,24 +28,24 @@ const TAG: &str = "isg";
 #[derive(Args)]
 pub struct IsgArgs {
     /// Open the last (most recently modified) note — same as no flag.
-    #[arg(short = 'l', long = "last", conflicts_with_all = ["list", "next", "cont", "name"])]
+    #[arg(short = 'l', long = "last", conflicts_with_all = ["list", "new", "follow", "name"])]
     last: bool,
     /// List isg notes newest-first (zsh pipes this through fzf).
-    #[arg(long = "list", conflicts_with_all = ["next", "cont", "name"])]
+    #[arg(long = "list", conflicts_with_all = ["new", "follow", "name"])]
     list: bool,
     /// Create the next enumerated note (isg0, isg1, …).
-    #[arg(short = 'n', long = "next", conflicts_with_all = ["cont", "name"])]
-    next: bool,
-    /// Continue note INDEX (or the latest if omitted) with the next letter
+    #[arg(short = 'n', long = "new", conflicts_with_all = ["follow", "name"])]
+    new: bool,
+    /// Follow up note INDEX (or the latest if omitted) with the next letter
     /// suffix → isg<INDEX>a, isg<INDEX>b, …
     #[arg(
-        short = 'c',
-        long = "continue",
+        short = 'f',
+        long = "follow",
         value_name = "INDEX",
         num_args = 0..=1,
         conflicts_with = "name"
     )]
-    cont: Option<Option<u64>>,
+    follow: Option<Option<u64>>,
     /// Open an existing note by basename (".md" appended if missing).
     #[arg(value_name = "NAME")]
     name: Option<String>,
@@ -66,14 +66,14 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
 
     let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
 
-    let filename = if args.next {
-        // -n/--next: next enumerated note.
+    let filename = if args.new {
+        // -n/--new: next enumerated note.
         format!("isg{}.md", next_index(&names))
-    } else if let Some(which) = args.cont {
-        // --continue [INDEX]: continue note INDEX (or the latest) with a letter.
+    } else if let Some(which) = args.follow {
+        // -f/--follow [INDEX]: follow up note INDEX (or the latest) with a letter.
         let base = match which {
             Some(n) => n,
-            None => max_base(&names).ok_or_else(|| "isg: no notes to continue".to_string())?,
+            None => max_base(&names).ok_or_else(|| "isg: no notes to follow up".to_string())?,
         };
         next_continuation(&names, base)
     } else if let Some(n) = args.name {
