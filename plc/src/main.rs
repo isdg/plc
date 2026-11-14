@@ -23,16 +23,6 @@ use config::Palace;
     about = "palace notes manager — creates files, prints their paths"
 )]
 struct Cli {
-    /// Append a postfix to every created note's filename, before the extension
-    /// (e.g. `--postfix review` → `2026-07-14T20.28+review.md`). Applies to
-    /// whichever subcommand runs.
-    #[arg(short = 'x', long = "postfix", global = true, value_name = "TEXT")]
-    postfix: Option<String>,
-    /// Seed an extra `[[TAG]]` wikilink line into every newly-created note body
-    /// (e.g. `--tag review`). Only affects notes seeded with a header — not
-    /// `shot -i`/`--no-header` bodies.
-    #[arg(short = 't', long = "tag", global = true, value_name = "TAG")]
-    tag: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -42,14 +32,14 @@ enum Cmd {
     /// Create/resolve today's (or a given date's) daily note.
     Daily(cmd::daily::DailyArgs),
     /// Create/resolve this week's note.
-    Weekly,
+    Weekly(note::NoteArgs),
     /// Create a timestamped snapshot note in the daily dir (or a chosen path).
     Shot(cmd::shot::ShotArgs),
     /// Create/resolve a stamped note NAME in the notes dir.
     #[command(visible_aliases = ["note", "no"])]
     Add(cmd::add::AddArgs),
     /// Create/resolve TOP.md at the vault root (the palace landing page).
-    Top,
+    Top(note::NoteArgs),
     /// Manage do-notes (week-based) with a "last" pointer.
     Do(cmd::do_notes::DoArgs),
     /// Plain-text double-entry ledger: append transactions to `+ledger` notes.
@@ -79,8 +69,20 @@ fn main() -> ExitCode {
 
     // A postfix ends up in a filename, and a tag in a `[[…]]` wikilink, so
     // validate both before they reach the note layer.
-    let stamped = validate_postfix(cli.postfix).and_then(|postfix| {
-        let tag = validate_tag(cli.tag)?;
+    let flags = match &cli.cmd {
+        Cmd::Daily(a) => Some(&a.note),
+        Cmd::Weekly(n) | Cmd::Top(n) => Some(n),
+        Cmd::Shot(a) => Some(&a.note),
+        Cmd::Add(a) => Some(&a.note),
+        Cmd::Do(a) => Some(&a.note),
+        Cmd::Murmur(a) => Some(&a.note),
+        Cmd::Isg(a) => Some(&a.note),
+        _ => None,
+    };
+    let flags = flags.map(|n| (n.postfix.clone(), n.tag.clone()));
+    let (postfix, tag) = flags.unwrap_or_default();
+    let stamped = validate_postfix(postfix).and_then(|postfix| {
+        let tag = validate_tag(tag)?;
         Ok((postfix, tag))
     });
     match stamped {
@@ -98,10 +100,10 @@ fn main() -> ExitCode {
     // (and can run without a vault when given `-r`).
     let result = match cli.cmd {
         Cmd::Daily(args) => with_palace(|p| cmd::daily::run(p, args)),
-        Cmd::Weekly => with_palace(cmd::weekly::run),
+        Cmd::Weekly(_) => with_palace(cmd::weekly::run),
         Cmd::Shot(args) => cmd::shot::run(args),
         Cmd::Add(args) => cmd::add::run(args),
-        Cmd::Top => with_palace(cmd::top::run),
+        Cmd::Top(_) => with_palace(cmd::top::run),
         Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
         Cmd::Ledger(args) => with_palace(|p| cmd::ledger::run(p, args)),
         Cmd::Stat(args) => with_palace(|p| cmd::stat::run(p, args)),
@@ -135,7 +137,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Validate the global `--postfix`: trim it, and reject a blank value or one
+/// Validate `--postfix`: trim it, and reject a blank value or one
 /// containing a path separator (it must stay a single filename component).
 /// Returns the cleaned postfix (or `None` when the flag was absent).
 fn validate_postfix(postfix: Option<String>) -> Result<Option<String>, String> {

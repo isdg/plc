@@ -42,6 +42,8 @@ pub struct DoArgs {
     /// List do-notes (last marked with `*`).
     #[arg(short = 'L', long = "list")]
     list: bool,
+    #[command(flatten)]
+    pub note: note::NoteArgs,
 }
 
 pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {

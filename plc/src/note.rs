@@ -21,6 +21,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
 
+/// The flags of every command that creates a note.
+#[derive(clap::Args, Default)]
+pub struct NoteArgs {
+    /// Append a postfix to the created note's filename, before the extension
+    /// (e.g. `--postfix review` → `2026-07-14T20.28+review.md`).
+    #[arg(short = 'x', long = "postfix", value_name = "TEXT")]
+    pub postfix: Option<String>,
+    /// Seed an extra `[[TAG]]` wikilink line into the new note's body (e.g.
+    /// `--tag review`). Only notes seeded with a header — not
+    /// `shot -i`/`--no-header` bodies.
+    #[arg(short = 't', long = "tag", value_name = "TAG")]
+    pub tag: Option<String>,
+}
+
 /// Default stamp prefix — the author's handle, used by every note type except
 /// `isg` notes (which lead with their own index, e.g. `isg20`).
 pub const SIGNATURE: &str = "isg";

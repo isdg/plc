@@ -37,6 +37,8 @@ pub struct ShotArgs {
     /// writes just the inline text.
     #[arg(short = 'H', long = "no-header")]
     no_header: bool,
+    #[command(flatten)]
+    pub note: note::NoteArgs,
 }
 
 pub fn run(args: ShotArgs) -> Result<String, String> {

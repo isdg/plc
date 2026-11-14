@@ -29,6 +29,8 @@ pub struct DailyArgs {
     /// Lets the shell prompt before a new note is actually written.
     #[arg(long = "check")]
     check: bool,
+    #[command(flatten)]
+    pub note: note::NoteArgs,
 }
 
 pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {

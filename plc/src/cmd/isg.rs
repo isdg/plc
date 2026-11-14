@@ -43,6 +43,8 @@ pub struct IsgArgs {
     /// Open an existing note by basename (".md" appended if missing).
     #[arg(value_name = "NAME")]
     name: Option<String>,
+    #[command(flatten)]
+    pub note: note::NoteArgs,
 }
 
 pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {

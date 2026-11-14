@@ -17,6 +17,8 @@ pub struct AddArgs {
     /// The note's name (".md" appended if missing).
     #[arg(value_name = "NAME")]
     name: String,
+    #[command(flatten)]
+    pub note: note::NoteArgs,
 }
 
 pub fn run(args: AddArgs) -> Result<String, String> {

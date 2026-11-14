@@ -106,10 +106,11 @@ ENVIRONMENT
                   (default: EUR)
 
 -------------------------------------------------------------------------------
-GLOBAL OPTIONS
+NOTE OPTIONS
 -------------------------------------------------------------------------------
 
-These apply to whichever subcommand runs:
+The commands that create a note (daily, weekly, shot, add, top, do, murmur,
+isg) take:
 
     -x, --postfix TEXT   append +TEXT to the created note's filename, before
                          the extension (2026-07-14T20.28.md → …+TEXT.md)

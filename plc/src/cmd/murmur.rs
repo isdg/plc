@@ -30,6 +30,8 @@ pub struct MurmurArgs {
     /// Positional note name (alternative to -n NAME).
     #[arg(value_name = "NAME", conflicts_with = "name")]
     positional: Option<String>,
+    #[command(flatten)]
+    pub note: note::NoteArgs,
 }
 
 pub fn run(palace: &Palace, args: MurmurArgs) -> Result<String, String> {

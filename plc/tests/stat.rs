@@ -152,3 +152,12 @@ fn ledger_stat_takes_the_same_dates() {
     let none = ok(&mut home.plc(&["ledger", "stat", "06", "11", "26"]));
     assert_eq!(none, "\n  Fri 2026-11-06   no spend");
 }
+
+#[test]
+fn note_flags_belong_to_note_commands() {
+    let home = with_vault("stat-note-flags");
+    let err = fail(&mut home.plc(&["stat", "-x", "v2"]));
+    assert!(err.contains("unexpected argument '-x'"), "{err}");
+    let add = ["ledger", "add", "1", "x", "-a", "cash", "-x", "v"];
+    assert!(fail(&mut home.plc(&add)).contains("unexpected argument '-x'"));
+}
