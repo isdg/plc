@@ -73,6 +73,8 @@ fn a_postfixed_note_is_marked_and_followed() {
     assert_eq!(ok(&mut home.plc(&["isg"])), made);
     let follow = ok(&mut home.plc(&["isg", "-nf"]));
     assert_eq!(follow, display(&dir.join("isg0a.md")));
+    let next = ok(&mut home.plc(&["isg", "-n"]));
+    assert_eq!(next, display(&dir.join("isg1.md")));
 }
 
 #[test]

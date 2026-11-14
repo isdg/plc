@@ -2,7 +2,8 @@
 //!
 //! Like murmur notes, but auto-named with a monotonically increasing index
 //! assigned at creation: `isg0.md`, `isg1.md`, … `isg52.md`. The next index is
-//! one past the highest existing `isg<N>.md` (so deletions never cause reuse).
+//! one past the highest any note carries, postfixed or followed up: a gap is
+//! never refilled, though deleting every note of the top index frees it.
 //!
 //! A note can be *followed up* with letter suffixes: `isg52a`, `isg52b`, … are
 //! follow-ups of `isg52`. Letters use a bijective base-26 sequence
@@ -109,23 +110,13 @@ fn last_note(note_dir: &Path, pointer: &Path, names: &[String]) -> Option<String
         .or_else(|| names.first().cloned())
 }
 
-/// The next isg index: one past the highest existing `isg<N>.md`, or 0 if none.
+/// The next isg index: one past the highest index of any note, or 0 if none.
 fn next_index(names: &[String]) -> u64 {
     names
         .iter()
-        .filter_map(|n| parse_index(n))
+        .filter_map(|n| base_of(n))
         .max()
         .map_or(0, |m| m + 1)
-}
-
-/// Parse the index out of an `isg<digits>.md` basename. `None` for anything
-/// else (`isg.md`, `isgfoo.md`, continuations like `isg5a.md`, non-isg names).
-fn parse_index(name: &str) -> Option<u64> {
-    let digits = name.strip_suffix(".md")?.strip_prefix("isg")?;
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse::<u64>().ok()
 }
 
 /// The index a note belongs to: 52 for `isg52.md`, `isg52b.md` and
@@ -239,12 +230,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_index_cases() {
-        assert_eq!(parse_index("isg0.md"), Some(0));
-        assert_eq!(parse_index("isg52.md"), Some(52));
-        assert_eq!(parse_index("isg.md"), None);
-        assert_eq!(parse_index("isgfoo.md"), None);
-        assert_eq!(parse_index("foo.md"), None);
+    fn next_index_counts_postfixed_and_follow_ups() {
+        assert_eq!(next_index(&s(&["isg1.md", "isg2+review.md"])), 3);
+        // isg4 itself deleted, its follow-up kept: 4 stays taken.
+        assert_eq!(next_index(&s(&["isg3.md", "isg4b.md"])), 5);
     }
 
     #[test]
