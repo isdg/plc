@@ -168,14 +168,13 @@ Usage: plc daily [DD [MM [YY|YYYY]]]
 
 Create or resolve a daily note at
 notes/management/daily/YYYY/MM/YYYY-MM-DD.md (tag [[daily]]). With no
-arguments it's today; a date can be given positionally (day, then month,
-then year) or via flags:
+arguments it's today; a date is day, then month, then year, any left off
+being today's, as plc stat reads it:
 
-    -d, --day DD          -m, --month MM        -y, --year YY|YYYY
     --check               resolve only: print new|old<TAB><path> without
                           creating (lets the shell prompt before writing)
 
-Any explicitly given date field back-dates the note (marked with a *).
+Any explicitly given date back-dates the note (marked with a *).
 
     > plc daily                 # today
     > plc daily 1 8             # the 1st of August, this year
