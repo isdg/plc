@@ -95,6 +95,21 @@ impl Heat {
     }
 }
 
+/// How a stat command shows what its date names, as `-f` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Format {
+    /// A row per weekday and a column per week, as GitHub draws a year.
+    Grid,
+    /// A row of days per month, with a days/total summary.
+    Rows,
+    /// A line chart of the days.
+    Plot,
+    /// A day's entries, most first.
+    List,
+    /// `date<TAB>value` per day, or `entry<TAB>value` for a day.
+    Tsv,
+}
+
 /// The heatmap shape for both scopes, as `--layout` names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Layout {

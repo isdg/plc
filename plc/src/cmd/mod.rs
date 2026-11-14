@@ -17,3 +17,4 @@ pub mod shot;
 pub mod stat;
 pub mod top;
 pub mod weekly;
+pub mod when;

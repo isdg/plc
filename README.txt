@@ -292,12 +292,18 @@ take part in this graph.
 PLC STAT
 -------------------------------------------------------------------------------
 
-Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
-                [--layout git|tab] [-p] [--color auto|always|never]
-       plc stat --day DD MM YY
+Usage: plc stat [DD [MM [YY]]] [-f FORMAT] [--color auto|always|never]
 
-Render the bytes written each day as a calendar heatmap, with a stats
-block. A whole month or year is shown, so a positional day is discarded.
+The bytes written each day. The date is read as plc daily reads it, a
+field left off being today's; - for a whole field widens it to a month
+or a year:
+
+    plc stat                this month
+    plc stat 27             the 27th of this month: the notes written
+    plc stat 27 09 25       27 Sep 2025: the notes written
+    plc stat - 09 25        September 2025
+    plc stat - - 25         2025
+    plc stat - -            this year
 
 Every note in the vault counts but those in hidden directories and the
 +ledger notes, whose transactions plc ledger stat counts. A note's text
@@ -313,20 +319,21 @@ scales contributions, and the legend shows them. Each day is a shade
 glyph (· ░ ▒ ▓ █); on a terminal, empty days are bright black and the
 rest green, the terminal's own ANSI colours, so the heatmap follows its
 light and dark themes. Piped, or with NO_COLOR set, the glyphs are
-plain. plc ledger stat takes --color and --layout too.
+plain. plc ledger stat takes --color too.
 
-Both scopes have two layouts. git draws a row per weekday and a column
-per week, as GitHub does; a month heads each week's column with its
-first day, so the Tuesday under 8 is the 10th. tab draws a row of days
-per month with the days written and total; a month gets a day axis.
+-f picks how it is shown; a format that does not fit the date is an
+error:
 
-    --type month|year     scope (default: month)
-    -m, --month M         month 1-12 (default: current)
-    -y, --year Y          year, 2- or 4-digit (default: current)
-    --layout git|tab      GitHub-style grid (default) or rows of days
-    -p, --plot            replace the heatmap with an ASCII line chart
-    --day DD MM YY        list the notes written that day instead, most
-                          bytes first, with the bytes each
+    grid    a month or year (default): a row per weekday and a column per
+            week, as GitHub draws it; a month heads each week's column
+            with its first day, so the Tuesday under 8 is the 10th
+    rows    a month or year as a row of days per month, with the days
+            written and total; a month gets a day axis
+    plot    a month or year as an ASCII line chart
+    list    a day (default): its notes, most bytes first
+    tsv     YYYY-MM-DD<TAB>bytes for each day of a month or year, or
+            path<TAB>bytes for each note of a day, for scripts
+
     --color WHEN          colour the glyphs: auto (on a terminal, the
                           default), always, or never
 
