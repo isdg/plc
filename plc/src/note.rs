@@ -222,6 +222,22 @@ pub fn append_line(
     Ok(path)
 }
 
+/// Read a pointer file's basename, trimming the trailing newline; `None` if
+/// the file is absent or blank. `do` and `isg` keep their "last" note so.
+pub fn read_pointer(pointer: &Path) -> Option<String> {
+    let s = fs::read_to_string(pointer).ok()?;
+    let t = s.trim();
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+/// Write a pointer file, creating its parent (`.plc`) if needed.
+pub fn write_pointer(pointer: &Path, name: &str) -> std::io::Result<()> {
+    if let Some(parent) = pointer.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(pointer, format!("{name}\n"))
+}
+
 /// List `*.md` basenames in `dir`, newest-first (mtime desc, name asc on ties).
 /// Shared by the `murmur` and `isg` list/pick flows.
 pub fn list_md_by_recency(dir: &Path) -> std::io::Result<Vec<String>> {
@@ -254,6 +270,22 @@ mod tests {
 
     fn t(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn pointer_roundtrip_and_trim() {
+        let dir = std::env::temp_dir().join(format!("plc-ptr-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let p = dir.join(".plc").join("last");
+
+        assert_eq!(read_pointer(&p), None); // absent
+        write_pointer(&p, "do-2026-W25.md").unwrap(); // creates .plc
+        assert_eq!(read_pointer(&p), Some("do-2026-W25.md".to_string()));
+
+        fs::write(&p, "   \n").unwrap();
+        assert_eq!(read_pointer(&p), None); // blank → None
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

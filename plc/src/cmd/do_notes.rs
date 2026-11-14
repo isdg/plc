@@ -128,23 +128,11 @@ fn format_list(names: &[String], last: Option<&str>) -> String {
 /// The recorded "last" note: the `.plc/last-do` pointer, falling back to the
 /// legacy `<root>/.last-do` for vaults written before the move.
 fn resolve_last(pointer: &Path, legacy: &Path) -> Option<String> {
-    read_pointer(pointer).or_else(|| read_pointer(legacy))
+    note::read_pointer(pointer).or_else(|| note::read_pointer(legacy))
 }
 
-/// Read the pointer's basename, trimming the trailing newline; `None` if the
-/// file is absent or blank.
-fn read_pointer(pointer: &Path) -> Option<String> {
-    let s = fs::read_to_string(pointer).ok()?;
-    let t = s.trim();
-    (!t.is_empty()).then(|| t.to_string())
-}
-
-/// Write the pointer, creating its parent (`.plc`) if needed.
 fn write_pointer(pointer: &Path, name: &str) -> Result<(), String> {
-    if let Some(parent) = pointer.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("do: {e}"))?;
-    }
-    fs::write(pointer, format!("{name}\n")).map_err(|e| format!("do: {e}"))
+    note::write_pointer(pointer, name).map_err(|e| format!("do: {e}"))
 }
 
 #[cfg(test)]
@@ -167,22 +155,6 @@ mod tests {
     #[test]
     fn list_empty() {
         assert_eq!(format_list(&[], Some("x.md")), "");
-    }
-
-    #[test]
-    fn pointer_roundtrip_and_trim() {
-        let dir = std::env::temp_dir().join(format!("plc-do-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let p = dir.join(".last-do");
-
-        assert_eq!(read_pointer(&p), None); // absent
-        write_pointer(&p, "do-2026-W25.md").unwrap();
-        assert_eq!(read_pointer(&p), Some("do-2026-W25.md".to_string())); // newline trimmed
-
-        fs::write(&p, "   \n").unwrap();
-        assert_eq!(read_pointer(&p), None); // blank → None
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
