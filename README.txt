@@ -292,12 +292,13 @@ take part in this graph.
 PLC STAT
 -------------------------------------------------------------------------------
 
-Usage: plc stat [DD MM YY] [--type month|year] [-m M] [-y Y]
+Usage: plc stat [MM | YY MM | YY MM DD] [--type month|year] [-m M] [-y Y]
                 [--layout git|tab] [-p] [--color auto|always|never]
        plc stat --day YY MM DD
 
 Render the bytes written each day as a calendar heatmap, with a stats
-block. A whole month or year is shown, so a positional day is discarded.
+block. A positional date runs year first, as --day does; a whole month
+or year is shown, so its day is discarded.
 
 Every note in the vault counts but those in hidden directories and the
 +ledger notes, whose transactions plc ledger stat counts. A note's text

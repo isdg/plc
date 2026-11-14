@@ -42,10 +42,10 @@ fn bytes_heat(values: &[u64], cells: Cells) -> Heat {
 
 #[derive(Args)]
 pub struct StatArgs {
-    /// Date as [DD [MM [YY|YYYY]]]; the day is discarded (a calendar shows a
-    /// whole month or year). Any field not given here falls back to a flag,
-    /// then to today.
-    #[arg(value_name = "DD MM YY")]
+    /// Date as `MM`, `YY MM` or `YY MM DD`, the order `--day` takes; the day
+    /// is discarded (a calendar shows a whole month or year). Any field not
+    /// given here falls back to a flag, then to today.
+    #[arg(value_name = "YY MM DD")]
     positional: Vec<String>,
     /// Statistic scope: `month` or `year`.
     #[arg(long = "type", value_name = "SCOPE", default_value = "month")]
@@ -107,7 +107,7 @@ pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
 /// Resolve the target `(year, month)` from flags + positional against `today`.
 ///
 /// Flags apply first (each defaulting to today); positional tokens then override
-/// per the script's shape — 1: `MM`, 2: `MM YY`, 3: `DD MM YY` (day discarded).
+/// largest field first — 1: `MM`, 2: `YY MM`, 3: `YY MM DD` (day discarded).
 fn resolve(
     month: Option<String>,
     year: Option<String>,
@@ -126,11 +126,7 @@ fn resolve(
     match positional {
         [] => {}
         [m] => mm = parse_month(m)?,
-        [m, y] => {
-            mm = parse_month(m)?;
-            yy = parse_year(y)?;
-        }
-        [_dd, m, y] => {
+        [y, m] | [y, m, _] => {
             mm = parse_month(m)?;
             yy = parse_year(y)?;
         }
@@ -349,14 +345,15 @@ mod tests {
     }
 
     #[test]
-    fn two_positionals_month_year() {
-        let (y, m) = resolve(none(), none(), &["5".into(), "24".into()], today()).unwrap();
+    fn two_positionals_year_month() {
+        let pos = ["24".into(), "5".into()];
+        let (y, m) = resolve(none(), none(), &pos, today()).unwrap();
         assert_eq!((y, m), (2024, 5));
     }
 
     #[test]
     fn three_positionals_discard_day() {
-        let pos = ["10".into(), "10".into(), "24".into()];
+        let pos = ["24".into(), "10".into(), "31".into()];
         let (y, m) = resolve(none(), none(), &pos, today()).unwrap();
         assert_eq!((y, m), (2024, 10));
     }
