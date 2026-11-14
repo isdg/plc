@@ -1,4 +1,4 @@
-//! End to end: `plc do` and `plc isg` list with `-l`, mark the last note
+//! End to end: `plc todo` and `plc isg` list with `-l`, mark the last note
 //! with `-L NAME`, and open it with `--last`, as with no flag.
 
 mod common;
@@ -17,16 +17,18 @@ fn do_lists_marks_and_opens_the_last() {
     let home = with_vault("last-do");
     let dir = "palace/notes/management/do";
     home.write(&format!("{dir}/do-2026-W01.md"), "a\n");
-    let new = ok(&mut home.plc(&["do", "-n"]));
-    let mark = ok(&mut home.plc(&["do", "-L", "do-2026-W01"]));
+    let new = ok(&mut home.plc(&["todo", "-n"]));
+    let mark = ok(&mut home.plc(&["todo", "-L", "do-2026-W01"]));
     assert_eq!(mark, "Marked as last: do-2026-W01.md");
-    let list = ok(&mut home.plc(&["do", "-l"]));
+    let list = ok(&mut home.plc(&["todo", "-l"]));
     assert!(list.contains("* do-2026-W01.md"), "{list}");
-    let last = ok(&mut home.plc(&["do", "--last"]));
-    assert_eq!(last, ok(&mut home.plc(&["do"])));
+    let last = ok(&mut home.plc(&["todo", "--last"]));
+    assert_eq!(last, ok(&mut home.plc(&["todo"])));
     assert!(last.ends_with("do-2026-W01.md") && last != new, "{last}");
-    let err = fail(&mut home.plc(&["do", "-L", "nope"]));
+    let err = fail(&mut home.plc(&["todo", "-L", "nope"]));
     assert!(err.contains("no such note"), "{err}");
+    let old = fail(&mut home.plc(&["do", "-n"]));
+    assert!(old.contains("unrecognized subcommand 'do'"), "{old}");
 }
 
 #[test]

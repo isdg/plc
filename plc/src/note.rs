@@ -223,7 +223,7 @@ pub fn append_line(
 }
 
 /// Read a pointer file's basename, trimming the trailing newline; `None` if
-/// the file is absent or blank. `do` and `isg` keep their "last" note so.
+/// the file is absent or blank. `todo` and `isg` keep their "last" note so.
 pub fn read_pointer(pointer: &Path) -> Option<String> {
     let s = fs::read_to_string(pointer).ok()?;
     let t = s.trim();

@@ -41,7 +41,7 @@ enum Cmd {
     /// Create/resolve TOP.md at the vault root (the palace landing page).
     Top(note::NoteArgs),
     /// Manage do-notes (week-based) with a "last" pointer.
-    Do(cmd::do_notes::DoArgs),
+    Todo(cmd::todo::TodoArgs),
     /// Plain-text double-entry ledger: append transactions to `+ledger` notes.
     #[command(visible_alias = "lr")]
     Ledger(cmd::ledger::LedgerArgs),
@@ -74,7 +74,7 @@ fn main() -> ExitCode {
         Cmd::Weekly(n) | Cmd::Top(n) => Some(n),
         Cmd::Shot(a) => Some(&a.note),
         Cmd::Add(a) => Some(&a.note),
-        Cmd::Do(a) => Some(&a.note),
+        Cmd::Todo(a) => Some(&a.note),
         Cmd::Murmur(a) => Some(&a.note),
         Cmd::Isg(a) => Some(&a.note),
         _ => None,
@@ -104,7 +104,7 @@ fn main() -> ExitCode {
         Cmd::Shot(args) => cmd::shot::run(args),
         Cmd::Add(args) => cmd::add::run(args),
         Cmd::Top(_) => with_palace(cmd::top::run),
-        Cmd::Do(args) => with_palace(|p| cmd::do_notes::run(p, args)),
+        Cmd::Todo(args) => with_palace(|p| cmd::todo::run(p, args)),
         Cmd::Ledger(args) => with_palace(|p| cmd::ledger::run(p, args)),
         Cmd::Stat(args) => with_palace(|p| cmd::stat::run(p, args)),
         Cmd::Murmur(args) => with_palace(|p| cmd::murmur::run(p, args)),

@@ -17,7 +17,7 @@
 //!   `plc isg NAME`             resolve/open an existing note by basename
 //!
 //! Every note plc creates or opens becomes the last, recorded in the vault's
-//! `.plc/last-isg` as `do` records its own. Without a pointer, or with a
+//! `.plc/last-isg` as `todo` records its own. Without a pointer, or with a
 //! stale one, the last note is the most recently modified.
 
 use std::fs;

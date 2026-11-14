@@ -18,7 +18,7 @@ are shared across every note type — including ledgers.
     plc shot       a timestamped snapshot note
     plc add        a named note in the notes dir (alias: plc note, plc no)
     plc top        TOP.md — the vault landing page
-    plc do         week-based "do" notes with a "last" pointer
+    plc todo       week-based "do" notes with a "last" pointer
     plc murmur     free-form named notes
     plc isg        enumerated writing notes (isg0, isg1, …)
     plc orphans    list notes with no links in or out
@@ -132,7 +132,7 @@ alone):
         archive/
         management/
           daily/YYYY/MM/…     # plc daily, plc shot, plc ledger
-          do/                 # plc do
+          do/                 # plc todo
           weekly/             # plc weekly
         me/writing/isg/       # plc isg
         me/writing/murmur/    # plc murmur
@@ -234,10 +234,10 @@ Create or resolve TOP.md at the vault root (tag [[top]]) — the palace
 landing page.
 
 -------------------------------------------------------------------------------
-PLC DO
+PLC TODO
 -------------------------------------------------------------------------------
 
-Usage: plc do [-n | -l | -L NAME | --last]
+Usage: plc todo [-n | -l | -L NAME | --last]
 
 Week-based "do" notes (do-<GGGG-Www>.md under notes/management/do) with a
 "last" pointer stored in <PALACE_DIR>/.plc/last-do.

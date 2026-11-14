@@ -36,7 +36,7 @@ fn weekly_and_do_notes_follow_week_start() {
     let home = with_rc("week-sat", "week_start = Saturday\n");
     let weekly = "notes/management/weekly";
     assert_week(&home, &["weekly"], weekly, "");
-    assert_week(&home, &["do", "-n"], "notes/management/do", "do-");
+    assert_week(&home, &["todo", "-n"], "notes/management/do", "do-");
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn a_bad_week_start_fails_and_is_reported() {
     let home = with_rc("week-bad", "week_start = sa\n");
     let want = "week_start: `sa` is not a weekday (monday … sunday)";
     assert!(fail(&mut home.plc(&["weekly"])).contains(want));
-    assert!(fail(&mut home.plc(&["do", "-n"])).contains(want));
+    assert!(fail(&mut home.plc(&["todo", "-n"])).contains(want));
     let out = ok(&mut home.plc(&["doctor"]));
     assert!(out.contains(&format!("  ! ~/.plc/.plcrc: {want}")), "{out}");
 }

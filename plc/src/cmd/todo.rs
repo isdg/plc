@@ -1,4 +1,4 @@
-//! `plc do` — manage week-based do-notes with a "last" pointer.
+//! `plc todo` — manage week-based do-notes with a "last" pointer.
 //!
 //! Ports `dn()` (palace.zsh). Do-notes live in `notes/management/do/` named
 //! `do-<YYYY-Www>.md`, the week starting on `week_start` (see
@@ -6,10 +6,10 @@
 //! basename of the most recently used note (older vaults kept it at the vault
 //! root as `.last-do`, which is still read as a fallback).
 //!
-//!   `plc do -n`         create this week's note, mark it last → its path
-//!   `plc do -l`         list notes, the last marked with `*`  → the listing
-//!   `plc do -L NAME`    mark NAME (basename) last             → a notice
-//!   `plc do`, `--last`  resolve the last note                 → its path
+//!   `plc todo -n`         create this week's note, mark it last → its path
+//!   `plc todo -l`         list notes, the last marked with `*`  → a list
+//!   `plc todo -L NAME`    mark NAME (basename) last             → a notice
+//!   `plc todo`, `--last`  resolve the last note                 → its path
 //!
 //! As with every command, `plc` only emits text; the zsh wrapper opens the
 //! printed path (for `-n`, `--last` / no-arg) with `$EDITOR` and just echoes
@@ -32,7 +32,7 @@ const POINTER: &str = "last-do";
 const LEGACY_POINTER: &str = ".last-do";
 
 #[derive(Args)]
-pub struct DoArgs {
+pub struct TodoArgs {
     /// Create a new do-note for the current week and mark it last.
     #[arg(
         short = 'n',
@@ -58,12 +58,12 @@ pub struct DoArgs {
     pub note: note::NoteArgs,
 }
 
-pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
+pub fn run(palace: &Palace, args: TodoArgs) -> Result<String, String> {
     let root = palace.root();
     let note_dir = root.join(SUBDIR);
     let pointer = palace.plc_dir().join(POINTER);
     let legacy = root.join(LEGACY_POINTER);
-    fs::create_dir_all(&note_dir).map_err(|e| format!("do: {e}"))?;
+    fs::create_dir_all(&note_dir).map_err(|e| format!("todo: {e}"))?;
 
     if args.new {
         new_note(root, &pointer)
@@ -78,13 +78,13 @@ pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
 
 /// `-n`: create this week's note, point "last" at it, return its path.
 fn new_note(root: &Path, pointer: &Path) -> Result<String, String> {
-    let start = rc::week_start().map_err(|e| format!("do: {e}"))?;
+    let start = rc::week_start().map_err(|e| format!("todo: {e}"))?;
     let today = Local::now().date_naive();
     let name = format!("do-{}.md", week::label(today, start));
     write_pointer(pointer, &name)?;
     note::ensure_note(root, SUBDIR, &name, "do", None, note::SIGNATURE)
         .map(|p| p.display().to_string())
-        .map_err(|e| format!("do: {e}"))
+        .map_err(|e| format!("todo: {e}"))
 }
 
 /// `-L NAME`: re-point "last" at an existing note, `.md` optional.
@@ -100,7 +100,7 @@ fn mark_last(
     };
     let target = note_dir.join(&file);
     if !target.is_file() {
-        return Err(format!("do: no such note: {}", target.display()));
+        return Err(format!("todo: no such note: {}", target.display()));
     }
     write_pointer(pointer, &file)?;
     Ok(format!("Marked as last: {file}"))
@@ -110,7 +110,7 @@ fn mark_last(
 fn list_notes(note_dir: &Path, pointer: &Path, legacy: &Path) -> Result<String, String> {
     let last = resolve_last(pointer, legacy);
     let mut names: Vec<String> = fs::read_dir(note_dir)
-        .map_err(|e| format!("do: {e}"))?
+        .map_err(|e| format!("todo: {e}"))?
         .flatten()
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .filter_map(|e| e.file_name().into_string().ok())
@@ -123,10 +123,13 @@ fn list_notes(note_dir: &Path, pointer: &Path, legacy: &Path) -> Result<String, 
 /// no-arg: resolve the "last" note's path, erroring if unset or stale.
 fn open_last(note_dir: &Path, pointer: &Path, legacy: &Path) -> Result<String, String> {
     let last = resolve_last(pointer, legacy)
-        .ok_or_else(|| "do: no last note recorded. Run 'plc do -n' first.".to_string())?;
+        .ok_or_else(|| {
+            "todo: no last note recorded. Run 'plc todo -n' first.".to_string()
+        })?;
     let target = note_dir.join(&last);
     if !target.is_file() {
-        return Err(format!("do: stale pointer (no file at {})", target.display()));
+        let at = target.display();
+        return Err(format!("todo: stale pointer (no file at {at})"));
     }
     Ok(target.display().to_string())
 }
@@ -153,7 +156,7 @@ fn resolve_last(pointer: &Path, legacy: &Path) -> Option<String> {
 }
 
 fn write_pointer(pointer: &Path, name: &str) -> Result<(), String> {
-    note::write_pointer(pointer, name).map_err(|e| format!("do: {e}"))
+    note::write_pointer(pointer, name).map_err(|e| format!("todo: {e}"))
 }
 
 #[cfg(test)]

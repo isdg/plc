@@ -55,7 +55,7 @@ fn plc_home_relocates_the_state() {
 #[test]
 fn do_pointer_stays_in_the_vault() {
     let home = with_vault("state-do");
-    ok(&mut home.plc(&["do", "-n"]));
+    ok(&mut home.plc(&["todo", "-n"]));
     assert!(home.path("palace/.plc/last-do").is_file());
     assert!(!home.path(".plc/palace/last-do").exists());
 }
