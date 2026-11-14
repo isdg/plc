@@ -15,16 +15,16 @@ fn with_vault(tag: &str) -> Home {
 #[test]
 fn do_lists_marks_and_opens_the_last() {
     let home = with_vault("last-do");
-    let dir = "palace/notes/management/do";
-    home.write(&format!("{dir}/do-2026-W01.md"), "a\n");
+    let dir = "palace/notes/management/todo";
+    home.write(&format!("{dir}/todo-2026-W01.md"), "a\n");
     let new = ok(&mut home.plc(&["todo", "-n"]));
-    let mark = ok(&mut home.plc(&["todo", "-L", "do-2026-W01"]));
-    assert_eq!(mark, "Marked as last: do-2026-W01.md");
+    let mark = ok(&mut home.plc(&["todo", "-L", "todo-2026-W01"]));
+    assert_eq!(mark, "Marked as last: todo-2026-W01.md");
     let list = ok(&mut home.plc(&["todo", "-l"]));
-    assert!(list.contains("* do-2026-W01.md"), "{list}");
+    assert!(list.contains("* todo-2026-W01.md"), "{list}");
     let last = ok(&mut home.plc(&["todo", "--last"]));
     assert_eq!(last, ok(&mut home.plc(&["todo"])));
-    assert!(last.ends_with("do-2026-W01.md") && last != new, "{last}");
+    assert!(last.ends_with("todo-2026-W01.md") && last != new, "{last}");
     let err = fail(&mut home.plc(&["todo", "-L", "nope"]));
     assert!(err.contains("no such note"), "{err}");
     let old = fail(&mut home.plc(&["do", "-n"]));

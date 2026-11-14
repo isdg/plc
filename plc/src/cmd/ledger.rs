@@ -1506,21 +1506,6 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
         }
     }
 
-    // A pre-`.plc` do-pointer left at the vault root.
-    let legacy = palace.root().join(".last-do");
-    if legacy.is_file() {
-        fixable += 1;
-        findings
-            .push("  ! legacy do-pointer at <root>/.last-do — should live in .plc/".to_string());
-        if fix {
-            let err = |e: std::io::Error| format!("ledger doctor: {e}");
-            let dir = palace.plc_dir();
-            std::fs::create_dir_all(&dir).map_err(err)?;
-            std::fs::rename(&legacy, dir.join("last-do")).map_err(err)?;
-            fixed.push("migrated .last-do → .plc/last-do".to_string());
-        }
-    }
-
     if findings.is_empty() {
         return Ok("\n  Doctor — all good  OK".to_string());
     }
@@ -1539,7 +1524,11 @@ pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
             out.push("  nothing auto-fixable; the items above need a manual call".to_string());
         }
     } else if fixable > 0 {
-        out.push("  run `plc doctor --fix` to apply the safe repairs (import undeclared, set currency, migrate pointer)".to_string());
+        out.push(
+            "  run `plc doctor --fix` to apply the safe repairs \
+             (import undeclared, set currency)"
+                .to_string(),
+        );
     }
     Ok(out.join("\n"))
 }

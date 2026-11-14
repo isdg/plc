@@ -125,14 +125,14 @@ plc init creates the canonical tree (idempotent — existing dirs are left
 alone):
 
     <PALACE_DIR>/
-      .plc/                   # travels with the vault: config, last-do,
+      .plc/                   # travels with the vault: config, last-todo,
                               # last-isg
       TOP.md                  # plc top
       notes/
         archive/
         management/
           daily/YYYY/MM/…     # plc daily, plc shot, plc ledger
-          do/                 # plc todo
+          todo/               # plc todo
           weekly/             # plc weekly
         me/writing/isg/       # plc isg
         me/writing/murmur/    # plc murmur
@@ -239,15 +239,19 @@ PLC TODO
 
 Usage: plc todo [-n | -l | -L NAME | --last]
 
-Week-based "do" notes (do-<GGGG-Www>.md under notes/management/do) with a
-"last" pointer stored in <PALACE_DIR>/.plc/last-do.
+Week-based todo notes (todo-<GGGG-Www>.md under notes/management/todo)
+with a "last" pointer stored in <PALACE_DIR>/.plc/last-todo.
 
-    (no flag), --last  resolve the "last" do-note's path (errors if
+    (no flag), --last  resolve the "last" todo note's path (errors if
                        unset/stale)
-    -n, --new          create this week's do-note and mark it "last"
-    -l, --list         list do-notes, marking the "last" one with *
-    -L, --mark NAME    mark an existing do-note "last" without opening it
+    -n, --new          create this week's todo note and mark it "last"
+    -l, --list         list todo notes, marking the "last" one with *
+    -L, --mark NAME    mark an existing todo note "last" without opening it
                        (basename, .md optional)
+
+They were do-notes once (do-*.md under notes/management/do, last-do,
+[[do]]); plc todo refuses a vault that still has them until plc doctor
+--fix renames them.
 
 -------------------------------------------------------------------------------
 PLC MURMUR
@@ -388,10 +392,12 @@ ignores, a legacy ~/.plcrc left beside it, whether the vault resolves to a
 real one, and its machine state dir. It then audits the ledger .plc/config —
 accounts/categories used but not declared (or vice versa), a name declared
 as both @ and #, a missing default currency, transactions missing a stable
-^id, a legacy .last-do pointer — printing a fix command for each. --fix
-applies the safe ones (importing names, setting the currency, backfilling
-ids, migrating the pointer). It's built to grow into a whole-vault checkup
-(orphans, stale pointers, broken links).
+^id — printing a fix command for each. Last, it lists do-notes still
+named the old way: their files, the last-do pointer and every [[do…]]
+link. --fix applies the safe repairs (importing names, setting the
+currency, backfilling ids, renaming do-notes to todo unless a todo name is
+taken). It's built to grow into a whole-vault checkup (orphans, stale
+pointers, broken links).
 
     > plc doctor
     > plc doctor --fix

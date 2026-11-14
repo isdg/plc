@@ -36,7 +36,7 @@ fn weekly_and_do_notes_follow_week_start() {
     let home = with_rc("week-sat", "week_start = Saturday\n");
     let weekly = "notes/management/weekly";
     assert_week(&home, &["weekly"], weekly, "");
-    assert_week(&home, &["todo", "-n"], "notes/management/do", "do-");
+    assert_week(&home, &["todo", "-n"], "notes/management/todo", "todo-");
 }
 
 #[test]

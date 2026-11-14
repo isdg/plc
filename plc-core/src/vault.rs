@@ -101,7 +101,7 @@ impl Palace {
     }
 
     /// The vault's own plc directory, `<root>/.plc`: settings and pointers
-    /// that travel with the vault (`config`, `last-do`). A pure path:
+    /// that travel with the vault (`config`, `last-todo`). A pure path:
     /// callers `create_dir_all` before writing into it.
     pub fn plc_dir(&self) -> PathBuf {
         self.root.join(".plc")
