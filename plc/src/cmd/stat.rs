@@ -71,7 +71,7 @@ pub struct StatArgs {
     #[arg(
         long,
         num_args = 3,
-        value_names = ["YY", "MM", "DD"],
+        value_names = ["DD", "MM", "YY"],
         conflicts_with_all = ["positional", "month", "year", "plot"]
     )]
     day: Option<Vec<String>>,
@@ -158,12 +158,13 @@ fn parse_year(s: &str) -> Result<i32, String> {
     Ok(if two_digit { 2000 + n } else { n })
 }
 
-/// Parse `--day YY MM DD`, the year as [`parse_year`] takes it.
+/// Parse `--day DD MM YY`, the order of the positional date, the year as
+/// [`parse_year`] takes it.
 fn parse_day(fields: &[String]) -> Result<NaiveDate, String> {
-    let [y, m, d] = fields else {
-        return Err("plc stat: --day takes YY MM DD".to_string());
+    let [d, m, y] = fields else {
+        return Err("plc stat: --day takes DD MM YY".to_string());
     };
-    let invalid = || format!("plc stat: invalid day: {y} {m} {d}");
+    let invalid = || format!("plc stat: invalid day: {d} {m} {y}");
     let d: u32 = d.trim().parse().map_err(|_| invalid())?;
     NaiveDate::from_ymd_opt(parse_year(y)?, parse_month(m)?, d)
         .ok_or_else(invalid)
@@ -326,14 +327,14 @@ mod tests {
     }
 
     #[test]
-    fn day_is_yy_mm_dd() {
+    fn day_is_dd_mm_yy() {
         let day = |f: [&str; 3]| parse_day(&f.map(String::from));
         let want = NaiveDate::from_ymd_opt(2025, 9, 27).unwrap();
-        assert_eq!(day(["25", "09", "27"]), Ok(want));
-        assert_eq!(day(["2025", "9", "27"]), Ok(want));
-        let err = day(["26", "02", "30"]).unwrap_err();
-        assert_eq!(err, "plc stat: invalid day: 26 02 30");
-        assert!(day(["26", "13", "01"]).is_err());
+        assert_eq!(day(["27", "09", "25"]), Ok(want));
+        assert_eq!(day(["27", "9", "2025"]), Ok(want));
+        let err = day(["30", "02", "26"]).unwrap_err();
+        assert_eq!(err, "plc stat: invalid day: 30 02 26");
+        assert!(day(["01", "13", "26"]).is_err());
     }
 
     #[test]

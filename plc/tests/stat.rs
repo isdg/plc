@@ -100,7 +100,7 @@ fn day_lists_the_notes_written_on_it() {
                   isg 2026-11-05 08:00:00 +0100\nde\n";
     home.write("palace/notes/w.md", weekly);
     home.write("palace/notes/x.md", "isg 2026-11-05 09:00:00 +0100\nxyzw\n");
-    let day = |d: &str| ok(&mut home.plc(&["stat", "--day", "26", "11", d]));
+    let day = |d: &str| ok(&mut home.plc(&["stat", "--day", d, "11", "26"]));
     let want = "
   Thu 2026-11-05   6 B in 2 notes
 
@@ -108,6 +108,6 @@ fn day_lists_the_notes_written_on_it() {
         2 B  notes/w.md";
     assert_eq!(day("05"), want);
     assert_eq!(day("06"), "\n  Fri 2026-11-06   nothing written");
-    let mut both = home.plc(&["stat", "--day", "26", "11", "05", "-m", "3"]);
+    let mut both = home.plc(&["stat", "--day", "05", "11", "26", "-m", "3"]);
     fail(&mut both);
 }
