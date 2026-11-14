@@ -9,10 +9,11 @@
 //! follow-ups of `isg52`. Letters use a bijective base-26 sequence
 //! (`a`…`z`, `aa`, `ab`, …) so follow-ups never run out.
 //!
-//!   `plc isg`                  open the last note
+//!   `plc isg`, `--last`        open the last note
 //!   `plc isg -n` / `--new`     create the next enumerated note → prints path
 //!   `plc isg -nf [N]`          follow up note N (or the last) → isg<N><letter>
 //!   `plc isg -l` / `--list`    list notes newest-first → zsh pipes to fzf
+//!   `plc isg -L NAME`          mark NAME last without opening it
 //!   `plc isg NAME`             resolve/open an existing note by basename
 //!
 //! Every note plc creates or opens becomes the last, recorded in the vault's
@@ -35,8 +36,23 @@ const POINTER: &str = "last-isg";
 #[derive(Args)]
 pub struct IsgArgs {
     /// List isg notes newest-first (zsh pipes this through fzf).
-    #[arg(short = 'l', long = "list", conflicts_with_all = ["new", "name"])]
+    #[arg(
+        short = 'l',
+        long = "list",
+        conflicts_with_all = ["new", "name", "mark", "last"]
+    )]
     list: bool,
+    /// Mark NAME (basename) as the last isg note, without opening it.
+    #[arg(
+        short = 'L',
+        long = "mark",
+        value_name = "NAME",
+        conflicts_with_all = ["new", "name", "last"]
+    )]
+    mark: Option<String>,
+    /// Open the last isg note, as no flag does.
+    #[arg(long = "last", conflicts_with_all = ["new", "name"])]
+    last: bool,
     /// Create the next enumerated note (isg0, isg1, …).
     #[arg(short = 'n', long = "new", conflicts_with = "name")]
     new: bool,
@@ -70,6 +86,14 @@ pub fn run(palace: &Palace, args: IsgArgs) -> Result<String, String> {
 
     let names = note::list_md_by_recency(&note_dir).map_err(|e| format!("isg: {e}"))?;
     let pointer = palace.plc_dir().join(POINTER);
+    if let Some(name) = args.mark {
+        let file = with_md(name.trim())?;
+        if !note_dir.join(&file).is_file() {
+            return Err(format!("isg: no such note: {file}"));
+        }
+        note::write_pointer(&pointer, &file).map_err(|e| format!("isg: {e}"))?;
+        return Ok(format!("Marked as last: {file}"));
+    }
     let last = last_note(&note_dir, &pointer, &names);
 
     let filename = if let Some(which) = args.follow {

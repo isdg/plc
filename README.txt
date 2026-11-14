@@ -237,16 +237,17 @@ landing page.
 PLC DO
 -------------------------------------------------------------------------------
 
-Usage: plc do [-n | -l FILE | -L]
+Usage: plc do [-n | -l | -L NAME | --last]
 
 Week-based "do" notes (do-<GGGG-Www>.md under notes/management/do) with a
 "last" pointer stored in <PALACE_DIR>/.plc/last-do.
 
-    (no flag)          resolve the "last" do-note's path (errors if
+    (no flag), --last  resolve the "last" do-note's path (errors if
                        unset/stale)
     -n, --new          create this week's do-note and mark it "last"
-    -l, --last FILE    re-point "last" at an existing do-note (basename)
-    -L, --list         list do-notes, marking the "last" one with *
+    -l, --list         list do-notes, marking the "last" one with *
+    -L, --mark NAME    mark an existing do-note "last" without opening it
+                       (basename, .md optional)
 
 -------------------------------------------------------------------------------
 PLC MURMUR
@@ -265,16 +266,17 @@ missing).
 PLC ISG
 -------------------------------------------------------------------------------
 
-Usage: plc isg [NAME] | -l | -n [-f [INDEX]]
+Usage: plc isg [NAME] | --last | -l | -L NAME | -n [-f [INDEX]]
 
 Enumerated writing notes under notes/me/writing/isg, with a "last" pointer
 stored in <PALACE_DIR>/.plc/last-isg: every note plc creates or opens
 becomes the last. With no pointer, or a stale one, the last is the most
 recently modified note.
 
-    (no flag)                open the last isg note
+    (no flag), --last        open the last isg note
     NAME                     open an existing note by basename (.md optional)
     -l, --list               list isg notes newest-first (fzf)
+    -L, --mark NAME          mark an existing note last without opening it
     -n, --new                create the next enumerated note: isg0, isg1, …
     -n -f, --follow [INDEX]  follow up note INDEX (or the last note's) with
                              the next letter suffix: isg<INDEX>a, isg<INDEX>b, …

@@ -97,7 +97,7 @@ fn l_lists_the_notes() {
 fn old_flags_are_gone() {
     let (home, _) = isg_home("isg-old");
     ok(&mut home.plc(&["isg", "-n"]));
-    for flag in ["-c", "--create", "--next", "--continue", "--last"] {
+    for flag in ["-c", "--create", "--next", "--continue"] {
         fail(&mut home.plc(&["isg", flag]));
     }
 }

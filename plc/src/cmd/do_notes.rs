@@ -6,14 +6,14 @@
 //! basename of the most recently used note (older vaults kept it at the vault
 //! root as `.last-do`, which is still read as a fallback).
 //!
-//!   `plc do -n`          create this week's note, mark it last → prints path
-//!   `plc do -l FILE`     re-point "last" at FILE (basename)     → prints confirmation
-//!   `plc do -L`          list notes, last marked with `*`       → prints listing
-//!   `plc do`             resolve the last note                  → prints path
+//!   `plc do -n`         create this week's note, mark it last → its path
+//!   `plc do -l`         list notes, the last marked with `*`  → the listing
+//!   `plc do -L NAME`    mark NAME (basename) last             → a notice
+//!   `plc do`, `--last`  resolve the last note                 → its path
 //!
 //! As with every command, `plc` only emits text; the zsh wrapper opens the
-//! printed path (for `-n` / no-arg) with `$EDITOR` and just echoes the
-//! informational output of `-l` / `-L`.
+//! printed path (for `-n`, `--last` / no-arg) with `$EDITOR` and just echoes
+//! the informational output of `-l` / `-L`.
 
 use std::fs;
 use std::path::Path;
@@ -34,14 +34,26 @@ const LEGACY_POINTER: &str = ".last-do";
 #[derive(Args)]
 pub struct DoArgs {
     /// Create a new do-note for the current week and mark it last.
-    #[arg(short = 'n', long = "new", conflicts_with_all = ["last", "list"])]
+    #[arg(
+        short = 'n',
+        long = "new",
+        conflicts_with_all = ["list", "mark", "last"]
+    )]
     new: bool,
-    /// Mark FILE (basename) as the last do-note.
-    #[arg(short = 'l', long = "last", value_name = "FILE", conflicts_with = "list")]
-    last: Option<String>,
-    /// List do-notes (last marked with `*`).
-    #[arg(short = 'L', long = "list")]
+    /// List do-notes, the last marked with `*`.
+    #[arg(short = 'l', long = "list", conflicts_with_all = ["mark", "last"])]
     list: bool,
+    /// Mark NAME (basename) as the last do-note, without opening it.
+    #[arg(
+        short = 'L',
+        long = "mark",
+        value_name = "NAME",
+        conflicts_with = "last"
+    )]
+    mark: Option<String>,
+    /// Open the last do-note, as no flag does.
+    #[arg(long = "last")]
+    last: bool,
     #[command(flatten)]
     pub note: note::NoteArgs,
 }
@@ -55,7 +67,7 @@ pub fn run(palace: &Palace, args: DoArgs) -> Result<String, String> {
 
     if args.new {
         new_note(root, &pointer)
-    } else if let Some(file) = args.last {
+    } else if let Some(file) = args.mark {
         mark_last(&note_dir, &pointer, &file)
     } else if args.list {
         list_notes(&note_dir, &pointer, &legacy)
@@ -75,17 +87,26 @@ fn new_note(root: &Path, pointer: &Path) -> Result<String, String> {
         .map_err(|e| format!("do: {e}"))
 }
 
-/// `-l FILE`: re-point "last" at an existing note.
-fn mark_last(note_dir: &Path, pointer: &Path, file: &str) -> Result<String, String> {
-    let target = note_dir.join(file);
+/// `-L NAME`: re-point "last" at an existing note, `.md` optional.
+fn mark_last(
+    note_dir: &Path,
+    pointer: &Path,
+    name: &str,
+) -> Result<String, String> {
+    let name = name.trim();
+    let file = match name.ends_with(".md") {
+        true => name.to_string(),
+        false => format!("{name}.md"),
+    };
+    let target = note_dir.join(&file);
     if !target.is_file() {
         return Err(format!("do: no such note: {}", target.display()));
     }
-    write_pointer(pointer, file)?;
+    write_pointer(pointer, &file)?;
     Ok(format!("Marked as last: {file}"))
 }
 
-/// `-L`: list `*.md` notes (byte-sorted), marking the "last" one with `*`.
+/// `-l`: list `*.md` notes (byte-sorted), marking the "last" one with `*`.
 fn list_notes(note_dir: &Path, pointer: &Path, legacy: &Path) -> Result<String, String> {
     let last = resolve_last(pointer, legacy);
     let mut names: Vec<String> = fs::read_dir(note_dir)
