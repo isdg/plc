@@ -28,6 +28,7 @@ use plc_core::calendar::{self, MonthStats, YearStats};
 use plc_core::ledger::{self, Filter, Kind, Measure, State, Transaction};
 
 use crate::cmd::calview::{self, Cells, ColorArgs, Format, Heat, Layout};
+use crate::cmd::daily::SUBDIR as DAILY;
 use crate::cmd::when::{self, Scope};
 use crate::config::Palace;
 use crate::note;
@@ -392,7 +393,7 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
         Some(LedgerCmd::Check(check_args)) => {
             let settings = Settings::load(palace.root());
             let cur = currency_from(&settings);
-            let root = palace.root().join("notes/management/daily");
+            let root = palace.root().join(DAILY);
             ledger::check(
                 &root,
                 &cur,
@@ -408,7 +409,7 @@ pub fn run(palace: &Palace, args: LedgerArgs) -> Result<String, String> {
         Some(LedgerCmd::Stat(stat_args)) => stat(palace, stat_args),
         Some(LedgerCmd::Fmt(fmt_args)) => {
             let cur = resolved_currency(palace);
-            let root = palace.root().join("notes/management/daily");
+            let root = palace.root().join(DAILY);
             ledger::fmt(&root, &cur, fmt_args.check)
         }
     }
@@ -447,7 +448,7 @@ fn stat(palace: &Palace, args: LedgerStatArgs) -> Result<String, String> {
         ..Filter::default()
     };
     let cur = resolved_currency(palace);
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     let money = |minor| calendar::fmt_money(minor, &cur);
     let heat = money_heat(args.color.cells());
     let format = args.format.unwrap_or(match scope {
@@ -647,14 +648,14 @@ fn push_year_spend(out: &mut String, st: &YearStats, y: i32, unit: &str, cur: &s
 /// `plc ledger report`: aggregate the matching `+ledger` transactions.
 fn report(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     ledger::report(&root, &resolved_currency(palace), &filter)
 }
 
 /// `plc ledger reg`: chronological register of the matching transactions.
 fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
     let filter = build_filter(&args)?;
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     ledger::register(&root, &resolved_currency(palace), &filter)
 }
 
@@ -662,7 +663,7 @@ fn reg(palace: &Palace, args: ReportArgs) -> Result<String, String> {
 /// most recent transactions.
 fn balance(palace: &Palace, args: BalanceArgs) -> Result<String, String> {
     let filter = build_filter(&args.filter)?;
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     ledger::balance(&root, &resolved_currency(palace), &filter, args.recent)
 }
 
@@ -707,7 +708,7 @@ fn date_range(args: &ReportArgs) -> Result<(Option<NaiveDate>, Option<NaiveDate>
 fn ledger_location(date: NaiveDate) -> (String, String) {
     (
         format!(
-            "notes/management/daily/{:04}/{:02}",
+            "{DAILY}/{:04}/{:02}",
             date.year(),
             date.month()
         ),
@@ -737,16 +738,15 @@ struct LogRecord {
 /// undo so the file never goes stale or missing. `ledger::recent_entries`
 /// returns paths relative to the daily tree; we store them vault-relative.
 fn sync_log(palace: &Palace) -> Result<Vec<LogRecord>, String> {
-    let daily = "notes/management/daily";
     let entries = ledger::recent_entries(
-        &palace.root().join(daily),
+        &palace.root().join(DAILY),
         &resolved_currency(palace),
         LOG_CAP,
     )?;
     let records: Vec<LogRecord> = entries
         .into_iter()
         .map(|(rel, t)| LogRecord {
-            path: format!("{daily}/{rel}"),
+            path: format!("{DAILY}/{rel}"),
             entry: ledger::format_entry(&t),
         })
         .collect();
@@ -809,8 +809,7 @@ fn last_log(palace: &Palace, args: LastArgs) -> Result<String, String> {
 /// refresh the cache. Targets the newest entry by value via [`ledger::rewrite_txn`],
 /// so it survives a reformat (unlike a literal block match) and needs no id.
 fn undo(palace: &Palace) -> Result<String, String> {
-    let daily = "notes/management/daily";
-    let root = palace.root().join(daily);
+    let root = palace.root().join(DAILY);
     let cur = resolved_currency(palace);
     let newest = ledger::recent_entries(&root, &cur, 1)?
         .pop()
@@ -819,19 +818,18 @@ fn undo(palace: &Palace) -> Result<String, String> {
     let removed = ledger::format_entry(&txn);
     if !ledger::rewrite_txn(&root.join(&rel), &cur, ledger::Match::Value(&txn), None)? {
         return Err(format!(
-            "ledger undo: could not find the entry in {daily}/{rel}"
+            "ledger undo: could not find the entry in {DAILY}/{rel}"
         ));
     }
     let _ = sync_log(palace); // refresh after the removal
-    Ok(format!("undid (removed from {daily}/{rel}):\n{removed}"))
+    Ok(format!("undid (removed from {DAILY}/{rel}):\n{removed}"))
 }
 
 /// `plc ledger rm <ID>`: delete the transaction with that `^id` (a unique prefix,
 /// git-style) from its ledger. The general form of `undo` — any transaction, not
 /// just the newest.
 fn rm(palace: &Palace, args: RmArgs) -> Result<String, String> {
-    let daily = "notes/management/daily";
-    let root = palace.root().join(daily);
+    let root = palace.root().join(DAILY);
     let cur = currency_from(&Settings::load(palace.root()));
     let (rel, txn) = resolve_one(&root, &cur, &args.id)?;
     let full_id = txn
@@ -841,11 +839,11 @@ fn rm(palace: &Palace, args: RmArgs) -> Result<String, String> {
     let removed = ledger::format_entry(&txn);
     if !ledger::rewrite_txn(&root.join(&rel), &cur, ledger::Match::Id(&full_id), None)? {
         return Err(format!(
-            "ledger rm: id ^{full_id} vanished from {daily}/{rel}"
+            "ledger rm: id ^{full_id} vanished from {DAILY}/{rel}"
         ));
     }
     let _ = sync_log(palace);
-    Ok(format!("removed (from {daily}/{rel}):\n{removed}"))
+    Ok(format!("removed (from {DAILY}/{rel}):\n{removed}"))
 }
 
 /// Resolve an id prefix to exactly one `(relpath, transaction)`, erroring on no
@@ -929,7 +927,7 @@ fn add(palace: &Palace, args: AddArgs) -> Result<String, String> {
 /// right day's ledger file.
 fn edit(palace: &Palace, args: EditArgs) -> Result<String, String> {
     let cur = currency_from(&Settings::load(palace.root()));
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     let (relpath, old) = resolve_one(&root, &cur, &args.id)?;
     let full_id = old
         .id
@@ -1252,7 +1250,7 @@ fn account_cmd(palace: &Palace, args: AccountArgs) -> Result<String, String> {
     }
 
     if args.import {
-        let root = palace.root().join("notes/management/daily");
+        let root = palace.root().join(DAILY);
         let (used_accts, used_cats) = ledger::names(&root, &currency_from(&settings))?;
         let mut done = Vec::new();
         for k in kind.map_or(vec![Decl::Account, Decl::Category], |k| vec![k]) {
@@ -1316,7 +1314,7 @@ fn apply_rename(
         ));
     }
 
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     let cur = currency_from(settings);
     let changed = ledger::rename_name(&root, &cur, matches!(kind, Decl::Account), &old, &new)?;
 
@@ -1372,7 +1370,7 @@ fn diff_names(used: &[String], declared: &[String]) -> (Vec<String>, Vec<String>
 /// with `--fix`, apply) repairs.
 pub fn doctor(palace: &Palace, fix: bool) -> Result<String, String> {
     let mut settings = Settings::load(palace.root());
-    let root = palace.root().join("notes/management/daily");
+    let root = palace.root().join(DAILY);
     let (used_accts, used_cats) = ledger::names(&root, &currency_from(&settings))?;
 
     let mut findings: Vec<String> = Vec::new();

@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use clap::Args;
 
+use crate::cmd::daily;
 use crate::config::Palace;
 use crate::note;
 
@@ -43,7 +44,7 @@ pub struct ShotArgs {
 
 pub fn run(args: ShotArgs) -> Result<String, String> {
     let now = Local::now();
-    let daily = now.format("notes/management/daily/%Y/%m").to_string();
+    let daily = now.format(&format!("{}/%Y/%m", daily::SUBDIR)).to_string();
     let dir = target_dir(args.path.as_deref(), &daily)?;
     let filename = now.format("%Y-%m-%dT%H.%M.md").to_string();
 

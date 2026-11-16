@@ -15,16 +15,16 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 
-use crate::cmd::{isg, murmur, todo};
+use crate::cmd::{daily, isg, murmur, todo, weekly};
 use crate::config;
 
 /// Canonical leaf directories of a palace vault. Parents are created implicitly
 /// by `create_dir_all`, so only the deepest path of each branch is listed.
 const DIRS: &[&str] = &[
     "notes/archive",
-    "notes/management/daily",
+    daily::SUBDIR,
     todo::SUBDIR,
-    "notes/management/weekly",
+    weekly::SUBDIR,
     isg::SUBDIR,
     murmur::SUBDIR,
     "notes/projects",

@@ -11,6 +11,9 @@ use crate::cmd::when::{self, Scope};
 use crate::config::Palace;
 use crate::note;
 
+/// The daily tree; each note goes in its `<YYYY>/<MM>` subdir.
+pub(crate) const SUBDIR: &str = "notes/management/daily";
+
 #[derive(Args)]
 pub struct DailyArgs {
     /// Date as `DD [MM [YY|YYYY]]`, today's for any field left off.
@@ -28,11 +31,7 @@ pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
     let date = resolve(&args.positional, Local::now().date_naive())?;
     let explicit = !args.positional.is_empty();
 
-    let subdir = format!(
-        "notes/management/daily/{:04}/{:02}",
-        date.year(),
-        date.month()
-    );
+    let subdir = format!("{SUBDIR}/{:04}/{:02}", date.year(), date.month());
     let filename = format!(
         "{:04}-{:02}-{:02}.md",
         date.year(),

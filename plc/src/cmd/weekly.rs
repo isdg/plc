@@ -10,13 +10,15 @@ use plc_core::{rc, week};
 use crate::config::Palace;
 use crate::note;
 
+pub(crate) const SUBDIR: &str = "notes/management/weekly";
+
 pub fn run(palace: &Palace) -> Result<String, String> {
     let start = rc::week_start().map_err(|e| format!("weekly: {e}"))?;
     let today = Local::now().date_naive();
     let filename = format!("{}.md", week::label(today, start));
     note::ensure_note(
         palace.root(),
-        "notes/management/weekly",
+        SUBDIR,
         &filename,
         "weekly",
         None,
