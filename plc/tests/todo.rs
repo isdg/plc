@@ -73,3 +73,13 @@ fn doctor_renames_nothing_over_an_existing_note() {
     assert!(home.path(&format!("{OLD}/do-2026-W47.md")).is_file());
     assert_eq!(read(&home, &format!("{NEW}/todo-2026-W46.md")), "kept\n");
 }
+
+#[test]
+fn a_fresh_init_takes_todo_notes() {
+    let home = Home::new("init-todo");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    ok(&mut home.plc(&["init"]));
+    assert!(!home.path(OLD).exists());
+    let note = ok(&mut home.plc(&["todo", "-n"]));
+    assert!(note.contains("/notes/management/todo/"), "{note}");
+}
