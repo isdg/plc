@@ -26,7 +26,7 @@ are shared across every note type — including ledgers.
     plc stat       calendar heatmap + stats of the bytes written
     plc ledger     plain-text double-entry ledger (alias: plc lr)
     plc doctor     check vault health and propose repairs
-    plc config     show the vault, notes dir or category paths
+    plc config     show the vault, notes dir, category or note kind paths
 
 
 -------------------------------------------------------------------------------
@@ -406,7 +406,7 @@ pointers, broken links).
 PLC CONFIG
 -------------------------------------------------------------------------------
 
-Usage: plc config [vault|notes|cats]
+Usage: plc config [vault|notes|cats|todo|isg|murmur]
 
 Print resolved locations with a leading ~ expanded, without validating
 the vault:
@@ -417,6 +417,9 @@ the vault:
              unless absolute, else <vault>/notes/triage
     cats     the categories, one per line: every dir in <vault>/notes but
              hidden ones, sorted. mkdir one there to add a category.
+    todo     the dir of the notes plc todo, isg and murmur list (-l), for
+    isg      a picker's preview: <vault>/notes/management/todo,
+    murmur   <vault>/notes/me/writing/isg and <vault>/notes/me/writing/murmur
 
     > plc config
     > cd "$(plc config notes)"

@@ -17,7 +17,7 @@ use clap::Args;
 use crate::config::Palace;
 use crate::note;
 
-const SUBDIR: &str = "notes/me/writing/murmur";
+pub(crate) const SUBDIR: &str = "notes/me/writing/murmur";
 
 #[derive(Args)]
 pub struct MurmurArgs {

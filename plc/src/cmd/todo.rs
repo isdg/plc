@@ -29,7 +29,7 @@ use plc_core::{fold_name, notes, rc, rename_links, week};
 use crate::config::Palace;
 use crate::note;
 
-const SUBDIR: &str = "notes/management/todo";
+pub(crate) const SUBDIR: &str = "notes/management/todo";
 /// Pointer basename inside the vault's `.plc` dir.
 const POINTER: &str = "last-todo";
 

@@ -134,6 +134,21 @@ fn cats_lists_the_dirs_in_notes() {
 }
 
 #[test]
+fn listed_kinds_name_their_dirs() {
+    let home = Home::new("kinds");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    for (key, dir) in [
+        ("todo", "palace/notes/management/todo"),
+        ("isg", "palace/notes/me/writing/isg"),
+        ("murmur", "palace/notes/me/writing/murmur"),
+    ] {
+        let out = ok(&mut home.plc(&["config", key]));
+        assert_eq!(out, display(&home.path(dir)), "{key}");
+    }
+    assert!(!home.path("palace").exists());
+}
+
+#[test]
 fn set_and_rc_flags_are_gone() {
     let home = Home::new("set");
     for flag in ["--set", "--rc"] {

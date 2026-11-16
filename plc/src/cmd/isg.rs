@@ -28,7 +28,7 @@ use clap::Args;
 use crate::config::Palace;
 use crate::note;
 
-const SUBDIR: &str = "notes/me/writing/isg";
+pub(crate) const SUBDIR: &str = "notes/me/writing/isg";
 const TAG: &str = "isg";
 /// Pointer basename inside the vault's `.plc` dir.
 const POINTER: &str = "last-isg";
