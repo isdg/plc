@@ -2,16 +2,16 @@
 //!
 //! Prints the paths a key names, with a leading `~` expanded, for editors and
 //! scripts: `vault` (the default), `notes`, the directory `plc add` writes
-//! to, `cats`, one line per category, or the dir of a kind plc lists:
-//! `todo`, `isg`, `murmur`. None validates the vault, so they work before it
-//! is decrypted.
+//! to, `cats`, one line per category, or the dir of a note kind: `daily`,
+//! `weekly`, `todo`, `isg`, `murmur`. None validates the vault, so they work
+//! before it is decrypted.
 
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 use plc_core::rc::{self, Rc};
 
-use crate::cmd::{isg, murmur, todo};
+use crate::cmd::{daily, isg, murmur, todo, weekly};
 use crate::config;
 
 #[derive(Args)]
@@ -30,6 +30,10 @@ enum Key {
     Notes,
     /// The categories: the dirs in <vault>/notes, one per line.
     Cats,
+    /// The daily tree, shots' too: <vault>/notes/management/daily.
+    Daily,
+    /// Where weekly notes live: <vault>/notes/management/weekly.
+    Weekly,
     /// Where todo notes live: <vault>/notes/management/todo.
     Todo,
     /// Where isg notes live: <vault>/notes/me/writing/isg.
@@ -51,6 +55,8 @@ pub fn run(args: ConfigArgs) -> Result<String, String> {
             .map(|d| vec![d]),
         Key::Cats => config::palace_dir()
             .and_then(|root| config::categories(&root)),
+        Key::Daily => in_vault(daily::SUBDIR),
+        Key::Weekly => in_vault(weekly::SUBDIR),
         Key::Todo => in_vault(todo::SUBDIR),
         Key::Isg => in_vault(isg::SUBDIR),
         Key::Murmur => in_vault(murmur::SUBDIR),

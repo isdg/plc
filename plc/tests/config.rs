@@ -134,10 +134,12 @@ fn cats_lists_the_dirs_in_notes() {
 }
 
 #[test]
-fn listed_kinds_name_their_dirs() {
+fn note_kinds_name_their_dirs() {
     let home = Home::new("kinds");
     home.write(".plc/.plcrc", "vault = ~/palace\n");
     for (key, dir) in [
+        ("daily", "palace/notes/management/daily"),
+        ("weekly", "palace/notes/management/weekly"),
         ("todo", "palace/notes/management/todo"),
         ("isg", "palace/notes/me/writing/isg"),
         ("murmur", "palace/notes/me/writing/murmur"),

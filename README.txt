@@ -406,7 +406,7 @@ pointers, broken links).
 PLC CONFIG
 -------------------------------------------------------------------------------
 
-Usage: plc config [vault|notes|cats|todo|isg|murmur]
+Usage: plc config [vault|notes|cats|daily|weekly|todo|isg|murmur]
 
 Print resolved locations with a leading ~ expanded, without validating
 the vault:
@@ -417,9 +417,11 @@ the vault:
              unless absolute, else <vault>/notes/triage
     cats     the categories, one per line: every dir in <vault>/notes but
              hidden ones, sorted. mkdir one there to add a category.
-    todo     the dir of the notes plc todo, isg and murmur list (-l), for
-    isg      a picker's preview: <vault>/notes/management/todo,
-    murmur   <vault>/notes/me/writing/isg and <vault>/notes/me/writing/murmur
+    daily    the dir each note kind lives in, under <vault>/notes:
+    weekly   management/daily (by YYYY/MM; shots go there too),
+    todo     management/weekly, management/todo, me/writing/isg and
+    isg      me/writing/murmur. A picker over plc todo, isg or murmur -l
+    murmur   previews its names from there.
 
     > plc config
     > cd "$(plc config notes)"
