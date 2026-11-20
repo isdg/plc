@@ -1,8 +1,8 @@
 //! `plc daily` — create/resolve a daily note and print its path.
 //!
-//! Ports `daily()` (palace.zsh): takes a date as `DD [MM [YY]]`, read as the
-//! stat commands read it (see [`when`]), defaults each missing field to
-//! today, and marks a note for any other day with a `*` in its header.
+//! Ports `daily()` (palace.zsh): takes a date as `DD [MM [YY]]` or `+N`/`-N`
+//! days, read as the stat commands read it (see [`when`]), defaults each
+//! missing field to today, and marks a note for any other day with a `*`.
 
 use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
@@ -16,8 +16,9 @@ pub(crate) const SUBDIR: &str = "notes/management/daily";
 
 #[derive(Args)]
 pub struct DailyArgs {
-    /// Date as `DD [MM [YY|YYYY]]`, today's for any field left off.
-    #[arg(value_name = "DD MM YY")]
+    /// Date as `DD [MM [YY|YYYY]]`, today's for any field left off, or
+    /// `+N`/`-N` days from today.
+    #[arg(value_name = "DD MM YY", allow_negative_numbers = true)]
     positional: Vec<String>,
     /// Resolve the note and report `new|old<TAB><path>` without creating it.
     /// Lets the shell prompt before a new note is actually written.
@@ -93,6 +94,12 @@ mod tests {
         assert_eq!(day(&["05", "05"]), Ok(ymd(2026, 5, 5)));
         assert_eq!(day(&["05", "05", "25"]), Ok(ymd(2025, 5, 5)));
         assert_eq!(day(&["12", "3", "2019"]), Ok(ymd(2019, 3, 12)));
+    }
+
+    #[test]
+    fn an_offset_is_days_from_today() {
+        assert_eq!(day(&["+1"]), Ok(ymd(2026, 6, 21)));
+        assert_eq!(day(&["-20"]), Ok(ymd(2026, 5, 31)));
     }
 
     #[test]

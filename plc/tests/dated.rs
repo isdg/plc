@@ -1,19 +1,44 @@
-//! End to end: a daily note for any day but today's is marked with `*`.
+//! End to end: a daily note for any day but today's is marked with `*`,
+//! and `±N` names one N days off.
 
 mod common;
 
 use std::fs;
 use std::path::PathBuf;
 
-use chrono::Local;
+use chrono::{Days, Local, NaiveDate};
 
-use common::{ok, Home};
+use common::{fail, ok, Home};
 
 fn with_rc(tag: &str) -> Home {
     let home = Home::new(tag);
     home.vault("palace");
     home.write(".plc/.plcrc", "vault = ~/palace\n");
     home
+}
+
+/// Run `args`, check the note is the one `name` gives for today on either
+/// side of the run (so a run across midnight passes), and return its stamp.
+fn stamp(
+    home: &Home,
+    args: &[&str],
+    name: impl Fn(NaiveDate) -> String,
+) -> String {
+    let path = || home.path(&name(Local::now().date_naive()));
+    let before = path();
+    let got = PathBuf::from(ok(&mut home.plc(args)));
+    assert!(got == before || got == path(), "{got:?}");
+    let body = fs::read_to_string(&got).unwrap();
+    body.lines().next().unwrap().to_string()
+}
+
+fn daily(days: i64) -> impl Fn(NaiveDate) -> String {
+    move |today| {
+        let n = Days::new(days.unsigned_abs());
+        let day = if days < 0 { today - n } else { today + n };
+        let ym = day.format("%Y/%m");
+        format!("palace/notes/management/daily/{ym}/{day}.md")
+    }
 }
 
 #[test]
@@ -32,4 +57,21 @@ fn daily_marks_by_day_not_by_arguments() {
         assert!(!line.ends_with('*'), "{line}");
     }
     assert!(run("29 02 2020").ends_with(" *"));
+}
+
+#[test]
+fn daily_offsets_mark_any_other_day() {
+    let home = with_rc("offset-daily");
+    assert!(!stamp(&home, &["daily"], daily(0)).ends_with('*'));
+    assert!(stamp(&home, &["daily", "+1"], daily(1)).ends_with(" *"));
+    assert!(stamp(&home, &["daily", "-1"], daily(-1)).ends_with(" *"));
+    let want = "daily: an offset stands alone: +N or -N";
+    assert_eq!(fail(&mut home.plc(&["daily", "+1", "12"])), want);
+}
+
+#[test]
+fn stat_takes_a_day_offset() {
+    let home = with_rc("offset-stat");
+    ok(&mut home.plc(&["stat", "-1"]));
+    ok(&mut home.plc(&["stat", "+1"]));
 }

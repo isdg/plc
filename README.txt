@@ -13,7 +13,7 @@ stamped header and linked with [[wikilinks]]. One clock and one link graph
 are shared across every note type — including ledgers.
 
     plc init       scaffold the vault directory tree
-    plc daily      today's (or a given date's) daily note
+    plc daily      today's (or a given day's) daily note
     plc weekly     this week's note
     plc shot       a timestamped snapshot note
     plc add        a named note in the notes dir (alias: plc note, plc no)
@@ -165,12 +165,12 @@ how many were created vs. already present. Safe to re-run.
 PLC DAILY
 -------------------------------------------------------------------------------
 
-Usage: plc daily [DD [MM [YY|YYYY]]]
+Usage: plc daily [DD [MM [YY|YYYY]] | +N | -N]
 
 Create or resolve a daily note at
 notes/management/daily/YYYY/MM/YYYY-MM-DD.md (tag [[daily]]). With no
 arguments it's today; a date is day, then month, then year, any left off
-being today's, as plc stat reads it:
+being today's, or +N/-N days from today, as plc stat reads it:
 
     --check               resolve only: print new|old<TAB><path> without
                           creating (lets the shell prompt before writing)
@@ -179,6 +179,8 @@ A note for any day but today, past or ahead, is marked with a *.
 
     > plc daily                 # today
     > plc daily 1 8             # the 1st of August, this year
+    > plc daily +1              # tomorrow
+    > plc daily -1              # yesterday
     > plc daily --check         # new<TAB>/…/2026-07-19.md (nothing written)
 
 -------------------------------------------------------------------------------
@@ -305,13 +307,14 @@ PLC STAT
 Usage: plc stat [DD [MM [YY]]] [-f FORMAT] [--color auto|always|never]
 
 The bytes written each day. The date is read as plc daily reads it, a
-field left off being today's; - for a whole field widens it to a month
-or a year. A day lists the notes written on it; a month or a year is
-drawn as a heatmap:
+field left off being today's, or +N/-N days from today; - for a whole
+field widens it to a month or a year. A day lists the notes written on
+it; a month or a year is drawn as a heatmap:
 
     plc stat                today
     plc stat 27             the 27th of this month
     plc stat 27 09 25       27 Sep 2025
+    plc stat -1             yesterday
     plc stat -              this month
     plc stat - 09 25        September 2025
     plc stat - -            this year
