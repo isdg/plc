@@ -175,7 +175,7 @@ being today's, as plc stat reads it:
     --check               resolve only: print new|old<TAB><path> without
                           creating (lets the shell prompt before writing)
 
-Any explicitly given date back-dates the note (marked with a *).
+A note for any day but today, past or ahead, is marked with a *.
 
     > plc daily                 # today
     > plc daily 1 8             # the 1st of August, this year

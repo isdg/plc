@@ -2,7 +2,7 @@
 //!
 //! Ports `daily()` (palace.zsh): takes a date as `DD [MM [YY]]`, read as the
 //! stat commands read it (see [`when`]), defaults each missing field to
-//! today, and marks any explicitly dated note with a `*` in its header.
+//! today, and marks a note for any other day with a `*` in its header.
 
 use chrono::{Datelike, Local, NaiveDate};
 use clap::Args;
@@ -28,8 +28,8 @@ pub struct DailyArgs {
 }
 
 pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
-    let date = resolve(&args.positional, Local::now().date_naive())?;
-    let explicit = !args.positional.is_empty();
+    let today = Local::now().date_naive();
+    let date = resolve(&args.positional, today)?;
 
     let subdir = format!("{SUBDIR}/{:04}/{:02}", date.year(), date.month());
     let filename = format!(
@@ -38,7 +38,7 @@ pub fn run(palace: &Palace, args: DailyArgs) -> Result<String, String> {
         date.month(),
         date.day()
     );
-    let marker = if explicit { Some("*") } else { None };
+    let marker = (date != today).then_some("*");
 
     if args.check {
         let (new, path) = note::would_create(palace.root(), &subdir, &filename);
