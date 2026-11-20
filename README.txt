@@ -14,7 +14,7 @@ are shared across every note type — including ledgers.
 
     plc init       scaffold the vault directory tree
     plc daily      today's (or a given day's) daily note
-    plc weekly     this week's note
+    plc weekly     this week's (or +N/-N weeks') note
     plc shot       a timestamped snapshot note
     plc add        a named note in the notes dir (alias: plc note, plc no)
     plc top        TOP.md — the vault landing page
@@ -187,12 +187,14 @@ A note for any day but today, past or ahead, is marked with a *.
 PLC WEEKLY
 -------------------------------------------------------------------------------
 
-Create or resolve this week's note at
+Usage: plc weekly [+N | -N]
+
+Create or resolve this week's note, or the one N weeks after or before, at
 notes/management/weekly/<GGGG-Www>.md (e.g. 2026-W29.md, tag [[weekly]]).
 A week starts on week_start (.plcrc, default Monday) and takes the ISO
 week number of its Thursday, the ISO week holding most of its days: from
 Monday it is the ISO week, and from Saturday, Saturday and Sunday join the
-next ISO week.
+next ISO week. A note for any week but this one is marked with a *.
 
 -------------------------------------------------------------------------------
 PLC SHOT

@@ -1,12 +1,13 @@
-//! End to end: a daily note for any day but today's is marked with `*`,
-//! and `±N` names one N days off.
+//! End to end: a daily or weekly note for any day or week but today's is
+//! marked with `*`, and `±N` names one N days or weeks off.
 
 mod common;
 
 use std::fs;
 use std::path::PathBuf;
 
-use chrono::{Days, Local, NaiveDate};
+use chrono::{Days, Local, NaiveDate, Weekday};
+use plc_core::week;
 
 use common::{fail, ok, Home};
 
@@ -41,6 +42,15 @@ fn daily(days: i64) -> impl Fn(NaiveDate) -> String {
     }
 }
 
+fn weekly(weeks: i64) -> impl Fn(NaiveDate) -> String {
+    move |today| {
+        let n = Days::new(7 * weeks.unsigned_abs());
+        let day = if weeks < 0 { today - n } else { today + n };
+        let label = week::label(day, Weekday::Mon);
+        format!("palace/notes/management/weekly/{label}.md")
+    }
+}
+
 #[test]
 fn daily_marks_by_day_not_by_arguments() {
     let home = with_rc("dated-daily");
@@ -67,6 +77,16 @@ fn daily_offsets_mark_any_other_day() {
     assert!(stamp(&home, &["daily", "-1"], daily(-1)).ends_with(" *"));
     let want = "daily: an offset stands alone: +N or -N";
     assert_eq!(fail(&mut home.plc(&["daily", "+1", "12"])), want);
+}
+
+#[test]
+fn weekly_offsets_mark_any_other_week() {
+    let home = with_rc("offset-weekly");
+    assert!(!stamp(&home, &["weekly"], weekly(0)).ends_with('*'));
+    assert!(stamp(&home, &["weekly", "+1"], weekly(1)).ends_with(" *"));
+    assert!(stamp(&home, &["weekly", "-2"], weekly(-2)).ends_with(" *"));
+    let err = fail(&mut home.plc(&["weekly", "1"]));
+    assert!(err.contains("invalid offset: 1 (+N or -N)"), "{err}");
 }
 
 #[test]

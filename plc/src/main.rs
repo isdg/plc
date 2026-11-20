@@ -31,8 +31,8 @@ struct Cli {
 enum Cmd {
     /// Create/resolve today's (or a given date's) daily note.
     Daily(cmd::daily::DailyArgs),
-    /// Create/resolve this week's note.
-    Weekly(note::NoteArgs),
+    /// Create/resolve this week's (or +N/-N weeks') note.
+    Weekly(cmd::weekly::WeeklyArgs),
     /// Create a timestamped snapshot note in the daily dir (or a chosen path).
     Shot(cmd::shot::ShotArgs),
     /// Create/resolve a stamped note NAME in the notes dir.
@@ -71,7 +71,8 @@ fn main() -> ExitCode {
     // validate both before they reach the note layer.
     let flags = match &cli.cmd {
         Cmd::Daily(a) => Some(&a.note),
-        Cmd::Weekly(n) | Cmd::Top(n) => Some(n),
+        Cmd::Weekly(a) => Some(&a.note),
+        Cmd::Top(n) => Some(n),
         Cmd::Shot(a) => Some(&a.note),
         Cmd::Add(a) => Some(&a.note),
         Cmd::Todo(a) => Some(&a.note),
@@ -100,7 +101,7 @@ fn main() -> ExitCode {
     // (and can run without a vault when given `-r`).
     let result = match cli.cmd {
         Cmd::Daily(args) => with_palace(|p| cmd::daily::run(p, args)),
-        Cmd::Weekly(_) => with_palace(cmd::weekly::run),
+        Cmd::Weekly(args) => with_palace(|p| cmd::weekly::run(p, args)),
         Cmd::Shot(args) => cmd::shot::run(args),
         Cmd::Add(args) => cmd::add::run(args),
         Cmd::Top(_) => with_palace(cmd::top::run),
