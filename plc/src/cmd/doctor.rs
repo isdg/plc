@@ -66,8 +66,7 @@ fn config_section() -> String {
     lines.join("\n")
 }
 
-/// Keys `.plcrc` sets that plc ignores or cannot read, and a legacy
-/// `~/.plcrc` that could not move into its place.
+/// Keys `.plcrc` sets that plc ignores or cannot read.
 fn rc_findings(path: &Path, shown: &str) -> Vec<String> {
     let mut lines = Vec::new();
     match Rc::read(path) {
@@ -76,23 +75,10 @@ fn rc_findings(path: &Path, shown: &str) -> Vec<String> {
                 let what = format!("unknown key `{key}` (ignored)");
                 lines.push(format!("  ! {shown}: {what}"));
             }
-            if rc.has_legacy_key() {
-                let hint = "rename its PALACE_DIR key to `vault`";
-                lines.push(format!("      {hint}"));
-            }
             if let Err(e) = rc.week_start() {
                 lines.push(format!("  ! {shown}: {e}"));
             }
         }
-        Err(e) => lines.push(format!("  ! {e}")),
-    }
-    match rc::unmoved_legacy() {
-        Ok(Some(legacy)) => {
-            let legacy = rc::tilde(&legacy);
-            lines.push(format!("  ! {legacy} not moved: {shown} exists"));
-            lines.push(format!("      merge it into {shown}, then delete it"));
-        }
-        Ok(None) => {}
         Err(e) => lines.push(format!("  ! {e}")),
     }
     lines

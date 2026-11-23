@@ -89,10 +89,6 @@ reports) any key but these:
 plc never writes .plcrc, so it can be a link into your dotfiles. What travels with a vault
 stays inside it, in <vault>/.plc/ (see THE VAULT).
 
-Older plc kept a "PALACE_DIR = …" line in ~/.plcrc. Without $PLC_HOME,
-plc moves that file to ~/.plc/.plcrc unless one is already there; rename
-its PALACE_DIR key to vault, as the no-vault error and plc doctor say.
-
 plc doctor verifies .plcrc, that the vault resolves, and its state dir.
 
 -------------------------------------------------------------------------------
@@ -389,8 +385,8 @@ Usage: plc doctor [--fix]
 
 Check the vault's health and propose repairs. It runs even without a
 resolved vault, so it can diagnose the config itself: keys in .plcrc it
-ignores, a legacy ~/.plcrc left beside it, whether the vault resolves to a
-real one, and its machine state dir. It then audits the ledger .plc/config —
+ignores, whether the vault resolves to a real one, and its machine state
+dir. It then audits the ledger .plc/config —
 accounts/categories used but not declared (or vice versa), a name declared
 as both @ and #, a missing default currency, transactions missing a stable
 ^id — printing a fix command for each. Last, it lists whitespace in

@@ -40,50 +40,9 @@ pub fn home() -> Result<PathBuf, String> {
     }
 }
 
-/// The settings file, `<plc home>/.plcrc`. Without `$PLC_HOME`, a legacy
-/// `~/.plcrc` is first moved there.
+/// The settings file, `<plc home>/.plcrc`.
 pub fn path() -> Result<PathBuf, String> {
-    let home = home()?;
-    if !plc_home_set() {
-        adopt(&legacy_path()?, &home)?;
-    }
-    Ok(home.join(RC))
-}
-
-/// Where plc kept the vault path before it had a home: `~/.plcrc`.
-pub fn legacy_path() -> Result<PathBuf, String> {
-    Ok(user_home()?.join(RC))
-}
-
-/// A legacy `~/.plcrc` left in place because `.plcrc` already existed.
-/// Never one under `$PLC_HOME`, which does not adopt it.
-pub fn unmoved_legacy() -> Result<Option<PathBuf>, String> {
-    if plc_home_set() {
-        return Ok(None);
-    }
-    path()?;
-    let legacy = legacy_path()?;
-    Ok(legacy.exists().then_some(legacy))
-}
-
-fn plc_home_set() -> bool {
-    env::var_os("PLC_HOME").is_some_and(|h| !h.is_empty())
-}
-
-/// Move `legacy` into `home` as `.plcrc`, unless one is already there, even
-/// as a dangling link.
-fn adopt(legacy: &Path, home: &Path) -> Result<(), String> {
-    let path = home.join(RC);
-    let free = matches!(
-        fs::symlink_metadata(&path),
-        Err(e) if e.kind() == ErrorKind::NotFound
-    );
-    if !free || !legacy.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(home)
-        .and_then(|()| fs::rename(legacy, &path))
-        .map_err(|e| format!("move {} to {}: {e}", tilde(legacy), tilde(&path)))
+    Ok(home()?.join(RC))
 }
 
 fn user_home() -> Result<PathBuf, String> {
@@ -150,15 +109,6 @@ impl Rc {
         day.parse().map_err(|_| {
             format!("week_start: `{day}` is not a weekday (monday … sunday)")
         })
-    }
-
-    /// Whether it still sets `PALACE_DIR`, the key a legacy `~/.plcrc` used
-    /// for what `.plcrc` calls `vault`.
-    pub fn has_legacy_key(&self) -> bool {
-        self.unknown
-            .iter()
-            .map(|k| k.trim_start_matches("export ").trim())
-            .any(|k| k == "PALACE_DIR")
     }
 }
 
@@ -273,58 +223,5 @@ mod tests {
         assert_eq!(rc.notes_dir(no_vault), Ok(PathBuf::from("/abs")));
         let rc = Rc::parse("notes = rel");
         assert_eq!(rc.notes_dir(no_vault), Err("no vault".to_string()));
-    }
-
-    #[test]
-    fn legacy_key() {
-        for text in ["PALACE_DIR = /v", "export PALACE_DIR=\"/v\""] {
-            let rc = Rc::parse(text);
-            assert!(rc.has_legacy_key(), "{text}");
-            assert_eq!(rc.vault, None);
-        }
-        assert!(!Rc::parse("vault = /v\nPALACE = /w").has_legacy_key());
-    }
-
-    fn tmp(tag: &str) -> PathBuf {
-        let name = format!("plc-rc-{tag}-{}", std::process::id());
-        let dir = env::temp_dir().join(name);
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn adopt_moves_a_legacy_rc() {
-        let dir = tmp("adopt");
-        let (legacy, home) = (dir.join(RC), dir.join(".plc"));
-        adopt(&legacy, &home).unwrap();
-        assert!(!home.exists(), "nothing to adopt, nothing created");
-
-        fs::write(&legacy, "PALACE_DIR = /v\n").unwrap();
-        adopt(&legacy, &home).unwrap();
-        assert!(!legacy.exists());
-        let moved = fs::read_to_string(home.join(RC)).unwrap();
-        assert_eq!(moved, "PALACE_DIR = /v\n");
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn adopt_never_replaces_an_rc() {
-        let dir = tmp("keep");
-        let (legacy, home) = (dir.join(RC), dir.join(".plc"));
-        fs::create_dir_all(&home).unwrap();
-        fs::write(&legacy, "old").unwrap();
-
-        std::os::unix::fs::symlink(dir.join("gone"), home.join(RC)).unwrap();
-        adopt(&legacy, &home).unwrap();
-        assert!(legacy.exists());
-        assert!(fs::symlink_metadata(home.join(RC)).unwrap().is_symlink());
-
-        fs::remove_file(home.join(RC)).unwrap();
-        fs::write(home.join(RC), "new").unwrap();
-        adopt(&legacy, &home).unwrap();
-        assert!(legacy.exists());
-        assert_eq!(fs::read_to_string(home.join(RC)).unwrap(), "new");
-        fs::remove_dir_all(&dir).ok();
     }
 }

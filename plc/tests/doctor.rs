@@ -14,23 +14,8 @@ fn reports_unknown_keys() {
     let want = "
   ! ~/.plc/.plcrc: unknown key `foo` (ignored)
   ! ~/.plc/.plcrc: unknown key `export PALACE_DIR` (ignored)
-      rename its PALACE_DIR key to `vault`
   · vault OK → ";
     assert!(out.contains(want), "{out}");
-}
-
-#[test]
-fn reports_an_unmoved_legacy_rc() {
-    let home = Home::new("doctor-legacy");
-    home.write(".plcrc", "PALACE_DIR = /old\n");
-    home.write(".plc/.plcrc", "vault = /new\n");
-    let out = ok(&mut home.plc(&["doctor"]));
-    let want = "
-  ! ~/.plcrc not moved: ~/.plc/.plcrc exists
-      merge it into ~/.plc/.plcrc, then delete it
-";
-    assert!(out.contains(want), "{out}");
-    assert!(!out.contains("unknown key"), "{out}");
 }
 
 #[test]
