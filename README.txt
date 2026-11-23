@@ -221,8 +221,10 @@ Usage: plc add NAME        (aliases: plc note, plc no)
 Create or resolve NAME.md (.md appended if missing) in the notes dir, the
 one plc config notes prints: notes in .plcrc, under the vault unless
 absolute, else <vault>/notes/triage. A new note holds the stamp line and
-a [[00_triage]] line (and a [[TAG]] line with -t); an existing one is
-kept. NAME is one file name, so a / in it is refused. Unless notes is
+a [[00_triage]] line (and a [[TAG]] line with -t). A note of that name
+anywhere in the vault, outside hidden dirs and matched as links match
+names, is kept and its path printed instead; one name two notes share is
+refused. NAME is one file name, so a / in it is refused. Unless notes is
 absolute, the vault must validate.
 
     > plc add idea              # <vault>/notes/triage/idea.md

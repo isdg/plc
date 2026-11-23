@@ -64,7 +64,7 @@ pub fn set_tag_postfix(tag: Option<String>) {
 
 /// Apply the run's postfix (if any) to `filename`, inserting it before the
 /// extension: `2026-07-14T20.28.md` + `review` → `2026-07-14T20.28+review.md`.
-fn apply_postfix(filename: &str) -> String {
+pub(crate) fn apply_postfix(filename: &str) -> String {
     match POSTFIX.get().and_then(|p| p.as_deref()) {
         Some(postfix) => postfixed(filename, postfix),
         None => filename.to_string(),

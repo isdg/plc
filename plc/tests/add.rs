@@ -115,3 +115,32 @@ fn bad_names_are_refused() {
     assert_eq!(err, want);
     assert!(!home.path("palace/escape.md").exists());
 }
+
+#[test]
+fn a_note_elsewhere_in_the_vault_is_opened() {
+    let home = Home::new("add-elsewhere");
+    home.vault("palace");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    let note = home.write("palace/notes/me/Idea.md", "mine\n");
+    home.write("palace/.git/idea.md", "hidden\n");
+    assert_eq!(ok(&mut home.plc(&["add", "idea"])), display(&note));
+    assert_eq!(fs::read_to_string(&note).unwrap(), "mine\n");
+    assert!(!home.path("palace/notes/triage/idea.md").exists());
+
+    let out = ok(&mut home.plc(&["add", "idea", "-x", "v2"]));
+    assert!(out.ends_with("/notes/triage/idea+v2.md"), "{out}");
+}
+
+#[test]
+fn a_name_two_notes_share_is_refused() {
+    let home = Home::new("add-twins");
+    home.vault("palace");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    home.write("palace/notes/me/idea.md", "a\n");
+    home.write("palace/notes/work/idea.md", "b\n");
+    let err = fail(&mut home.plc(&["add", "idea"]));
+    let want = "add: 2 notes share the name: \
+                notes/me/idea.md, notes/work/idea.md";
+    assert_eq!(err, want);
+    assert!(!home.path("palace/notes/triage/idea.md").exists());
+}
