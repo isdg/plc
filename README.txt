@@ -303,7 +303,8 @@ take part in this graph.
 PLC STAT
 -------------------------------------------------------------------------------
 
-Usage: plc stat [DD [MM [YY]]] [-f FORMAT] [--color auto|always|never]
+Usage: plc stat [DATE | FROM .. TO] [-f FORMAT]
+                [--color auto|always|never]
 
 The bytes written each day. The date is read as plc daily reads it, a
 field left off being today's, or +N/-N days from today; - for a whole
@@ -319,6 +320,24 @@ it; a month or a year is drawn as a heatmap:
     plc stat - -            this year
     plc stat - - 25         2025
 
+A range, FROM .. TO, shows every day between, both ends included. Each end
+is a date as above, standing for its first day on the left and its last on
+the right, or an amount back from today: 3m, 2w or 30d, a + counting
+ahead, -N days as for a date. Left off, the start is January 1 of the
+end's year and the end is today. A range that is one day, month or year is
+shown as one.
+
+    plc stat 3m ..          the last 3 months, up to today
+    plc stat 2w ..          the last 2 weeks
+    plc stat - 09 .. - 11   September to November
+    plc stat - 11 25 .. - 02
+                            November 2025 to February
+    plc stat 15 08 ..       15 August to today
+    plc stat .. - 03        January to March
+
+-3m does not work: plc's argument parser reads it as flags, so an amount
+back carries no sign.
+
 Every note in the vault counts but those in hidden directories and the
 +ledger notes, whose transactions plc ledger stat counts. A note's text
 belongs to the stamp above it, "<signature> YYYY-MM-DD HH:MM:SS +ZZZZ":
@@ -329,7 +348,7 @@ an empty day. Text above every stamp is dated by the note's file name,
 else its mtime.
 
 The levels end at the quartiles of the year's written days, as GitHub
-scales contributions, and the legend shows them. Each day is a shade
+scales contributions, or a range's own, and the legend shows them. Each day is a shade
 glyph (· ░ ▒ ▓ █); on a terminal, empty days are bright black and the
 rest green, the terminal's own ANSI colours, so the heatmap follows its
 light and dark themes. Piped, or with NO_COLOR set, the glyphs are
@@ -338,14 +357,16 @@ plain. plc ledger stat takes --color too.
 -f picks how it is shown; a format that does not fit the date is an
 error:
 
-    grid    a month or year (default): a row per weekday and a column per
-            week, as GitHub draws it; a month heads each week's column
-            with its first day, so the Tuesday under 8 is the 10th
-    rows    a month or year as a row of days per month, with the days
-            written and total; a month gets a day axis
-    plot    a month or year as an ASCII line chart
+    grid    a month, year or range (default): a row per weekday and a
+            column per week, as GitHub draws it; a month heads each
+            week's column with its first day, so the Tuesday under 8 is
+            the 10th
+    rows    a month, year or range as a row of days per month, with the
+            days written and total; a month gets a day axis
+    plot    a month, year or range as an ASCII line chart, a range of
+            over 93 days in 7-day bins
     list    a day (default): its notes, most bytes first
-    tsv     YYYY-MM-DD<TAB>bytes for each day of a month or year, or
+    tsv     YYYY-MM-DD<TAB>bytes for each day of a month, year or range, or
             path<TAB>bytes for each note of a day, for scripts
 
     --color WHEN          colour the glyphs: auto (on a terminal, the

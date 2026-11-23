@@ -196,7 +196,7 @@ fn month_tab(
     let mut out = String::new();
     let _ = writeln!(out, "\n  {}\n", first.format("%B %Y"));
     let label = first.format("%b").to_string();
-    push_tab_row(&mut out, &label, values, false, heat, fmt);
+    push_tab_row(&mut out, &label, values, 0, false, heat, fmt);
     let mut axis = " ".repeat(7);
     for d in 1..=values.len() {
         let mark = d == 1 || d % 5 == 0;
@@ -280,19 +280,21 @@ fn year_tab(
         let label = NaiveDate::from_ymd_opt(y, m, 1).unwrap().format("%b");
         let now = y == today.year() && m == today.month();
         let days = &values[off..off + last as usize];
-        push_tab_row(&mut out, &label.to_string(), days, now, heat, fmt);
+        push_tab_row(&mut out, &label.to_string(), days, 0, now, heat, fmt);
         off += last as usize;
     }
     let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
     out
 }
 
-/// One tab row: `label`, a strip of `values` padded to 31 days so rows
-/// line up, and the days written / total; `bold` only takes with colour.
+/// One tab row: `label`, a strip of `values` from day `lead + 1` of its
+/// month, padded to 31 days so rows line up, and the days written / total;
+/// `bold` only takes with colour.
 fn push_tab_row(
     out: &mut String,
     label: &str,
     values: &[u64],
+    lead: usize,
     bold: bool,
     heat: &Heat,
     fmt: &dyn Fn(u64) -> String,
@@ -302,14 +304,14 @@ fn push_tab_row(
     } else {
         ("", "")
     };
-    let mut strip = String::new();
+    let mut strip = "  ".repeat(lead);
     for &v in values {
         heat.push_cell(&mut strip, v);
         strip.push(' ');
     }
     let days = values.iter().filter(|&&v| v > 0).count();
     let total = fmt(values.iter().sum());
-    let pad = " ".repeat(2 * (31 - values.len()));
+    let pad = " ".repeat(2 * (31 - lead - values.len()));
     let last = values.len();
     let _ = writeln!(
         out,
@@ -382,6 +384,144 @@ pub fn plot_year(y: i32, values: &[u64], unit: &str, fmt: &dyn Fn(u64) -> String
     out.push('\n');
     out
 }
+
+/// The days from `first` in `layout`. `values[i]` is the day `i` days after
+/// `first`.
+pub fn range(
+    first: NaiveDate,
+    values: &[u64],
+    today: NaiveDate,
+    layout: Layout,
+    heat: &Heat,
+    fmt: &dyn Fn(u64) -> String,
+) -> String {
+    match layout {
+        Layout::Git => range_git(first, values, heat),
+        Layout::Tab => range_tab(first, values, today, heat, fmt),
+    }
+}
+
+/// `1 Sep 2026 – 23 Nov 2026`, for a range of `n` days from `first`.
+fn range_title(first: NaiveDate, n: usize) -> String {
+    let last = first + chrono::Days::new(n.saturating_sub(1) as u64);
+    format!("{} – {}", first.format("%-d %b %Y"), last.format("%-d %b %Y"))
+}
+
+/// A line naming each month at `pos` of its first day in the range, the
+/// first day's month included; a name too close to the next gives way.
+fn month_marks(
+    first: NaiveDate,
+    n: usize,
+    pos: impl Fn(usize) -> usize,
+) -> String {
+    let marks: Vec<(usize, String)> = first
+        .iter_days()
+        .take(n)
+        .enumerate()
+        .filter(|(i, day)| *i == 0 || day.day() == 1)
+        .map(|(i, day)| (pos(i), day.format("%b").to_string()))
+        .collect();
+    let mut line = String::new();
+    for (k, (at, name)) in marks.iter().enumerate() {
+        let next = marks.get(k + 1).map(|(p, _)| *p);
+        if next.is_some_and(|p| p <= at + name.len()) {
+            continue;
+        }
+        let width = line.chars().count();
+        line.push_str(&" ".repeat(at.saturating_sub(width)));
+        line.push_str(name);
+    }
+    line
+}
+
+/// [`year_git`]'s grid over the days of a range.
+fn range_git(first: NaiveDate, values: &[u64], heat: &Heat) -> String {
+    let pad = first.weekday().num_days_from_sunday() as usize;
+    let weeks = (pad + values.len()).div_ceil(7);
+    let mut out = String::new();
+    let _ = writeln!(out, "\n  {}", range_title(first, values.len()));
+    let marks = month_marks(first, values.len(), |i| (pad + i) / 7 * 2);
+    let _ = writeln!(out, "      {marks}");
+    for (row, label) in DOW.iter().enumerate() {
+        let _ = write!(out, "  {label}  ");
+        for w in 0..weeks {
+            match (w * 7 + row).checked_sub(pad).and_then(|i| values.get(i)) {
+                Some(&v) => {
+                    heat.push_cell(&mut out, v);
+                    out.push(' ');
+                }
+                None => out.push_str("  "),
+            }
+        }
+        out.push('\n');
+    }
+    let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
+    out
+}
+
+/// [`year_tab`]'s rows over the months of a range, each from its first day
+/// in the range; months carry their year when the range spans two.
+fn range_tab(
+    first: NaiveDate,
+    values: &[u64],
+    today: NaiveDate,
+    heat: &Heat,
+    fmt: &dyn Fn(u64) -> String,
+) -> String {
+    let last = first + chrono::Days::new(values.len() as u64 - 1);
+    let label_fmt = if first.year() == last.year() { "%b" } else { "%b %y" };
+    let mut out = String::new();
+    let _ = writeln!(out, "\n  {}\n", range_title(first, values.len()));
+    let mut i = 0;
+    while i < values.len() {
+        let day = first + chrono::Days::new(i as u64);
+        let month_end = calendar::last_day_of_month(day.year(), day.month());
+        let len = ((month_end - day.day() + 1) as usize).min(values.len() - i);
+        let label = day.format(label_fmt).to_string();
+        let now = day.year() == today.year() && day.month() == today.month();
+        let lead = (day.day() - 1) as usize;
+        let days = &values[i..i + len];
+        push_tab_row(&mut out, &label, days, lead, now, heat, fmt);
+        i += len;
+    }
+    let _ = writeln!(out, "\n  Legend:  {}", heat.legend());
+    out
+}
+
+/// A line chart of a range: daily up to [`DAILY_PLOT`] days, else in 7-day
+/// bins from its first day, with its months marked under it.
+pub fn plot_range(
+    first: NaiveDate,
+    values: &[u64],
+    unit: &str,
+    fmt: &dyn Fn(u64) -> String,
+) -> String {
+    let step = if values.len() <= DAILY_PLOT { 1 } else { 7 };
+    let points: Vec<u64> =
+        values.chunks(step).map(|bin| bin.iter().sum()).collect();
+    let max = points.iter().copied().max().unwrap_or(0);
+    let what = match step {
+        1 => format!("daily {unit}"),
+        _ => format!("weekly {unit} (7-day bins)"),
+    };
+    let mut out = String::new();
+    let title = range_title(first, values.len());
+    let _ = writeln!(out, "\n          {title} — {what}\n");
+    if max == 0 {
+        out.push_str("          (no data)\n");
+        return out;
+    }
+    for line in calendar::line_chart_with(max, points.len(), 8, &points, fmt) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let marks = month_marks(first, values.len(), |i| i / step);
+    let _ = writeln!(out, "{}{marks}", " ".repeat(11));
+    out
+}
+
+/// The most days [`plot_range`] draws one column each.
+const DAILY_PLOT: usize = 93;
 
 /// The day-number x-axis under a month plot: markers at day 1 then every 5th,
 /// each column one char wide (a two-digit label consumes the next column too).

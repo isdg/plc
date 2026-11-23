@@ -4,7 +4,8 @@
 //! written that day across the vault (see [`activity`]). A date (see
 //! [`when`]) names a day, whose notes it lists, or a month or year, which
 //! it draws as a heatmap scaled to the year, or a plot, then a stats block
-//! (days written, total, avg, streaks, best day).
+//! (days written, total, avg, streaks, best day). A range `FROM .. TO` is
+//! drawn the same way, scaled to its own days.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -13,10 +14,10 @@ use std::path::Path;
 use chrono::{Datelike, Local, NaiveDate};
 use clap::{Args, ValueEnum};
 use plc_core::activity;
-use plc_core::calendar::{self, MonthStats, YearStats};
+use plc_core::calendar::{self, MonthStats, RangeStats, YearStats};
 
 use crate::cmd::calview::{self, Cells, ColorArgs, Format, Heat, Layout};
-use crate::cmd::when::{self, Scope};
+use crate::cmd::when::{self, Scope, Span};
 use crate::config::Palace;
 
 /// Bytes written per day.
@@ -42,7 +43,8 @@ pub struct StatArgs {
     /// `DD [MM [YY]]`, as `plc daily` takes it, today's for any field left
     /// off; `-` for a whole field shows a month (`- MM YY`) or a year
     /// (`- - YY`). None is today; `-` is this month; `+N`/`-N` is N days
-    /// from today.
+    /// from today. `FROM .. TO` shows a range: each end a date or an
+    /// amount back from today (`3m`, `2w`, `30d`), either left off.
     #[arg(value_name = "DD MM YY", allow_negative_numbers = true)]
     date: Vec<String>,
     /// How to show it: a day as `list` (default) or `tsv`; a month or year
@@ -55,9 +57,17 @@ pub struct StatArgs {
 
 pub fn run(palace: &Palace, args: StatArgs) -> Result<String, String> {
     let today = Local::now().date_naive();
-    let scope = when::parse(&args.date, today)
+    let span = when::parse_span(&args.date, today)
         .map_err(|e| format!("plc stat: {e}"))?;
     let root = palace.root();
+    let scope = match span {
+        Span::Scope(scope) => scope,
+        Span::Days(first, last) => {
+            let format = args.format.unwrap_or(Format::Grid);
+            let cells = args.color.cells();
+            return render_range(root, first, last, today, format, cells);
+        }
+    };
     let format = args.format.unwrap_or(match scope {
         Scope::Day(_) => Format::List,
         _ => Format::Grid,
@@ -222,6 +232,76 @@ fn render_year(
     let st = calendar::year_stats(sizes, y, cutoff);
     push_year_stats(&mut out, &st, y);
     out
+}
+
+/// A range: its heatmap in `format`, or a plot, then its Stats block, or
+/// one line per day as tsv.
+fn render_range(
+    root: &Path,
+    first: NaiveDate,
+    last: NaiveDate,
+    today: NaiveDate,
+    format: Format,
+    cells: Cells,
+) -> Result<String, String> {
+    if format == Format::List {
+        return Err("plc stat: -f list shows a day: DD MM YY".to_string());
+    }
+    let days = activity::by_day(root);
+    if format == Format::Tsv {
+        return Ok(days_tsv(&days, first, last));
+    }
+    let values: Vec<u64> = first
+        .iter_days()
+        .take_while(|d| *d <= last)
+        .map(|d| days.get(&d).copied().unwrap_or(0))
+        .collect();
+    let bytes = |b| calendar::fmt_bytes(b);
+    let mut out = match format {
+        Format::Plot => calview::plot_range(first, &values, "bytes", &bytes),
+        f => {
+            let heat = bytes_heat(&values, cells);
+            calview::range(first, &values, today, layout(f), &heat, &bytes)
+        }
+    };
+    let st = calendar::range_stats(first, &values, today);
+    push_range_stats(&mut out, &st, first.year() != last.year());
+    Ok(out)
+}
+
+/// Append a range's `── Stats ──` block; `years` names the year of its
+/// best month and day, for a range across two.
+fn push_range_stats(out: &mut String, st: &RangeStats, years: bool) {
+    out.push_str("\n  ── Stats ─────────────────────────\n");
+    let _ = writeln!(
+        out,
+        "  Days written : {} / {}   ({}%)",
+        st.days_written, st.total_days, st.pct
+    );
+    let _ = writeln!(out, "  Total        : {}", calendar::fmt_bytes(st.total));
+    if st.days_written > 0 {
+        let avg = st.total / u64::from(st.days_written);
+        let _ = writeln!(out, "  Avg / day    : {}", calendar::fmt_bytes(avg));
+    } else {
+        out.push_str("  Avg / day    : —\n");
+    }
+    let _ = writeln!(out, "  Longest run  : {} days", st.longest_run);
+    let _ = writeln!(out, "  Current run  : {} days", st.current_run);
+    if let Some(((y, m), days, total)) = st.best_month {
+        let first = NaiveDate::from_ymd_opt(y, m, 1).expect("a month");
+        let name = first.format(if years { "%B %Y" } else { "%B" });
+        let total = calendar::fmt_bytes(total);
+        let _ = writeln!(
+            out,
+            "  Best month   : {:<9} ({days} days, {total})",
+            name.to_string()
+        );
+    }
+    if let Some((day, size)) = st.best_day {
+        let day = day.format(if years { "%b %-d %Y" } else { "%b %-d" });
+        let size = calendar::fmt_bytes(size);
+        let _ = writeln!(out, "  Best day     : {day}   ({size})");
+    }
 }
 
 /// Append the `── Year stats ──` block (shared shape with the script).

@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 /// Heatmap level 0–4 of `v` on a scale whose levels 1–3 end at `bounds`:
 /// 0 is empty, and anything over the last bound is 4.
@@ -249,6 +249,82 @@ pub fn year_stats(sizes: &[u64], year: i32, cutoff_doy: Option<u32>) -> YearStat
     }
 }
 
+/// Aggregate statistics over the days of a range; `sizes[i]` is the day
+/// `i` days after its first.
+#[derive(Debug, PartialEq)]
+pub struct RangeStats {
+    pub days_written: u32,
+    pub total_days: u32,
+    pub total: u64,
+    pub longest_run: u32,
+    /// Written days running back from today, or from the range's last day
+    /// when today is past it; 0 when the range is still to come.
+    pub current_run: u32,
+    /// The month (year, month) with the largest total, its written days and
+    /// total; `None` when nothing is written.
+    pub best_month: Option<((i32, u32), u32, u64)>,
+    /// The day with the most, and its size; `None` when nothing is written.
+    pub best_day: Option<(NaiveDate, u64)>,
+    pub pct: u32,
+}
+
+/// Compute [`RangeStats`] for the range starting at `first`. Ties on the
+/// best month or day resolve to the first.
+pub fn range_stats(
+    first: NaiveDate,
+    sizes: &[u64],
+    today: NaiveDate,
+) -> RangeStats {
+    let (mut days_written, mut total, mut longest_run, mut run) = (0, 0, 0, 0);
+    let mut best_day: Option<(NaiveDate, u64)> = None;
+    let mut months: Vec<((i32, u32), u32, u64)> = Vec::new();
+    for (day, &size) in first.iter_days().zip(sizes) {
+        let key = (day.year(), day.month());
+        if months.last().is_none_or(|(k, _, _)| *k != key) {
+            months.push((key, 0, 0));
+        }
+        if size == 0 {
+            run = 0;
+            continue;
+        }
+        days_written += 1;
+        total += size;
+        run += 1;
+        longest_run = longest_run.max(run);
+        if best_day.is_none_or(|(_, best)| size > best) {
+            best_day = Some((day, size));
+        }
+        let month = months.last_mut().expect("pushed above");
+        month.1 += 1;
+        month.2 += size;
+    }
+    let best_month = months
+        .into_iter()
+        .filter(|(_, days, _)| *days > 0)
+        .reduce(|best, m| if m.2 > best.2 { m } else { best });
+
+    let total_days = sizes.len() as u32;
+    let end = (today - first).num_days().min(i64::from(total_days) - 1);
+    let current_run = match usize::try_from(end) {
+        Ok(end) => sizes[..=end].iter().rev().take_while(|&&s| s > 0).count(),
+        Err(_) => 0,
+    } as u32;
+    let pct = match total_days {
+        0 => 0,
+        n => days_written * 100 / n,
+    };
+    RangeStats {
+        days_written,
+        total_days,
+        total,
+        longest_run,
+        current_run,
+        best_month,
+        best_day,
+        pct,
+    }
+}
+
 /// Render an ASCII line chart of `values` (one column each) as `height + 1`
 /// lines: `height` plotted rows with right-aligned byte-axis labels, then the
 /// bottom axis. Uses box-drawing connectors (`● ─ │ ╭ ╮ ╰ ╯`). Ports the
@@ -318,6 +394,34 @@ pub fn line_chart_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn on(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn range_stats_cross_months_and_years() {
+        // Dec 30 2025 – Jan 3 2026: 0, 5, 7, 0, 2
+        let sizes = [0, 5, 7, 0, 2];
+        let st = range_stats(on(2025, 12, 30), &sizes, on(2026, 1, 3));
+        assert_eq!((st.days_written, st.total_days, st.total), (3, 5, 14));
+        assert_eq!((st.longest_run, st.current_run, st.pct), (2, 1, 60));
+        assert_eq!(st.best_month, Some(((2026, 1), 2, 9)));
+        assert_eq!(st.best_day, Some((on(2026, 1, 1), 7)));
+    }
+
+    #[test]
+    fn range_stats_run_back_from_today_or_the_last_day() {
+        let sizes = [3, 3, 0, 4, 4];
+        let first = on(2026, 3, 1);
+        let run = |today| range_stats(first, &sizes, today).current_run;
+        assert_eq!(run(on(2026, 3, 2)), 2);
+        assert_eq!(run(on(2026, 3, 3)), 0);
+        assert_eq!(run(on(2026, 4, 9)), 2);
+        assert_eq!(run(on(2026, 2, 1)), 0);
+        let empty = range_stats(first, &[0; 5], on(2026, 3, 5));
+        assert_eq!((empty.best_month, empty.best_day), (None, None));
+    }
 
     #[test]
     fn levels_end_at_their_bounds() {

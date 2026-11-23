@@ -2,8 +2,10 @@
 //! a field left off being today's, so no date is today, and `-` for a whole
 //! field, which widens what is shown: `- MM YY` is a month, `- - YY` a year.
 //! A lone `+N` or `-N` is the day N days after or before today.
+//!
+//! `plc stat` also takes a range, `FROM .. TO` (see [`parse_span`]).
 
-use chrono::{Datelike, Days, NaiveDate};
+use chrono::{Datelike, Days, Months, NaiveDate};
 use plc_core::calendar;
 
 /// What a date names.
@@ -28,7 +30,16 @@ impl Scope {
     }
 }
 
+/// What `plc stat` shows: what a date names, or the days of a range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Span {
+    Scope(Scope),
+    /// Every day from the first to the last, both included.
+    Days(NaiveDate, NaiveDate),
+}
+
 const WHOLE: &str = "-";
+const TO: &str = "..";
 
 /// Read `fields` against `today`.
 pub fn parse(fields: &[String], today: NaiveDate) -> Result<Scope, String> {
@@ -38,6 +49,123 @@ pub fn parse(fields: &[String], today: NaiveDate) -> Result<Scope, String> {
             Err("an offset stands alone: +N or -N".to_string())
         }
         _ => parse_date(fields, today),
+    }
+}
+
+/// Read `fields` against `today`: a date, as [`parse`] reads it, or a
+/// range `FROM .. TO`. An end is a date, standing for its first day on the
+/// left and its last on the right, or an [`amount`] from today; a left end
+/// left off is January 1 of the right end's year, a right one today.
+pub fn parse_span(
+    fields: &[String],
+    today: NaiveDate,
+) -> Result<Span, String> {
+    let words = split_to(fields);
+    let Some(at) = words.iter().position(|w| w == TO) else {
+        return parse(fields, today).map(Span::Scope);
+    };
+    let (from, to) = (&words[..at], &words[at + 1..]);
+    if to.iter().any(|w| w == TO) {
+        return Err("a range has one ..: FROM .. TO".to_string());
+    }
+    let last = match to {
+        [] => today,
+        _ => end(to, today)?.1,
+    };
+    let first = match from {
+        [] => NaiveDate::from_ymd_opt(last.year(), 1, 1).expect("January 1"),
+        _ => end(from, today)?.0,
+    };
+    if first > last {
+        return Err(format!("a range runs forward: {first} is after {last}"));
+    }
+    Ok(narrow(first, last))
+}
+
+/// `fields` with each `..` its own word, so `3m..` reads as `3m ..`.
+fn split_to(fields: &[String]) -> Vec<String> {
+    let mut words = Vec::new();
+    for field in fields {
+        let mut parts = field.trim().split(TO).peekable();
+        while let Some(part) = parts.next() {
+            if !part.is_empty() {
+                words.push(part.to_string());
+            }
+            if parts.peek().is_some() {
+                words.push(TO.to_string());
+            }
+        }
+    }
+    words
+}
+
+/// The first and last day a range end names.
+fn end(
+    fields: &[String],
+    today: NaiveDate,
+) -> Result<(NaiveDate, NaiveDate), String> {
+    match fields {
+        [f] if is_amount(f) => amount(f, today).map(|day| (day, day)),
+        _ => parse(fields, today).map(Scope::span),
+    }
+}
+
+/// Whether `field` is written as an [`amount`]: an offset, or a count with
+/// a unit.
+fn is_amount(field: &str) -> bool {
+    let field = field.trim();
+    is_offset(field)
+        || (field.starts_with(|c: char| c.is_ascii_digit())
+            && field.ends_with(['d', 'w', 'm']))
+}
+
+/// The day an amount names: `+N` or `-N` days from today as for a date, or
+/// a count of days, weeks or months, `30d`, `2w`, `3m`, back from today, or
+/// ahead with a `+`. A month back from May 31 is April 30.
+fn amount(s: &str, today: NaiveDate) -> Result<NaiveDate, String> {
+    let s = s.trim();
+    let bad = || format!("invalid amount: {s} (+N, -N, or N with d, w or m)");
+    let (count, unit) = match s.strip_suffix(['d', 'w', 'm']) {
+        Some(count) => (count, &s[count.len()..]),
+        None => (s, ""),
+    };
+    let signed = if count.starts_with(['+', '-']) {
+        count.to_string()
+    } else if unit.is_empty() {
+        return Err(bad());
+    } else {
+        format!("-{count}")
+    };
+    let n = offset(&signed).map_err(|_| bad())?;
+    let far = || format!("amount out of range: {s}");
+    match unit {
+        "w" => shift(today, n.checked_mul(7).ok_or_else(far)?),
+        "m" => {
+            let months = u32::try_from(n.unsigned_abs()).map_err(|_| far())?;
+            let months = Months::new(months);
+            let to = if n < 0 {
+                today.checked_sub_months(months)
+            } else {
+                today.checked_add_months(months)
+            };
+            to.ok_or_else(far)
+        }
+        _ => shift(today, n),
+    }
+}
+
+/// The range as the scope it is, when it covers exactly one.
+fn narrow(first: NaiveDate, last: NaiveDate) -> Span {
+    let month = Scope::Month(first.year(), first.month());
+    let year = Scope::Year(first.year());
+    if first == last {
+        Span::Scope(Scope::Day(first))
+    } else if month.span() == (first, last) {
+        Span::Scope(month)
+    } else if year.span() == (first, last) {
+        Span::Scope(year)
+    } else {
+        Span::Days(first, last)
     }
 }
 
@@ -180,6 +308,73 @@ mod tests {
         assert_eq!(scope(&["-0"]), Ok(day(2026, 11, 14)));
         assert_eq!(scope(&[" +17 "]), Ok(day(2026, 12, 1)));
         assert_eq!(scope(&["-366"]), Ok(day(2025, 11, 13)));
+    }
+
+    fn span(fields: &[&str]) -> Result<Span, String> {
+        let fields: Vec<String> =
+            fields.iter().map(|f| f.to_string()).collect();
+        parse_span(&fields, today())
+    }
+
+    fn at(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn a_range_runs_from_its_left_ends_first_day_to_its_rights_last() {
+        let days = |a, b| Ok(Span::Days(a, b));
+        let sep_nov = days(at(2026, 9, 1), at(2026, 11, 30));
+        assert_eq!(span(&["-", "09", "..", "-", "11"]), sep_nov);
+        let aug_nov = days(at(2026, 8, 15), at(2026, 11, 10));
+        assert_eq!(span(&["15", "08", "..", "10", "11"]), aug_nov);
+        let across = days(at(2025, 11, 1), at(2026, 2, 28));
+        assert_eq!(span(&["-", "11", "25", "..", "-", "02"]), across);
+        assert_eq!(span(&["-", "09", ".."]), days(at(2026, 9, 1), today()));
+        let to_march = days(at(2026, 1, 1), at(2026, 3, 31));
+        assert_eq!(span(&["..", "-", "03"]), to_march);
+        let in_2025 = days(at(2025, 1, 1), at(2025, 3, 31));
+        assert_eq!(span(&["..", "-", "03", "25"]), in_2025);
+    }
+
+    #[test]
+    fn a_range_ends_at_amounts_from_today() {
+        let back = |a| Ok(Span::Days(a, today()));
+        assert_eq!(span(&["3m", ".."]), back(at(2026, 8, 14)));
+        assert_eq!(span(&["2w", ".."]), back(at(2026, 10, 31)));
+        assert_eq!(span(&["30d", ".."]), back(at(2026, 10, 15)));
+        assert_eq!(span(&["-30", ".."]), back(at(2026, 10, 15)));
+        assert_eq!(span(&["-3m", ".."]), back(at(2026, 8, 14)));
+        let ahead = Ok(Span::Days(today(), at(2027, 1, 14)));
+        assert_eq!(span(&["-0", "..", "+2m"]), ahead);
+        let into_2027 = Ok(Span::Days(at(2027, 1, 1), at(2027, 1, 14)));
+        assert_eq!(span(&["..", "+2m"]), into_2027);
+        assert_eq!(span(&["3m.."]), back(at(2026, 8, 14)));
+        let end_of_month = NaiveDate::from_ymd_opt(2026, 5, 31).unwrap();
+        assert_eq!(amount("1m", end_of_month), Ok(at(2026, 4, 30)));
+    }
+
+    #[test]
+    fn a_range_that_is_one_scope_is_drawn_as_it() {
+        assert_eq!(span(&["5", "..", "5"]), Ok(Span::Scope(day(2026, 11, 5))));
+        let month = Ok(Span::Scope(Scope::Month(2026, 9)));
+        assert_eq!(span(&["-", "09", "..", "-", "09"]), month);
+        let year = Ok(Span::Scope(Scope::Year(2025)));
+        assert_eq!(span(&["-", "01", "25", "..", "-", "12", "25"]), year);
+        assert_eq!(span(&["-", "-"]), Ok(Span::Scope(Scope::Year(2026))));
+    }
+
+    #[test]
+    fn a_bad_range_says_why() {
+        let err = |f: &[&str]| span(f).unwrap_err();
+        let back = "a range runs forward: 2026-11-01 is after 2026-09-30";
+        assert_eq!(err(&["-", "11", "..", "-", "09"]), back);
+        let one = "a range has one ..: FROM .. TO";
+        assert_eq!(err(&["1", "..", "2", "..", "3"]), one);
+        assert_eq!(err(&["3x", ".."]), "invalid day: 3x");
+        let bad = "invalid amount: 3x (+N, -N, or N with d, w or m)";
+        assert_eq!(amount("3x", today()), Err(bad.to_string()));
+        let far = "amount out of range: 99999999999m";
+        assert_eq!(err(&["99999999999m", ".."]), far);
     }
 
     #[test]

@@ -125,6 +125,47 @@ fn day_lists_the_notes_written_on_it() {
 }
 
 #[test]
+fn a_range_is_drawn_over_its_own_days() {
+    let home = with_vault("stat-range");
+    let a = "a".repeat(100);
+    let b = "b".repeat(300);
+    let note = format!(
+        "isg 2025-12-30 08:00:00 +0100\n{a}\n\
+         isg 2026-01-02 08:00:00 +0100\n{b}\n"
+    );
+    home.write("palace/notes/n.md", &note);
+    let range = ["stat", "29", "12", "25", "..", "3", "01", "26"];
+    let grid = ok(plc(&home, &range).arg("--color=never"));
+    assert!(grid.contains("29 Dec 2025 – 3 Jan 2026"), "{grid}");
+    assert!(grid.contains("\n      Jan\n"), "Dec gives way: {grid}");
+    assert!(grid.contains("Days written : 2 / 6   (33%)"), "{grid}");
+    assert!(grid.contains("Best month   : January 2026"), "{grid}");
+    let rows = ok(plc(&home, &range).args(["-f", "rows", "--color=never"]));
+    assert!(rows.contains("  Dec 25  "), "{rows}");
+    assert!(rows.contains("  Jan 26  "), "{rows}");
+    let tsv = ok(plc(&home, &range).args(["-f", "tsv"]));
+    let lines: Vec<&str> = tsv.lines().collect();
+    assert_eq!(lines.len(), 6);
+    assert_eq!(lines[1], "2025-12-30\t100");
+    assert_eq!(lines[4], "2026-01-02\t300");
+    let plot = ok(plc(&home, &range).args(["-f", "plot"]));
+    assert!(plot.contains("— daily bytes"), "{plot}");
+}
+
+#[test]
+fn a_range_counts_back_from_today_and_says_why_not() {
+    let home = with_vault("stat-range-back");
+    let back = ok(plc(&home, &["stat", "2w", ".."]).arg("--color=never"));
+    assert!(back.contains("Days written : 0 / 15"), "{back}");
+    let err = |args: &[&str]| fail(&mut plc(&home, args));
+    let forward = "plc stat: a range runs forward: 2026-11-01 is after";
+    assert!(err(&["stat", "-", "11", "26", "..", "-", "09", "26"])
+        .contains(forward));
+    let list = "plc stat: -f list shows a day: DD MM YY";
+    assert!(err(&["stat", "3m", "..", "-f", "list"]).contains(list));
+}
+
+#[test]
 fn ledger_stat_takes_the_same_dates() {
     let home = with_vault("stat-ledger");
     for (amount, memo, account) in
