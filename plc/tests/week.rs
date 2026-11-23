@@ -1,4 +1,4 @@
-//! End to end: `week_start` in `.plcrc` names weekly and do-notes, and a
+//! End to end: `week_start` in `.plcrc` names weekly and todo notes, and a
 //! bad one fails them and shows in `plc doctor`.
 
 mod common;

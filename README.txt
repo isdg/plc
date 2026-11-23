@@ -83,7 +83,7 @@ reports) any key but these:
     vault = ~/vault           # the vault, unless $PALACE_DIR is set
     notes = notes/inbox       # where plc add puts notes: under the vault
                               # when relative (default: notes/triage)
-    week_start = saturday     # the day weekly and do-notes start a week
+    week_start = saturday     # the day weekly and todo notes start a week
                               # on: mon … sun, or in full (default: monday)
 
 plc never writes .plcrc, so it can be a link into your dotfiles. What travels with a vault
@@ -253,10 +253,6 @@ with a "last" pointer stored in <PALACE_DIR>/.plc/last-todo.
     -L, --mark NAME    mark an existing todo note "last" without opening it
                        (basename, .md optional)
 
-They were do-notes once (do-*.md under notes/management/do, last-do,
-[[do]]); plc todo refuses a vault that still has them until plc doctor
---fix renames them.
-
 -------------------------------------------------------------------------------
 PLC MURMUR
 -------------------------------------------------------------------------------
@@ -397,16 +393,14 @@ ignores, a legacy ~/.plcrc left beside it, whether the vault resolves to a
 real one, and its machine state dir. It then audits the ledger .plc/config —
 accounts/categories used but not declared (or vice versa), a name declared
 as both @ and #, a missing default currency, transactions missing a stable
-^id — printing a fix command for each. Then it lists do-notes still
-named the old way: their files, the last-do pointer and every [[do…]]
-link. Last, it lists whitespace in names: link targets like [[foo bar]]
-and the files outside hidden dirs named like foo bar.md, each run of
-whitespace to become one _ (not +, which joins a --postfix); a link's
-path, |alias, #heading and ^block stay as written. --fix applies the safe
-repairs (importing names, setting the currency, backfilling ids, renaming
-do-notes to todo and spaced names to _ unless a new name is taken). It's
-built to grow into a whole-vault checkup (orphans, stale pointers, broken
-links).
+^id — printing a fix command for each. Last, it lists whitespace in
+names: link targets like [[foo bar]] and the files outside hidden dirs
+named like foo bar.md, each run of whitespace to become one _ (not +,
+which joins a --postfix); a link's path, |alias, #heading and ^block stay
+as written. --fix applies the safe repairs (importing names, setting the
+currency, backfilling ids, renaming spaced names to _ unless a new name
+is taken). It's built to grow into a whole-vault checkup (orphans, stale
+pointers, broken links).
 
     > plc doctor
     > plc doctor --fix

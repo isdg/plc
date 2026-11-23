@@ -13,8 +13,8 @@ fn with_vault(tag: &str) -> Home {
 }
 
 #[test]
-fn do_lists_marks_and_opens_the_last() {
-    let home = with_vault("last-do");
+fn todo_lists_marks_and_opens_the_last() {
+    let home = with_vault("last-todo");
     let dir = "palace/notes/management/todo";
     home.write(&format!("{dir}/todo-2026-W01.md"), "a\n");
     let new = ok(&mut home.plc(&["todo", "-n"]));

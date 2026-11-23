@@ -40,7 +40,7 @@ enum Cmd {
     Add(cmd::add::AddArgs),
     /// Create/resolve TOP.md at the vault root (the palace landing page).
     Top(note::NoteArgs),
-    /// Manage do-notes (week-based) with a "last" pointer.
+    /// Manage todo notes (week-based) with a "last" pointer.
     Todo(cmd::todo::TodoArgs),
     /// Plain-text double-entry ledger: append transactions to `+ledger` notes.
     #[command(visible_alias = "lr")]
