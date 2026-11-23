@@ -109,9 +109,9 @@ impl<'a> Iterator for Links<'a> {
 /// as written (compare it with [`fold_name`]) and may return a new one,
 /// which replaces it, keeping any path, `|alias`, `#heading` or `^block`.
 /// Returns the new content and how many links it renamed.
-pub fn rename_links<F>(content: &str, rename: F) -> (String, usize)
+pub fn rename_links<F>(content: &str, mut rename: F) -> (String, usize)
 where
-    F: Fn(&str) -> Option<String>,
+    F: FnMut(&str) -> Option<String>,
 {
     let mut out = String::with_capacity(content.len());
     let (mut at, mut renamed) = (0, 0);

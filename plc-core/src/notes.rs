@@ -44,11 +44,17 @@ fn hidden(name: &OsStr) -> bool {
 /// Every note under `root`, in directory-walk order. Unreadable entries are
 /// left out.
 pub fn walk(root: &Path) -> impl Iterator<Item = PathBuf> {
+    files(root).filter(|p| stem(p).is_some())
+}
+
+/// Every file under `root` outside a hidden directory, notes or not, in
+/// directory-walk order. Unreadable entries are left out.
+pub fn files(root: &Path) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| e.depth() == 0 || !hidden(e.file_name()))
         .flatten()
-        .filter(|e| e.file_type().is_file() && stem(e.path()).is_some())
+        .filter(|e| e.file_type().is_file())
         .map(DirEntry::into_path)
 }
 
@@ -79,12 +85,20 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, "").unwrap();
         }
-        let mut found: Vec<_> = walk(&dir)
-            .map(|p| p.strip_prefix(&dir).unwrap().to_path_buf())
-            .collect();
-        found.sort();
+        let rel = |found: Vec<PathBuf>| {
+            let mut found: Vec<_> = found
+                .iter()
+                .map(|p| p.strip_prefix(&dir).unwrap().to_path_buf())
+                .collect();
+            found.sort();
+            found
+        };
+        let notes = rel(walk(&dir).collect());
+        let all = rel(files(&dir).collect());
         fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(found, [PathBuf::from("a.md"), PathBuf::from("sub/b.md")]);
+        assert_eq!(notes, [PathBuf::from("a.md"), PathBuf::from("sub/b.md")]);
+        let want = ["a.md", "sub/b.md", "sub/c.txt"].map(PathBuf::from);
+        assert_eq!(all, want);
     }
 
     #[test]

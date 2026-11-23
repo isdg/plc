@@ -397,12 +397,16 @@ ignores, a legacy ~/.plcrc left beside it, whether the vault resolves to a
 real one, and its machine state dir. It then audits the ledger .plc/config —
 accounts/categories used but not declared (or vice versa), a name declared
 as both @ and #, a missing default currency, transactions missing a stable
-^id — printing a fix command for each. Last, it lists do-notes still
+^id — printing a fix command for each. Then it lists do-notes still
 named the old way: their files, the last-do pointer and every [[do…]]
-link. --fix applies the safe repairs (importing names, setting the
-currency, backfilling ids, renaming do-notes to todo unless a todo name is
-taken). It's built to grow into a whole-vault checkup (orphans, stale
-pointers, broken links).
+link. Last, it lists whitespace in names: link targets like [[foo bar]]
+and the files outside hidden dirs named like foo bar.md, each run of
+whitespace to become one _ (not +, which joins a --postfix); a link's
+path, |alias, #heading and ^block stay as written. --fix applies the safe
+repairs (importing names, setting the currency, backfilling ids, renaming
+do-notes to todo and spaced names to _ unless a new name is taken). It's
+built to grow into a whole-vault checkup (orphans, stale pointers, broken
+links).
 
     > plc doctor
     > plc doctor --fix

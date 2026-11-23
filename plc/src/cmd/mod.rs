@@ -10,6 +10,7 @@ pub mod graph;
 pub mod ledger;
 pub mod init;
 pub mod isg;
+pub mod links;
 pub mod murmur;
 pub mod orphans;
 pub mod shot;

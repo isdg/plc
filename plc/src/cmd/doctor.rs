@@ -2,16 +2,16 @@
 //!
 //! A single place to diagnose a vault and propose (or, with `--fix`, apply) safe
 //! repairs. It runs *without* a resolved vault so it can diagnose a missing or
-//! broken config. Three sections: the `.plcrc` config, the ledger
-//! `.plc/config`, then the todo notes. Structured to grow (orphan nodes,
-//! stale pointers, links, …).
+//! broken config. Four sections: the `.plcrc` config, the ledger
+//! `.plc/config`, the todo notes, then whitespace in link and file names.
+//! Structured to grow (orphan nodes, stale pointers, broken links, …).
 
 use std::path::Path;
 
 use clap::Args;
 use plc_core::rc::{self, Rc};
 
-use crate::cmd::{ledger, todo};
+use crate::cmd::{ledger, links, todo};
 use crate::config::Palace;
 
 #[derive(Args)]
@@ -28,8 +28,12 @@ pub fn run(args: DoctorArgs) -> Result<String, String> {
         Ok(palace) => {
             out.push(ledger::doctor(&palace, args.fix)?);
             out.push(todo::doctor(&palace, args.fix)?);
+            out.push(links::doctor(&palace, args.fix)?);
         }
-        Err(e) => out.push(format!("\n  Ledger, todo — skipped ({e})")),
+        Err(e) => {
+            let what = "Ledger, todo, links";
+            out.push(format!("\n  {what} — skipped ({e})"));
+        }
     }
     Ok(out.join("\n"))
 }
