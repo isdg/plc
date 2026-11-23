@@ -5,11 +5,10 @@
 //! stamp line and the [`TAG`] line. A note of that name anywhere in the
 //! vault, matched as links match names, is kept and its path printed.
 
-use std::path::{Path, PathBuf, MAIN_SEPARATOR};
+use std::path::{PathBuf, MAIN_SEPARATOR};
 
 use clap::Args;
 use plc_core::rc::{self, Rc};
-use plc_core::{fold_name, notes};
 
 use crate::config::Palace;
 use crate::note;
@@ -30,39 +29,17 @@ pub fn run(args: AddArgs) -> Result<String, String> {
     let filename = md_name(&args.name)?;
     let rc = Rc::read(&rc::path().map_err(add)?).map_err(add)?;
     let dir = rc.notes_dir(vault_root)?;
-    let target = dir.join(note::apply_postfix(&filename));
-    if !target.exists() {
-        if let Some(found) = existing(&target)? {
+    // No vault, no other note: an absolute notes dir needs none.
+    if let Ok(palace) = Palace::resolve() {
+        let target = dir.join(note::apply_postfix(&filename));
+        let found = note::named_like(palace.root(), &target).map_err(add)?;
+        if let Some(found) = found {
             return Ok(found.display().to_string());
         }
     }
     note::ensure_note(&dir, "", &filename, TAG, None, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(add)
-}
-
-/// The vault's one note named like `target`, if any; several are an error,
-/// since only one path can be opened. No vault, no note.
-fn existing(target: &Path) -> Result<Option<PathBuf>, String> {
-    let Ok(palace) = Palace::resolve() else {
-        return Ok(None);
-    };
-    let name = |p: &Path| p.file_name()?.to_str().map(fold_name);
-    let want = name(target);
-    let mut found: Vec<PathBuf> = notes::walk(palace.root())
-        .filter(|p| name(p) == want)
-        .collect();
-    if found.len() > 1 {
-        found.sort();
-        let root = palace.root();
-        let shown: Vec<String> = found
-            .iter()
-            .map(|p| p.strip_prefix(root).unwrap_or(p).display().to_string())
-            .collect();
-        let what = format!("{} notes share the name", found.len());
-        return Err(add(format!("{what}: {}", shown.join(", "))));
-    }
-    Ok(found.pop())
 }
 
 /// A relative notes dir lands in the vault, so it must be a valid one.

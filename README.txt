@@ -257,10 +257,11 @@ with a "last" pointer stored in <PALACE_DIR>/.plc/last-todo.
 PLC MURMUR
 -------------------------------------------------------------------------------
 
-Usage: plc murmur [NAME] | -n NAME | -l
+Usage: plc murmur NAME | -n NAME | -l
 
 Free-form named notes under notes/me/writing/murmur (.md appended if
-missing).
+missing). A note of that name anywhere in the vault is opened instead,
+as plc add does; without NAME or -l it fails.
 
     (positional NAME)  create/resolve NAME
     -n, --new NAME     same, as a flag

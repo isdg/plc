@@ -7,6 +7,8 @@
 //!   `plc murmur -n NAME`     create/resolve NAME (".md" appended) → prints path
 //!   `plc murmur NAME`        same, positional form
 //!
+//! A note of that name elsewhere in the vault is opened, not cloned.
+//!
 //! The interactive name prompt and the fzf picker stay in the zsh wrapper;
 //! this command is non-interactive and only emits text.
 
@@ -49,6 +51,12 @@ pub fn run(palace: &Palace, args: MurmurArgs) -> Result<String, String> {
         .or(args.positional)
         .ok_or_else(|| "murmur: a note name is required (or pass -l to list)".to_string())?;
     let filename = ensure_md(name.trim())?;
+    let target = note_dir.join(note::apply_postfix(&filename));
+    let found = note::named_like(palace.root(), &target)
+        .map_err(|e| format!("murmur: {e}"))?;
+    if let Some(found) = found {
+        return Ok(found.display().to_string());
+    }
     note::ensure_note(palace.root(), SUBDIR, &filename, "murmur", None, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(|e| format!("murmur: {e}"))

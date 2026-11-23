@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
+use plc_core::{fold_name, notes};
 
 /// The flags of every command that creates a note.
 #[derive(clap::Args, Default)]
@@ -78,6 +79,32 @@ fn postfixed(filename: &str, postfix: &str) -> String {
         Some((stem, ext)) => format!("{stem}+{postfix}.{ext}"),
         None => format!("{filename}+{postfix}"),
     }
+}
+
+/// The note of the vault at `root` to open instead of creating `target`:
+/// one named like it, as links match names, when `target` does not exist.
+/// Several are an error, since only one path can be opened.
+pub fn named_like(
+    root: &Path,
+    target: &Path,
+) -> Result<Option<PathBuf>, String> {
+    if target.exists() {
+        return Ok(None);
+    }
+    let name = |p: &Path| p.file_name()?.to_str().map(fold_name);
+    let want = name(target);
+    let mut found: Vec<PathBuf> =
+        notes::walk(root).filter(|p| name(p) == want).collect();
+    if found.len() < 2 {
+        return Ok(found.pop());
+    }
+    found.sort();
+    let shown: Vec<String> = found
+        .iter()
+        .map(|p| p.strip_prefix(root).unwrap_or(p).display().to_string())
+        .collect();
+    let n = found.len();
+    Err(format!("{n} notes share the name: {}", shown.join(", ")))
 }
 
 /// Ensure a note exists at `<root>/<subdir>/<filename>`, seeding the header
