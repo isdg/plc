@@ -7,9 +7,9 @@ use std::fs;
 
 use common::{display, fail, ok, Home, NO_VAULT};
 
-/// Just the stamp line, e.g. `isg 2026-11-12 19:42:00 +0100`.
-fn stamped(text: &str) -> bool {
-    text.starts_with("isg 20") && text.lines().count() == 1
+/// The stamp line, e.g. `isg 2026-11-12 19:42:00 +0100`, then the tag.
+fn seeded(text: &str) -> bool {
+    text.starts_with("isg 20") && text.ends_with("\n\n[[00_triage]]\n")
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn defaults_to_triage() {
     let out = ok(&mut home.plc(&["add", "idea"]));
     assert_eq!(out, display(&dir.join("idea.md")));
     let text = fs::read_to_string(&out).unwrap();
-    assert!(stamped(&text), "{text:?}");
+    assert!(seeded(&text), "{text:?}");
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn global_tag_and_postfix_apply() {
     assert!(out.ends_with("/notes/triage/idea+v2.md"), "{out}");
     let text = fs::read_to_string(&out).unwrap();
     assert!(text.starts_with("isg 20"), "{text:?}");
-    assert!(text.ends_with("\n\n[[review]]\n"), "{text:?}");
+    assert!(text.ends_with("\n\n[[00_triage]]\n[[review]]\n"), "{text:?}");
 }
 
 #[test]

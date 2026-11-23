@@ -1,8 +1,9 @@
 //! `plc add NAME` — create a stamped note in the notes directory.
 //!
 //! The directory is `plc config notes`: `notes` in `.plcrc`, under the vault
-//! unless absolute, else `<vault>/notes/triage`. The note is seeded with only
-//! the stamp line; an existing note is kept and its path printed.
+//! unless absolute, else `<vault>/notes/triage`. The note is seeded with the
+//! stamp line and the [`TAG`] line; an existing note is kept and its path
+//! printed.
 
 use std::path::{MAIN_SEPARATOR, PathBuf};
 
@@ -11,6 +12,9 @@ use plc_core::rc::{self, Rc};
 
 use crate::config::Palace;
 use crate::note;
+
+/// The tag every new note carries until it is triaged.
+const TAG: &str = "00_triage";
 
 #[derive(Args)]
 pub struct AddArgs {
@@ -25,7 +29,7 @@ pub fn run(args: AddArgs) -> Result<String, String> {
     let filename = md_name(&args.name)?;
     let rc = Rc::read(&rc::path().map_err(add)?).map_err(add)?;
     let dir = rc.notes_dir(vault_root)?;
-    note::ensure_stamped(&dir, "", &filename)
+    note::ensure_note(&dir, "", &filename, TAG, None, note::SIGNATURE)
         .map(|p| p.display().to_string())
         .map_err(add)
 }
