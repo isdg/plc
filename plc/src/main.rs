@@ -138,9 +138,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Validate `--postfix`: trim it, and reject a blank value or one
-/// containing a path separator (it must stay a single filename component).
-/// Returns the cleaned postfix (or `None` when the flag was absent).
+/// Validate `--postfix`: trim it, turn each inner whitespace run into one
+/// `+`, and reject a blank value or one containing a path separator (it must
+/// stay a single filename component). `None` when the flag was absent.
 fn validate_postfix(postfix: Option<String>) -> Result<Option<String>, String> {
     let Some(raw) = postfix else {
         return Ok(None);
@@ -152,7 +152,7 @@ fn validate_postfix(postfix: Option<String>) -> Result<Option<String>, String> {
     if trimmed.contains('/') || trimmed.contains(std::path::MAIN_SEPARATOR) {
         return Err(format!("plc: --postfix must not contain a path separator: {trimmed}"));
     }
-    Ok(Some(trimmed.to_string()))
+    Ok(Some(trimmed.split_whitespace().collect::<Vec<_>>().join("+")))
 }
 
 /// Validate the global `--tag`: trim it, and reject a blank value or one whose
@@ -180,4 +180,32 @@ where
 {
     let palace = Palace::resolve()?;
     f(&palace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_postfix;
+
+    fn postfix(raw: &str) -> Result<Option<String>, String> {
+        validate_postfix(Some(raw.to_string()))
+    }
+
+    #[test]
+    fn each_inner_whitespace_run_becomes_one_plus() {
+        assert_eq!(postfix("code review"), Ok(Some("code+review".into())));
+        assert_eq!(postfix("a  b"), Ok(Some("a+b".into())));
+        assert_eq!(postfix("a \t\n b\nc"), Ok(Some("a+b+c".into())));
+    }
+
+    #[test]
+    fn outer_whitespace_is_trimmed() {
+        assert_eq!(postfix(" review "), Ok(Some("review".into())));
+    }
+
+    #[test]
+    fn blank_and_separators_are_refused() {
+        let blank = "plc: --postfix must not be blank";
+        assert_eq!(postfix(" \t"), Err(blank.into()));
+        assert!(postfix("a/b").is_err());
+    }
 }

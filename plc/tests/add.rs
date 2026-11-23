@@ -95,6 +95,15 @@ fn global_tag_and_postfix_apply() {
 }
 
 #[test]
+fn postfix_spaces_become_plus() {
+    let home = Home::new("add-plus");
+    home.vault("palace");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    let out = ok(&mut home.plc(&["add", "idea", "-x", " code  review "]));
+    assert!(out.ends_with("/notes/triage/idea+code+review.md"), "{out}");
+}
+
+#[test]
 fn bad_names_are_refused() {
     let home = Home::new("add-bad");
     home.vault("palace");

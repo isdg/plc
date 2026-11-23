@@ -109,7 +109,9 @@ The commands that create a note (daily, weekly, shot, add, top, do, murmur,
 isg) take:
 
     -x, --postfix TEXT   append +TEXT to the created note's filename, before
-                         the extension (2026-07-14T20.28.md → …+TEXT.md)
+                         the extension (2026-07-14T20.28.md → …+TEXT.md);
+                         each run of spaces inside TEXT becomes one + too
+                         (-x "a  b" → …+a+b.md)
     -t, --tag TAG        seed an extra [[TAG]] wikilink line into the new
                          note's body (header-seeded notes only)
 
