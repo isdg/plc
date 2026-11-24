@@ -57,7 +57,7 @@ pub fn run(palace: &Palace, args: MurmurArgs) -> Result<String, String> {
     if let Some(found) = found {
         return Ok(found.display().to_string());
     }
-    note::ensure_note(palace.root(), SUBDIR, &filename, "murmur", None, note::SIGNATURE)
+    note::ensure_named_note(palace.root(), SUBDIR, &filename, "murmur")
         .map(|p| p.display().to_string())
         .map_err(|e| format!("murmur: {e}"))
 }

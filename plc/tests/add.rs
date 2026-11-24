@@ -7,9 +7,11 @@ use std::fs;
 
 use common::{display, fail, ok, Home, NO_VAULT};
 
-/// The stamp line, e.g. `isg 2026-11-12 19:42:00 +0100`, then the tag.
-fn seeded(text: &str) -> bool {
-    text.starts_with("isg 20") && text.ends_with("\n\n[[00_triage]]\n")
+/// The stamp line, e.g. `isg 2026-11-12 19:42:00 +0100`, the tag, then
+/// the note's `name`.
+fn seeded(text: &str, name: &str) -> bool {
+    let tail = format!("\n\n[[00_triage]]\n\n{name}\n");
+    text.starts_with("isg 20") && text.ends_with(&tail)
 }
 
 #[test]
@@ -23,7 +25,17 @@ fn defaults_to_triage() {
     let out = ok(&mut home.plc(&["add", "idea"]));
     assert_eq!(out, display(&dir.join("idea.md")));
     let text = fs::read_to_string(&out).unwrap();
-    assert!(seeded(&text), "{text:?}");
+    assert!(seeded(&text, "idea"), "{text:?}");
+}
+
+#[test]
+fn the_name_is_seeded_as_typed() {
+    let home = Home::new("add-name");
+    home.vault("palace");
+    home.write(".plc/.plcrc", "vault = ~/palace\n");
+    let out = ok(&mut home.plc(&["add", " My idea.md "]));
+    let text = fs::read_to_string(&out).unwrap();
+    assert!(seeded(&text, "My idea"), "{text:?}");
 }
 
 #[test]
@@ -91,7 +103,8 @@ fn global_tag_and_postfix_apply() {
     assert!(out.ends_with("/notes/triage/idea+v2.md"), "{out}");
     let text = fs::read_to_string(&out).unwrap();
     assert!(text.starts_with("isg+v2 20"), "{text:?}");
-    assert!(text.ends_with("\n\n[[00_triage]]\n[[review]]\n"), "{text:?}");
+    let tail = "\n\n[[00_triage]]\n[[review]]\n\nidea\n";
+    assert!(text.ends_with(tail), "{text:?}");
 }
 
 #[test]

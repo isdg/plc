@@ -3,7 +3,10 @@
 
 mod common;
 
+use std::fs;
 use std::process::Command;
+
+use plc_core::notes;
 
 use common::{fail, ok, Home};
 
@@ -201,4 +204,18 @@ fn note_flags_belong_to_note_commands() {
     assert!(err.contains("unexpected argument '-x'"), "{err}");
     let add = ["ledger", "add", "1", "x", "-a", "cash", "-x", "v"];
     assert!(fail(&mut home.plc(&add)).contains("unexpected argument '-x'"));
+}
+
+#[test]
+fn a_new_named_note_counts_nothing() {
+    let home = with_vault("stat-named");
+    let add = ["add", "my idea", "-x", "on call", "-t", "review"];
+    let note = ok(&mut home.plc(&add));
+    ok(&mut home.plc(&["murmur", "wind"]));
+    let text = fs::read_to_string(note).unwrap();
+    let at = notes::stamp(text.lines().next().unwrap()).unwrap();
+    let date = at.format("%d %m %y").to_string();
+    let args: Vec<&str> = ["stat"].into_iter().chain(date.split(' ')).collect();
+    let out = ok(&mut home.plc(&args));
+    assert!(out.ends_with("nothing written"), "{out}");
 }

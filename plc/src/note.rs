@@ -131,6 +131,19 @@ pub fn ensure_note(
     ensure_file(root, subdir, filename, &seed_body(stamp_prefix, tag, marker))
 }
 
+/// [`ensure_note`] for a note named by hand: the name it was given
+/// (`filename` without `.md`) follows the tags, set off by a blank line.
+pub fn ensure_named_note(
+    root: &Path,
+    subdir: &str,
+    filename: &str,
+    tag: &str,
+) -> std::io::Result<PathBuf> {
+    let name = filename.strip_suffix(".md").unwrap_or(filename);
+    let body = format!("{}\n{name}\n", seed_body(SIGNATURE, tag, None));
+    ensure_file(root, subdir, filename, &body)
+}
+
 /// Ensure a file exists at `<root>/<subdir>/<filename>`, writing `body` (making
 /// parent dirs as needed) only when the file is absent or empty. Returns its
 /// path. The body-agnostic core of [`ensure_note`]; used by commands that seed

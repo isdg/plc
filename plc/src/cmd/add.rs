@@ -2,8 +2,8 @@
 //!
 //! The directory is `plc config notes`: `notes` in `.plcrc`, under the vault
 //! unless absolute, else `<vault>/notes/triage`. The note is seeded with the
-//! stamp line and the [`TAG`] line. A note of that name anywhere in the
-//! vault, matched as links match names, is kept and its path printed.
+//! stamp line, the [`TAG`] line and its name. A note of that name anywhere
+//! in the vault, matched as links match names, is kept and its path printed.
 
 use std::path::{PathBuf, MAIN_SEPARATOR};
 
@@ -37,7 +37,7 @@ pub fn run(args: AddArgs) -> Result<String, String> {
             return Ok(found.display().to_string());
         }
     }
-    note::ensure_note(&dir, "", &filename, TAG, None, note::SIGNATURE)
+    note::ensure_named_note(&dir, "", &filename, TAG)
         .map(|p| p.display().to_string())
         .map_err(add)
 }

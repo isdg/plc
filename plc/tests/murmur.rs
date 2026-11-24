@@ -29,7 +29,7 @@ fn a_new_name_lands_in_the_murmur_dir() {
     let out = ok(&mut home.plc(&["murmur", "wind"]));
     assert_eq!(out, display(&home.path(&format!("{DIR}/wind.md"))));
     let text = fs::read_to_string(&out).unwrap();
-    assert!(text.ends_with("\n\n[[murmur]]\n"), "{text:?}");
+    assert!(text.ends_with("\n\n[[murmur]]\n\nwind\n"), "{text:?}");
     assert_eq!(ok(&mut home.plc(&["murmur", "-n", "wind"])), out);
 }
 

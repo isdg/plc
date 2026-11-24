@@ -222,8 +222,9 @@ Usage: plc add NAME        (aliases: plc note, plc no)
 
 Create or resolve NAME.md (.md appended if missing) in the notes dir, the
 one plc config notes prints: notes in .plcrc, under the vault unless
-absolute, else <vault>/notes/triage. A new note holds the stamp line and
-a [[00_triage]] line (and a [[TAG]] line with -t). A note of that name
+absolute, else <vault>/notes/triage. A new note holds the stamp line, a
+[[00_triage]] line (and a [[TAG]] line with -t), a blank line, and NAME
+as typed, less .md and any --postfix. A note of that name
 anywhere in the vault, outside hidden dirs and matched as links match
 names, is kept and its path printed instead; one name two notes share is
 refused. NAME is one file name, so a / in it is refused. Unless notes is
@@ -262,8 +263,9 @@ PLC MURMUR
 Usage: plc murmur NAME | -n NAME | -l
 
 Free-form named notes under notes/me/writing/murmur (.md appended if
-missing). A note of that name anywhere in the vault is opened instead,
-as plc add does; without NAME or -l it fails.
+missing), seeded with NAME after its tags. A note of that name anywhere
+in the vault is opened instead, as plc add does; without NAME or -l it
+fails.
 
     (positional NAME)  create/resolve NAME
     -n, --new NAME     same, as a flag
@@ -345,9 +347,9 @@ Every note in the vault counts but those in hidden directories and the
 belongs to the stamp above it, "<signature> YYYY-MM-DD HH:MM:SS +ZZZZ":
 the header plc seeds, or one written inline, so a note kept for weeks
 counts on each day it grew. Stamps, the signature that starts a stamp
-line, and the seeded header count for nothing, so a note only opened is
-an empty day. Text above every stamp is dated by the note's file name,
-else its mtime.
+line, and the seeded header, the name plc add and murmur seed included,
+count for nothing, so a note only opened is an empty day. Text above
+every stamp is dated by the note's file name, else its mtime.
 
 The levels end at the quartiles of the year's written days, as GitHub
 scales contributions, or a range's own, and the legend shows them. Each day is a shade

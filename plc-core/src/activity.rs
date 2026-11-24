@@ -22,10 +22,9 @@ pub fn per_note(
         |p: &Path| notes::stem(p).is_some_and(|s| s.ends_with("+ledger"));
     notes::walk(root).filter(move |p| !ledger(p)).filter_map(|path| {
         let text = fs::read_to_string(&path).ok()?;
-        let undated = notes::stem(&path)
-            .and_then(notes::name_date)
-            .or_else(|| modified(&path));
-        let bytes = note_bytes(&text, undated);
+        let stem = notes::stem(&path).unwrap_or_default();
+        let undated = notes::name_date(stem).or_else(|| modified(&path));
+        let bytes = note_bytes(&text, stem, undated);
         Some((path, bytes))
     })
 }
@@ -58,10 +57,12 @@ fn modified(path: &Path) -> Option<NaiveDate> {
 }
 
 /// A note's bytes by the day of the stamp above them, in note order. The
-/// stamps and the header plc seeds (a stamp line, then blank lines and lone
-/// `[[tag]]` lines) count for nothing; text above every stamp is `undated`.
+/// stamps and the header plc seeds (a stamp line, blank lines and lone
+/// `[[tag]]` lines, then the name the note's file `stem` was made from)
+/// count for nothing; text above every stamp is `undated`.
 pub fn note_bytes(
     text: &str,
+    stem: &str,
     undated: Option<NaiveDate>,
 ) -> Vec<(NaiveDate, u64)> {
     let mut lines = text.lines().peekable();
@@ -70,6 +71,7 @@ pub fn note_bytes(
         day = Some(at.date_naive());
         lines.next();
         while lines.next_if(|l| seeded(l)).is_some() {}
+        lines.next_if(|l| names(l, stem));
     }
     let mut out: Vec<(NaiveDate, u64)> = Vec::new();
     let mut add = |day: Option<NaiveDate>, text: &str| {
@@ -97,6 +99,14 @@ fn seeded(line: &str) -> bool {
     let line = line.trim();
     let link = line.starts_with("[[") && line.ends_with("]]");
     line.is_empty() || (link && line.matches("[[").count() == 1)
+}
+
+/// Whether `line` holds the name a note was created under: its file `stem`,
+/// less the `+postfix` the stem may end in.
+fn names(line: &str, stem: &str) -> bool {
+    let line = line.trim();
+    let rest = stem.strip_prefix(line);
+    !line.is_empty() && rest.is_some_and(|r| r.is_empty() || r.starts_with('+'))
 }
 
 /// The `<date> <time> <zone>` stamps in `line`, as byte spans and times.
@@ -153,11 +163,22 @@ mod tests {
 
     #[test]
     fn a_seeded_note_is_empty() {
-        assert!(note_bytes(HEAD, Some(day(1))).is_empty());
+        assert!(note_bytes(HEAD, "n", Some(day(1))).is_empty());
         let shot = "isg 2026-11-10 09:00:00 +0100\n";
-        assert!(note_bytes(shot, None).is_empty());
+        assert!(note_bytes(shot, "n", None).is_empty());
         let tagged = format!("{HEAD}[[review]]\n\n");
-        assert!(note_bytes(&tagged, None).is_empty());
+        assert!(note_bytes(&tagged, "n", None).is_empty());
+    }
+
+    #[test]
+    fn the_name_seeded_after_the_tags_is_header() {
+        let named = format!("{HEAD}\nmy idea\n");
+        assert!(note_bytes(&named, "my idea", None).is_empty());
+        assert!(note_bytes(&named, "my idea+on+call", None).is_empty());
+        assert_eq!(note_bytes(&named, "my ideas", None), [(day(10), 7)]);
+        assert_eq!(note_bytes(&named, "my", None), [(day(10), 7)]);
+        let later = format!("{HEAD}abc\nmy idea\n");
+        assert_eq!(note_bytes(&later, "my idea", None), [(day(10), 10)]);
     }
 
     #[test]
@@ -166,24 +187,25 @@ mod tests {
             "{HEAD}abc\n\nisg 2026-11-12 20:00:00 +0100\nдар\n\
              x y 2026-11-13 08:00:00 +0100 yz"
         );
-        let got = note_bytes(&text, Some(day(1)));
+        let got = note_bytes(&text, "n", Some(day(1)));
         // "дар" is 6 bytes; "x y " stays with the day above it.
         assert_eq!(got, [(day(10), 3), (day(12), 6 + 4), (day(13), 3)]);
     }
 
     #[test]
     fn unstamped_text_is_undated() {
-        assert_eq!(note_bytes("plain\n", Some(day(5))), [(day(5), 5)]);
-        assert!(note_bytes("plain\n", None).is_empty());
+        assert_eq!(note_bytes("plain\n", "n", Some(day(5))), [(day(5), 5)]);
+        assert!(note_bytes("plain\n", "n", None).is_empty());
         let late = "a\n2026-11-07 10:00:00 +0100 b";
-        assert_eq!(note_bytes(late, Some(day(5))), [(day(5), 1), (day(7), 2)]);
+        let got = note_bytes(late, "n", Some(day(5)));
+        assert_eq!(got, [(day(5), 1), (day(7), 2)]);
     }
 
     #[test]
     fn only_a_full_stamp_dates() {
         let text = "2026-11-07 10:00:00 Z\n2026-11-07 x +0100\n";
-        assert_eq!(note_bytes(text, None), []);
-        assert_eq!(note_bytes(text, Some(day(1))), [(day(1), 21 + 18)]);
+        assert_eq!(note_bytes(text, "n", None), []);
+        assert_eq!(note_bytes(text, "n", Some(day(1))), [(day(1), 21 + 18)]);
     }
 
     #[test]
