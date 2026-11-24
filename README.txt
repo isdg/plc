@@ -111,8 +111,9 @@ isg) take:
     -x, --postfix TEXT   append +TEXT to the created note's filename, before
                          the extension (2026-07-14T20.28.md → …+TEXT.md);
                          each run of spaces inside TEXT becomes one + too
-                         (-x "a  b" → …+a+b.md)
-    -t, --tag TAG        seed an extra [[TAG]] wikilink line into the new
+                         (-x "a  b" → …+a+b.md), and to the stamp's
+                         prefix (isg+TEXT 2026-07-14 20:28:00 +0200)
+    -t, --tag TAG       seed an extra [[TAG]] wikilink line into the new
                          note's body (header-seeded notes only)
 
 -------------------------------------------------------------------------------
@@ -147,8 +148,9 @@ header: a stamp line and a [[tag]] wikilink, e.g.
     [[daily]]
 
 The stamp prefix is the author handle isg (except isg notes, which lead with
-their own index). plc only creates/append; it never rewrites your body, so
-you can edit freely by hand.
+their own index), joined by a --postfix as the filename is: isg+review,
+isg0+review. plc only creates/append; it never rewrites your body, so you
+can edit freely by hand.
 
 -------------------------------------------------------------------------------
 PLC INIT

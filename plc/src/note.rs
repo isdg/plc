@@ -66,10 +66,14 @@ pub fn set_tag_postfix(tag: Option<String>) {
 /// Apply the run's postfix (if any) to `filename`, inserting it before the
 /// extension: `2026-07-14T20.28.md` + `review` → `2026-07-14T20.28+review.md`.
 pub(crate) fn apply_postfix(filename: &str) -> String {
-    match POSTFIX.get().and_then(|p| p.as_deref()) {
+    match run_postfix() {
         Some(postfix) => postfixed(filename, postfix),
         None => filename.to_string(),
     }
+}
+
+fn run_postfix() -> Option<&'static str> {
+    POSTFIX.get().and_then(|p| p.as_deref())
 }
 
 /// Insert `postfix` (joined with `+`) before the final `.ext` of `filename`,
@@ -161,11 +165,15 @@ pub fn would_create(root: &Path, subdir: &str, filename: &str) -> (bool, PathBuf
 }
 
 /// The stamp line leading every seeded note: `<prefix> <local datetime>`, e.g.
-/// `isg 2026-06-20 14:03:11 +0200`. The single source of the stamp format;
-/// reused by commands that assemble their own body (e.g. `shot -i`).
+/// `isg 2026-06-20 14:03:11 +0200`, its prefix joined by the run's postfix
+/// like a filename stem (`isg+review`). The single source of the stamp
+/// format; reused by commands that assemble their own body (e.g. `shot -i`).
 pub fn stamp_line(prefix: &str) -> String {
     let date = Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string();
-    format!("{prefix} {date}")
+    match run_postfix() {
+        Some(postfix) => format!("{prefix}+{postfix} {date}"),
+        None => format!("{prefix} {date}"),
+    }
 }
 
 /// The seeded file contents: `<prefix> <date>[ <marker>]`, blank line, `[[tag]]`,

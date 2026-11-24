@@ -90,7 +90,7 @@ fn global_tag_and_postfix_apply() {
     let out = ok(&mut home.plc(&["add", "idea", "-t", "review", "-x", "v2"]));
     assert!(out.ends_with("/notes/triage/idea+v2.md"), "{out}");
     let text = fs::read_to_string(&out).unwrap();
-    assert!(text.starts_with("isg 20"), "{text:?}");
+    assert!(text.starts_with("isg+v2 20"), "{text:?}");
     assert!(text.ends_with("\n\n[[00_triage]]\n[[review]]\n"), "{text:?}");
 }
 
